@@ -1,0 +1,25 @@
+{
+  "name": "@honeide/ide",
+  "version": "0.1.0",
+  "description": "Hone IDE — AI-native code editor for all platforms",
+  "main": "src/app.ts",
+  "types": "src/app.ts",
+  "scripts": {
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": ["ide", "editor", "ai", "perry", "native", "cross-platform"],
+  "license": "MIT",
+  "dependencies": {
+    "@honeide/api": "file:../hone-api",
+    "@honeide/core": "file:../hone-core",
+    "@honeide/editor": "file:../hone-editor",
+    "@honeide/terminal": "file:../hone-terminal",
+    "@honeide/themes": "file:../hone-themes"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  }
+}
