@@ -13,14 +13,22 @@
 import {
   VStack, HStack, Text, Button, Spacer,
   VStackWithInsets, HStackWithInsets,
-  textSetColor, textSetFontSize, textSetFontWeight,
+  textSetColor, textSetFontSize, textSetFontWeight, textSetFontFamily,
+  textSetString,
   buttonSetBordered, buttonSetTextColor, buttonSetTitle,
-  widgetSetBackgroundColor, widgetAddChild,
-  widgetSetWidth, widgetSetHugging,
+  widgetSetBackgroundColor, widgetAddChild, widgetClearChildren,
+  widgetSetWidth, widgetSetHugging, embedNSView,
 } from 'perry/ui';
+import { Editor } from '@honeide/editor/perry';
 import { getActiveTheme, type ResolvedUIColors } from './theme/theme-loader';
 import type { LayoutMode } from '../platform';
 import { getWorkbenchSettings } from './settings';
+import { readFileSync } from 'fs';
+
+// FFI function from @honeide/editor — returns raw NSView* for an EditorView
+declare function hone_editor_nsview(handle: number): number;
+
+// Syntax highlighting is now handled by @honeide/editor's KeywordSyntaxEngine
 
 // ---------------------------------------------------------------------------
 // Color helpers
@@ -51,24 +59,51 @@ function setBtnFg(btn: unknown, hex: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// File tree data — real project paths
+// ---------------------------------------------------------------------------
+
+interface FileEntry {
+  name: string;
+  path: string;
+  depth: number;
+  isDir: boolean;
+  label: string;
+}
+
+// Perry string + operator is broken — all paths and labels must be full string literals
+const FILE_ENTRIES: FileEntry[] = [
+  { name: 'src/', path: '/Users/amlug/projects/hone/hone-ide/src', depth: 0, isDir: true, label: '\u25B6 src/' },
+  { name: 'app.ts', path: '/Users/amlug/projects/hone/hone-ide/src/app.ts', depth: 1, isDir: false, label: '    app.ts' },
+  { name: 'platform.ts', path: '/Users/amlug/projects/hone/hone-ide/src/platform.ts', depth: 1, isDir: false, label: '    platform.ts' },
+  { name: 'commands.ts', path: '/Users/amlug/projects/hone/hone-ide/src/commands.ts', depth: 1, isDir: false, label: '    commands.ts' },
+  { name: 'keybindings.ts', path: '/Users/amlug/projects/hone/hone-ide/src/keybindings.ts', depth: 1, isDir: false, label: '    keybindings.ts' },
+  { name: 'menu.ts', path: '/Users/amlug/projects/hone/hone-ide/src/menu.ts', depth: 1, isDir: false, label: '    menu.ts' },
+  { name: 'window.ts', path: '/Users/amlug/projects/hone/hone-ide/src/window.ts', depth: 1, isDir: false, label: '    window.ts' },
+  { name: 'workbench/', path: '/Users/amlug/projects/hone/hone-ide/src/workbench', depth: 1, isDir: true, label: '  \u25B6 workbench/' },
+  { name: 'render.ts', path: '/Users/amlug/projects/hone/hone-ide/src/workbench/render.ts', depth: 2, isDir: false, label: '        render.ts' },
+  { name: 'settings.ts', path: '/Users/amlug/projects/hone/hone-ide/src/workbench/settings.ts', depth: 2, isDir: false, label: '        settings.ts' },
+  { name: 'layout/', path: '/Users/amlug/projects/hone/hone-ide/src/workbench/layout', depth: 2, isDir: true, label: '    \u25B6 layout/' },
+  { name: 'grid.ts', path: '/Users/amlug/projects/hone/hone-ide/src/workbench/layout/grid.ts', depth: 3, isDir: false, label: '            grid.ts' },
+  { name: 'tab-manager.ts', path: '/Users/amlug/projects/hone/hone-ide/src/workbench/layout/tab-manager.ts', depth: 3, isDir: false, label: '            tab-manager.ts' },
+  { name: 'panel-registry.ts', path: '/Users/amlug/projects/hone/hone-ide/src/workbench/layout/panel-registry.ts', depth: 3, isDir: false, label: '            panel-registry.ts' },
+  { name: 'theme/', path: '/Users/amlug/projects/hone/hone-ide/src/workbench/theme', depth: 2, isDir: true, label: '    \u25B6 theme/' },
+  { name: 'theme-loader.ts', path: '/Users/amlug/projects/hone/hone-ide/src/workbench/theme/theme-loader.ts', depth: 3, isDir: false, label: '            theme-loader.ts' },
+  { name: 'builtin-themes.ts', path: '/Users/amlug/projects/hone/hone-ide/src/workbench/theme/builtin-themes.ts', depth: 3, isDir: false, label: '            builtin-themes.ts' },
+  { name: 'token-theme.ts', path: '/Users/amlug/projects/hone/hone-ide/src/workbench/theme/token-theme.ts', depth: 3, isDir: false, label: '            token-theme.ts' },
+  { name: 'package.json', path: '/Users/amlug/projects/hone/hone-ide/package.json', depth: 0, isDir: false, label: '  package.json' },
+  { name: 'tsconfig.json', path: '/Users/amlug/projects/hone/hone-ide/tsconfig.json', depth: 0, isDir: false, label: '  tsconfig.json' },
+  { name: 'CLAUDE.md', path: '/Users/amlug/projects/hone/hone-ide/CLAUDE.md', depth: 0, isDir: false, label: '  CLAUDE.md' },
+];
+
+// ---------------------------------------------------------------------------
 // Data
 // ---------------------------------------------------------------------------
 
 const PANELS = ['Files', 'Search', 'Git', 'Debug', 'Ext'];
 
-const FILES = [
-  { name: 'src/', depth: 0, isDir: true },
-  { name: 'app.ts', depth: 1, isDir: false },
-  { name: 'platform.ts', depth: 1, isDir: false },
-  { name: 'commands.ts', depth: 1, isDir: false },
-  { name: 'keybindings.ts', depth: 1, isDir: false },
-  { name: 'workbench/', depth: 1, isDir: true },
-  { name: 'render.ts', depth: 2, isDir: false },
-  { name: 'package.json', depth: 0, isDir: false },
-  { name: 'tsconfig.json', depth: 0, isDir: false },
-];
-
-const TABS = ['app.ts', 'platform.ts', 'render.ts'];
+/** Open tabs — each entry is a file path */
+let openTabs: string[] = [];
+let openTabNames: string[] = [];
 
 // ---------------------------------------------------------------------------
 // Module-level widget refs (Perry closures capture by value, so we must
@@ -89,6 +124,13 @@ let selectedFileIdx = -1;
 let tabBarButtons: unknown[] = [];
 let activeTabIdx = 0;
 
+// Editor content widgets
+let tabBarContainer: unknown = null;
+
+// The real editor instance
+let editor: Editor | null = null;
+let editorWidget: unknown = null;
+
 // ---------------------------------------------------------------------------
 // Named update functions (read module-level refs at call time)
 // ---------------------------------------------------------------------------
@@ -107,7 +149,7 @@ function updateActivityBar(): void {
 function updateFileTree(): void {
   if (!themeColors) return;
   for (let i = 0; i < fileTreeButtons.length; i++) {
-    if (i === selectedFileIdx && !FILES[i].isDir) {
+    if (i === selectedFileIdx && !FILE_ENTRIES[i].isDir) {
       setBg(fileTreeButtons[i], themeColors.listActiveSelectionBackground);
       setBtnFg(fileTreeButtons[i], themeColors.listActiveSelectionForeground);
     } else {
@@ -130,6 +172,75 @@ function updateEditorTabs(): void {
   }
 }
 
+/** Detect language from file extension. */
+function detectLanguage(filePath: string): string {
+  if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) return 'typescript';
+  if (filePath.endsWith('.js') || filePath.endsWith('.jsx')) return 'javascript';
+  if (filePath.endsWith('.py')) return 'python';
+  if (filePath.endsWith('.rs')) return 'rust';
+  if (filePath.endsWith('.html') || filePath.endsWith('.htm')) return 'html';
+  if (filePath.endsWith('.css')) return 'css';
+  if (filePath.endsWith('.json')) return 'json';
+  if (filePath.endsWith('.md')) return 'markdown';
+  if (filePath.endsWith('.c') || filePath.endsWith('.h')) return 'c';
+  if (filePath.endsWith('.cpp') || filePath.endsWith('.hpp')) return 'cpp';
+  return 'plaintext';
+}
+
+function displayFileContent(filePath: string): void {
+  const ed = editor;
+  if (!ed) return;
+  const content = readFileSync(filePath);
+  ed.setContent(content);
+  ed.render();
+}
+
+function displayFileContentDirect(ed: Editor, filePath: string): void {
+  const content = readFileSync(filePath);
+  ed.setContent(content);
+  ed.render();
+}
+
+function openFileInEditor(filePath: string, fileName: string): void {
+  if (!themeColors) return;
+
+  // Check if already open
+  let tabIdx = -1;
+  for (let i = 0; i < openTabs.length; i++) {
+    if (openTabs[i] === filePath) {
+      tabIdx = i;
+      break;
+    }
+  }
+
+  if (tabIdx >= 0) {
+    // Already open — just switch to it
+    activeTabIdx = tabIdx;
+    updateEditorTabs();
+    displayFileContent(filePath);
+    return;
+  }
+
+  // Add new tab
+  openTabs.push(filePath);
+  openTabNames.push(fileName);
+
+  // Create tab button
+  const idx = openTabs.length - 1;
+  // Perry string + is broken — use fileName directly (no padding spaces)
+  const btn = Button(fileName, () => { onTabClick(idx); });
+  buttonSetBordered(btn, 0);
+  textSetFontSize(btn, 13);
+  tabBarButtons.push(btn);
+
+  // Add to tab bar
+  widgetAddChild(tabBarContainer, btn);
+
+  activeTabIdx = idx;
+  updateEditorTabs();
+  displayFileContent(filePath);
+}
+
 function onActivityClick(idx: number): void {
   activeActivityIdx = idx;
   updateActivityBar();
@@ -138,11 +249,20 @@ function onActivityClick(idx: number): void {
 function onFileClick(idx: number): void {
   selectedFileIdx = idx;
   updateFileTree();
+
+  // Open file in editor if it's not a directory
+  const entry = FILE_ENTRIES[idx];
+  if (!entry.isDir) {
+    openFileInEditor(entry.path, entry.name);
+  }
 }
 
 function onTabClick(idx: number): void {
   activeTabIdx = idx;
   updateEditorTabs();
+  if (idx < openTabs.length) {
+    displayFileContent(openTabs[idx]);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -211,14 +331,11 @@ function renderSidebar(colors: ResolvedUIColors): unknown {
 
   fileTreeButtons = [];
 
-  for (let i = 0; i < FILES.length; i++) {
-    const file = FILES[i];
-    const indent = '  '.repeat(file.depth);
-    const prefix = file.isDir ? '\u25B6 ' : '  ';
-    const label = indent + prefix + file.name;
-
+  for (let i = 0; i < FILE_ENTRIES.length; i++) {
+    const file = FILE_ENTRIES[i];
+    // Use pre-computed label — Perry string + and .repeat() are broken
     const idx = i;
-    const btn = Button(label, () => { onFileClick(idx); });
+    const btn = Button(file.label, () => { onFileClick(idx); });
     buttonSetBordered(btn, 0);
     textSetFontSize(btn, 13);
     fileTreeButtons.push(btn);
@@ -243,70 +360,55 @@ function renderSidebar(colors: ResolvedUIColors): unknown {
 
 function renderEditorArea(colors: ResolvedUIColors): unknown {
   tabBarButtons = [];
+  openTabs = [];
+  openTabNames = [];
 
-  for (let i = 0; i < TABS.length; i++) {
-    const idx = i;
-    const btn = Button(' ' + TABS[i] + ' ', () => { onTabClick(idx); });
-    buttonSetBordered(btn, 0);
-    textSetFontSize(btn, 13);
-    tabBarButtons.push(btn);
-  }
+  // Start with app.ts open — use literal paths (Perry string + is broken)
+  const defaultFile = '/Users/amlug/projects/hone/hone-ide/src/app.ts';
+  const defaultName = 'app.ts';
+  openTabs.push(defaultFile);
+  openTabNames.push(defaultName);
 
+  const btn = Button(' app.ts ', () => { onTabClick(0); });
+  buttonSetBordered(btn, 0);
+  textSetFontSize(btn, 13);
+  tabBarButtons.push(btn);
+
+  activeTabIdx = 0;
   updateEditorTabs();
 
-  const tabBar = HStack(0, []);
-  setBg(tabBar, colors.tabInactiveBackground);
+  tabBarContainer = HStack(0, []);
+  setBg(tabBarContainer, colors.tabInactiveBackground);
   for (let i = 0; i < tabBarButtons.length; i++) {
-    widgetAddChild(tabBar, tabBarButtons[i]);
+    widgetAddChild(tabBarContainer, tabBarButtons[i]);
   }
-  widgetAddChild(tabBar, Spacer());
+  widgetAddChild(tabBarContainer, Spacer());
 
-  // Line numbers
-  const lineNumbers = VStack(2, []);
-  for (let i = 1; i <= 15; i++) {
-    const ln = Text(`${i}`);
-    textSetFontSize(ln, 13);
-    setFg(ln, colors.editorLineNumberForeground);
-    widgetAddChild(lineNumbers, ln);
+  // Create the editor (simplified constructor — no object spread or ??)
+  const ed = new Editor(800, 600);
+  editor = ed;
+
+  // Get the native NSView and embed it in Perry's layout.
+  // Use local `ed` (type Editor) not module-level `editor` (type Editor|null)
+  // to ensure Perry uses direct field access instead of dynamic property lookup.
+  // NOTE: Skip null check — Perry inverts `!== null` on union-typed fields.
+  // The constructor always sets nativeHandle, so it's safe to use directly.
+  const nsviewPtr = hone_editor_nsview(ed.nativeHandle as number);
+  editorWidget = embedNSView(nsviewPtr);
+
+  // Load default file content — pass ed directly to avoid module-level union-type check
+  displayFileContentDirect(ed, defaultFile);
+
+  const editorPane = VStack(0, [tabBarContainer]);
+  setBg(editorPane, colors.editorBackground);
+
+  // Add the embedded editor view
+  if (editorWidget) {
+    widgetAddChild(editorPane, editorWidget);
   }
+  widgetAddChild(editorPane, Spacer());
 
-  // Code content
-  const codeLines = [
-    'import { App } from "perry/ui";',
-    '',
-    'const count = State(0);',
-    '',
-    'export function main() {',
-    '  console.log("Hello Hone!");',
-    '}',
-    '',
-    '// AI-native code editor',
-    '// for all platforms',
-    '',
-    'function init() {',
-    '  loadThemes();',
-    '  registerCommands();',
-    '  createWindow();',
-    '}',
-  ];
-
-  const codeContent = VStack(2, []);
-  for (const line of codeLines) {
-    const t = Text(line || ' ');
-    textSetFontSize(t, 13);
-    setFg(t, colors.editorForeground);
-    widgetAddChild(codeContent, t);
-  }
-
-  const editorBody = HStackWithInsets(8, 4, 8, 4, 8);
-  setBg(editorBody, colors.editorBackground);
-  widgetAddChild(editorBody, lineNumbers);
-  widgetAddChild(editorBody, codeContent);
-
-  const editor = VStack(0, [tabBar, editorBody, Spacer()]);
-  setBg(editor, colors.editorBackground);
-
-  return editor;
+  return editorPane;
 }
 
 // ---------------------------------------------------------------------------
@@ -340,10 +442,10 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   themeColors = theme.uiColors;
 
   if (layoutMode === 'compact') {
-    const editor = renderEditorArea(themeColors);
+    const editorArea = renderEditorArea(themeColors);
     const bottomBar = renderActivityBarCompact(themeColors);
     const statusBar = renderStatusBar(themeColors);
-    const shell = VStack(0, [editor, statusBar, bottomBar]);
+    const shell = VStack(0, [editorArea, statusBar, bottomBar]);
     setBg(shell, themeColors.editorBackground);
     return shell;
   }
@@ -353,7 +455,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
 
   const activityBar = renderActivityBarDesktop(themeColors);
   const sidebar = renderSidebar(themeColors);
-  const editor = renderEditorArea(themeColors);
+  const editorArea = renderEditorArea(themeColors);
   const statusBar = renderStatusBar(themeColors);
 
   // Constrain panel widths so editor fills remaining space
@@ -361,7 +463,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   widgetSetHugging(activityBar, 750);
   widgetSetWidth(sidebar, 220);
   widgetSetHugging(sidebar, 750);
-  widgetSetHugging(editor, 1);
+  widgetSetHugging(editorArea, 1);
 
   // 1px vertical divider between sidebar and editor
   const sidebarBorder = VStack(0, []);
@@ -371,8 +473,8 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
 
   // Sidebar location: left (default) or right
   const mainRow = sidebarLocation === 'right'
-    ? HStack(0, [activityBar, editor, sidebarBorder, sidebar])
-    : HStack(0, [activityBar, sidebar, sidebarBorder, editor]);
+    ? HStack(0, [activityBar, editorArea, sidebarBorder, sidebar])
+    : HStack(0, [activityBar, sidebar, sidebarBorder, editorArea]);
 
   const shell = VStack(0, [mainRow, statusBar]);
   setBg(shell, themeColors.editorBackground);
