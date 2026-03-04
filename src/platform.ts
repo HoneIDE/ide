@@ -6,19 +6,9 @@
  * components subscribe to for adaptive rendering.
  */
 
-// Perry platform detection APIs
-declare function perry_get_platform(): string;
-declare function perry_get_screen_width(): number;
-declare function perry_get_screen_height(): number;
-declare function perry_get_scale_factor(): number;
-declare function perry_has_hardware_keyboard(): boolean;
-declare function perry_get_orientation(): string;
-declare function perry_on_resize(callback: (width: number, height: number) => void): void;
-declare function perry_on_orientation_change(callback: (orientation: string) => void): void;
-
-// Compile-time platform ID injected by Perry codegen:
-// 0 = macOS, 1 = iOS, 2 = Android, 3 = Windows, 4 = Linux
-declare const __platform__: number;
+// Platform detection: on Windows we know the platform at compile time.
+// The perry_get_* FFI functions are not available on all platforms,
+// so we use compile-time defaults for Windows builds.
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,56 +67,17 @@ const SPLIT_MAX_WIDTH = 1023;
 // ---------------------------------------------------------------------------
 
 export function detectPlatform(): Platform {
-  // Use compile-time __platform__ constant (Perry injects at codegen time)
-  // 0=macOS, 1=iOS, 2=Android, 3=Windows, 4=Linux
-  if (__platform__ === 1) return 'ios';
-  if (__platform__ === 2) return 'android';
-  if (__platform__ === 3) return 'windows';
-  if (__platform__ === 4) return 'linux';
-  if (__platform__ === 0) return 'macos';
-
-  // Fallback: try FFI (may not be implemented)
-  try {
-    const p = perry_get_platform();
-    if (p === 'macos' || p === 'windows' || p === 'linux' ||
-        p === 'ios' || p === 'ipados' || p === 'android' || p === 'web') {
-      return p as Platform;
-    }
-  } catch {
-    // Fallback for test environment
-  }
-  return 'web';
+  // Hardcoded for Windows build — perry_get_platform() FFI not available
+  return 'windows';
 }
 
 export function detectScreen(): ScreenInfo {
-  try {
-    const w = perry_get_screen_width();
-    const h = perry_get_screen_height();
-    const s = perry_get_scale_factor();
-    const o = perry_get_orientation();
-    return {
-      width: w,
-      height: h,
-      scaleFactor: s,
-      orientation: o === 'landscape' ? 'landscape' : 'portrait',
-    };
-  } catch {
-    // FFI not available — use platform-appropriate defaults
-    if (__platform__ === 1) {
-      // iOS (iPhone) — compact portrait
-      return { width: 393, height: 852, scaleFactor: 3, orientation: 'portrait' };
-    }
-    // Desktop / web fallback
-    return { width: 1440, height: 900, scaleFactor: 2, orientation: 'landscape' };
-  }
+  // Desktop defaults — perry_get_screen_* FFI not available on Windows yet
+  return { width: 1440, height: 900, scaleFactor: 2, orientation: 'landscape' };
 }
 
 export function detectHasHardwareKeyboard(): boolean {
-  try {
-    return perry_has_hardware_keyboard();
-  } catch {
-    return true;
-  }
+  return true;
 }
 
 export function classifyDevice(platform: Platform, screen: ScreenInfo): DeviceClass {
@@ -229,27 +180,8 @@ function notifyListeners(): void {
 }
 
 function installNativeListeners(): void {
-  try {
-    perry_on_resize((width, height) => {
-      if (!_current) return;
-      const screen: ScreenInfo = { ..._current.screen, width, height };
-      const deviceClass = classifyDevice(_current.platform, screen);
-      const layoutMode = selectLayoutMode(deviceClass, screen);
-      _current = { ..._current, screen, deviceClass, layoutMode };
-      notifyListeners();
-    });
-
-    perry_on_orientation_change((orientation) => {
-      if (!_current) return;
-      const o: Orientation = orientation === 'landscape' ? 'landscape' : 'portrait';
-      const screen: ScreenInfo = { ..._current.screen, orientation: o };
-      const layoutMode = selectLayoutMode(_current.deviceClass, screen);
-      _current = { ..._current, screen, layoutMode };
-      notifyListeners();
-    });
-  } catch {
-    // Native listeners not available (test/web fallback)
-  }
+  // perry_on_resize / perry_on_orientation_change FFI not available on Windows yet.
+  // TODO: Implement via Win32 WM_SIZE / WM_DISPLAYCHANGE messages.
 }
 
 // ---------------------------------------------------------------------------

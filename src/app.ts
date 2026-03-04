@@ -45,60 +45,8 @@ export function getAppState(): AppState | null {
 }
 
 // ---------------------------------------------------------------------------
-// Initialization
+// Initialization (disabled for now — async not supported by Perry on Windows)
 // ---------------------------------------------------------------------------
-
-/**
- * Initialize the IDE. Called before rendering, or directly in tests.
- */
-export async function initializeApp(themeData?: ThemeData): Promise<AppState> {
-  // 1. Platform detection
-  const ctx = getPlatformContext();
-
-  // 2. Load and activate theme
-  if (themeData) {
-    loadTheme(themeData);
-    setActiveTheme(themeData.name);
-  }
-
-  // 3. Register built-in commands
-  registerBuiltinCommands();
-
-  // 4. Register built-in panels
-  for (const panel of BUILTIN_PANELS) {
-    registerPanel(panel);
-  }
-
-  // 5. Create layout grid for current layout mode
-  const grid = createDefaultLayout(ctx.layoutMode);
-
-  // 6. Create tab manager
-  const tabManager = new TabManager();
-  tabManager.enforceLayoutConstraints(ctx.layoutMode);
-
-  // 7. Get keybindings
-  const keybindings = getDefaultKeybindings(ctx.platform);
-
-  // 8. Assemble state
-  const state: AppState = {
-    ctx,
-    grid,
-    tabManager,
-    keybindings,
-    initialized: true,
-  };
-  _appState = state;
-
-  // 9. Listen for platform changes (orientation, resize)
-  onPlatformContextChange((newCtx) => {
-    if (!_appState) return;
-    _appState.ctx = newCtx;
-    _appState.grid = createDefaultLayout(newCtx.layoutMode);
-    _appState.tabManager.enforceLayoutConstraints(newCtx.layoutMode);
-  });
-
-  return state;
-}
 
 // ---------------------------------------------------------------------------
 // Perry app entry point
@@ -111,8 +59,8 @@ setActiveTheme('Hone Dark');
 // Initialize core systems
 const ctx = getPlatformContext();
 registerBuiltinCommands();
-for (const panel of BUILTIN_PANELS) {
-  registerPanel(panel);
+for (let i = 0; i < BUILTIN_PANELS.length; i = i + 1) {
+  registerPanel(BUILTIN_PANELS[i]);
 }
 
 // Build the visual workbench
