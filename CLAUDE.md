@@ -8,11 +8,16 @@ No Rust here. All Rust lives in `../perry/` (Perry compiler) and its sub-crates.
 ## Commands
 
 ```bash
-# Compile (from hone-ide/)
+# Compile for macOS (from hone-ide/)
 perry compile src/app.ts --output hone-ide
 
+# Compile for Windows (from hone-ide/)
+perry compile src/app.ts --target windows --output hone-ide
+mv hone-ide hone-ide.exe  # Perry outputs without .exe extension
+
 # Run
-./hone-ide
+./hone-ide       # macOS
+./hone-ide.exe   # Windows
 
 # Type check only
 bun run typecheck
@@ -52,8 +57,19 @@ Only needed when changing Perry's Rust code:
 # Perry compiler
 cd ../perry && cargo build --release -p perry
 
-# Perry UI library (MUST disable LTO — thin LTO produces bitcode macOS linker can't read)
+# Perry UI library — macOS (MUST disable LTO — thin LTO produces bitcode macOS linker can't read)
 cd ../perry && CARGO_PROFILE_RELEASE_LTO=off cargo build --release -p perry-ui-macos
+
+# Perry UI library — Windows
+cd ../perry && cargo build --release -p perry-ui-windows
+
+# Perry stdlib (runtime functions used by generated code)
+cd ../perry && cargo build --release -p perry-stdlib
+```
+
+After rebuilding perry-ui-windows, delete the trimmed lib cache:
+```bash
+rm perry/target/release/_perry_ui_trimmed.lib
 ```
 
 ## Structure
@@ -73,11 +89,24 @@ src/
     │   ├── grid.ts           # GridNode — resizable panel layout
     │   ├── tab-manager.ts    # TabManager — editor tabs
     │   ├── panel-registry.ts # Panel registration, BUILTIN_PANELS
-    │   └── activity-bar.ts   # Activity bar layout helpers
-    └── theme/
-        ├── theme-loader.ts   # loadTheme, getActiveTheme, ResolvedUIColors
-        ├── builtin-themes.ts # HONE_DARK, HONE_LIGHT theme data
-        └── token-theme.ts    # TextMate token color resolution
+    │   ├── activity-bar.ts   # Activity bar layout helpers
+    │   ├── status-bar.ts     # Status bar layout helpers
+    │   └── index.ts          # Layout barrel export
+    ├── theme/
+    │   ├── theme-loader.ts   # loadTheme, getActiveTheme, ResolvedUIColors
+    │   ├── builtin-themes.ts # HONE_DARK, HONE_LIGHT theme data
+    │   ├── token-theme.ts    # TextMate token color resolution
+    │   ├── ui-theme.ts       # UI theme types
+    │   ├── load-builtin-themes.ts
+    │   └── index.ts          # Theme barrel export
+    └── views/
+        ├── explorer/         # File explorer panel
+        │   ├── file-tree.ts
+        │   ├── file-tree-item.ts
+        │   ├── file-operations.ts
+        │   └── index.ts
+        └── quick-open/       # Quick open (Cmd+P / Ctrl+P)
+            └── quick-open.ts
 ```
 
 ## Perry UI API cheatsheet
@@ -112,7 +141,8 @@ widgetSetHugging(w, 750);           // content hugging priority
 - **Sidebar**: 220px wide, configurable left or right via `settings.sidebarLocation`
 - **Editor**: fills remaining space (low hugging priority)
 - **Status bar**: HStack at bottom
-- Window content pinned to `contentLayoutGuide` (not superview) to avoid title bar overlap
+- Window content pinned to `contentLayoutGuide` (not superview) to avoid title bar overlap (macOS)
+- On Windows, layout uses Win32 child HWNDs with manual positioning in WM_SIZE
 
 ## Workbench settings
 
@@ -147,6 +177,7 @@ osascript -e 'tell application "System Events" to tell process "hone-ide" to get
 See `../INTEGRATED_PLAN.md` for the full roadmap. Each slice adds views under `src/workbench/views/`:
 - Slice 0: Shell + theme ✅ (`render.ts`, `theme/`)
 - Slice 2: Settings runtime ✅ (`settings.ts`)
+- Windows port: Layout + editor ✅ (all UI features working)
 - Slice 3: Editor integration 🔜 (`views/editor/`)
 - Slice 4: Git 🔜 (`views/git/`)
 - Slice 5: Search 🔜 (`views/search/`)

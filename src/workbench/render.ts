@@ -72,27 +72,41 @@ interface FileEntry {
 
 // Perry string + operator is broken — all paths and labels must be full string literals
 const FILE_ENTRIES: FileEntry[] = [
-  { name: 'src/', path: '/Users/amlug/projects/hone/hone-ide/src', depth: 0, isDir: true, label: '\u25B6 src/' },
-  { name: 'app.ts', path: '/Users/amlug/projects/hone/hone-ide/src/app.ts', depth: 1, isDir: false, label: '    app.ts' },
-  { name: 'platform.ts', path: '/Users/amlug/projects/hone/hone-ide/src/platform.ts', depth: 1, isDir: false, label: '    platform.ts' },
-  { name: 'commands.ts', path: '/Users/amlug/projects/hone/hone-ide/src/commands.ts', depth: 1, isDir: false, label: '    commands.ts' },
-  { name: 'keybindings.ts', path: '/Users/amlug/projects/hone/hone-ide/src/keybindings.ts', depth: 1, isDir: false, label: '    keybindings.ts' },
-  { name: 'menu.ts', path: '/Users/amlug/projects/hone/hone-ide/src/menu.ts', depth: 1, isDir: false, label: '    menu.ts' },
-  { name: 'window.ts', path: '/Users/amlug/projects/hone/hone-ide/src/window.ts', depth: 1, isDir: false, label: '    window.ts' },
-  { name: 'workbench/', path: '/Users/amlug/projects/hone/hone-ide/src/workbench', depth: 1, isDir: true, label: '  \u25B6 workbench/' },
-  { name: 'render.ts', path: '/Users/amlug/projects/hone/hone-ide/src/workbench/render.ts', depth: 2, isDir: false, label: '        render.ts' },
-  { name: 'settings.ts', path: '/Users/amlug/projects/hone/hone-ide/src/workbench/settings.ts', depth: 2, isDir: false, label: '        settings.ts' },
-  { name: 'layout/', path: '/Users/amlug/projects/hone/hone-ide/src/workbench/layout', depth: 2, isDir: true, label: '    \u25B6 layout/' },
-  { name: 'grid.ts', path: '/Users/amlug/projects/hone/hone-ide/src/workbench/layout/grid.ts', depth: 3, isDir: false, label: '            grid.ts' },
-  { name: 'tab-manager.ts', path: '/Users/amlug/projects/hone/hone-ide/src/workbench/layout/tab-manager.ts', depth: 3, isDir: false, label: '            tab-manager.ts' },
-  { name: 'panel-registry.ts', path: '/Users/amlug/projects/hone/hone-ide/src/workbench/layout/panel-registry.ts', depth: 3, isDir: false, label: '            panel-registry.ts' },
-  { name: 'theme/', path: '/Users/amlug/projects/hone/hone-ide/src/workbench/theme', depth: 2, isDir: true, label: '    \u25B6 theme/' },
-  { name: 'theme-loader.ts', path: '/Users/amlug/projects/hone/hone-ide/src/workbench/theme/theme-loader.ts', depth: 3, isDir: false, label: '            theme-loader.ts' },
-  { name: 'builtin-themes.ts', path: '/Users/amlug/projects/hone/hone-ide/src/workbench/theme/builtin-themes.ts', depth: 3, isDir: false, label: '            builtin-themes.ts' },
-  { name: 'token-theme.ts', path: '/Users/amlug/projects/hone/hone-ide/src/workbench/theme/token-theme.ts', depth: 3, isDir: false, label: '            token-theme.ts' },
-  { name: 'package.json', path: '/Users/amlug/projects/hone/hone-ide/package.json', depth: 0, isDir: false, label: '  package.json' },
-  { name: 'tsconfig.json', path: '/Users/amlug/projects/hone/hone-ide/tsconfig.json', depth: 0, isDir: false, label: '  tsconfig.json' },
-  { name: 'CLAUDE.md', path: '/Users/amlug/projects/hone/hone-ide/CLAUDE.md', depth: 0, isDir: false, label: '  CLAUDE.md' },
+  { name: 'src/', path: 'C:/Users/Ralph/projects/hone/hone-ide/src', depth: 0, isDir: true, label: '\u25B6 src/' },
+  { name: 'app.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/app.ts', depth: 1, isDir: false, label: '    app.ts' },
+  { name: 'commands.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/commands.ts', depth: 1, isDir: false, label: '    commands.ts' },
+  { name: 'keybindings.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/keybindings.ts', depth: 1, isDir: false, label: '    keybindings.ts' },
+  { name: 'menu.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/menu.ts', depth: 1, isDir: false, label: '    menu.ts' },
+  { name: 'platform.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/platform.ts', depth: 1, isDir: false, label: '    platform.ts' },
+  { name: 'window.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/window.ts', depth: 1, isDir: false, label: '    window.ts' },
+  { name: 'workbench/', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench', depth: 1, isDir: true, label: '  \u25B6 workbench/' },
+  { name: 'render.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/render.ts', depth: 2, isDir: false, label: '        render.ts' },
+  { name: 'settings.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/settings.ts', depth: 2, isDir: false, label: '        settings.ts' },
+  { name: 'layout/', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/layout', depth: 2, isDir: true, label: '    \u25B6 layout/' },
+  { name: 'activity-bar.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/layout/activity-bar.ts', depth: 3, isDir: false, label: '            activity-bar.ts' },
+  { name: 'grid.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/layout/grid.ts', depth: 3, isDir: false, label: '            grid.ts' },
+  { name: 'index.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/layout/index.ts', depth: 3, isDir: false, label: '            index.ts' },
+  { name: 'panel-registry.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/layout/panel-registry.ts', depth: 3, isDir: false, label: '            panel-registry.ts' },
+  { name: 'status-bar.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/layout/status-bar.ts', depth: 3, isDir: false, label: '            status-bar.ts' },
+  { name: 'tab-manager.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/layout/tab-manager.ts', depth: 3, isDir: false, label: '            tab-manager.ts' },
+  { name: 'theme/', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/theme', depth: 2, isDir: true, label: '    \u25B6 theme/' },
+  { name: 'builtin-themes.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/theme/builtin-themes.ts', depth: 3, isDir: false, label: '            builtin-themes.ts' },
+  { name: 'index.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/theme/index.ts', depth: 3, isDir: false, label: '            index.ts' },
+  { name: 'load-builtin-themes.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/theme/load-builtin-themes.ts', depth: 3, isDir: false, label: '            load-builtin-themes.ts' },
+  { name: 'theme-loader.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/theme/theme-loader.ts', depth: 3, isDir: false, label: '            theme-loader.ts' },
+  { name: 'token-theme.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/theme/token-theme.ts', depth: 3, isDir: false, label: '            token-theme.ts' },
+  { name: 'ui-theme.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/theme/ui-theme.ts', depth: 3, isDir: false, label: '            ui-theme.ts' },
+  { name: 'views/', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/views', depth: 2, isDir: true, label: '    \u25B6 views/' },
+  { name: 'explorer/', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/views/explorer', depth: 3, isDir: true, label: '      \u25B6 explorer/' },
+  { name: 'file-operations.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/views/explorer/file-operations.ts', depth: 4, isDir: false, label: '                file-operations.ts' },
+  { name: 'file-tree-item.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/views/explorer/file-tree-item.ts', depth: 4, isDir: false, label: '                file-tree-item.ts' },
+  { name: 'file-tree.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/views/explorer/file-tree.ts', depth: 4, isDir: false, label: '                file-tree.ts' },
+  { name: 'index.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/views/explorer/index.ts', depth: 4, isDir: false, label: '                index.ts' },
+  { name: 'quick-open/', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/views/quick-open', depth: 3, isDir: true, label: '      \u25B6 quick-open/' },
+  { name: 'quick-open.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/views/quick-open/quick-open.ts', depth: 4, isDir: false, label: '                quick-open.ts' },
+  { name: 'package.json', path: 'C:/Users/Ralph/projects/hone/hone-ide/package.json', depth: 0, isDir: false, label: '  package.json' },
+  { name: 'tsconfig.json', path: 'C:/Users/Ralph/projects/hone/hone-ide/tsconfig.json', depth: 0, isDir: false, label: '  tsconfig.json' },
+  { name: 'CLAUDE.md', path: 'C:/Users/Ralph/projects/hone/hone-ide/CLAUDE.md', depth: 0, isDir: false, label: '  CLAUDE.md' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -368,7 +382,7 @@ function renderEditorArea(colors: ResolvedUIColors): unknown {
   openTabNames = [];
 
   // Start with app.ts open — use literal paths (Perry string + is broken)
-  const defaultFile = '/Users/amlug/projects/hone/hone-ide/src/app.ts';
+  const defaultFile = 'C:/Users/Ralph/projects/hone/hone-ide/src/app.ts';
   const defaultName = 'app.ts';
   openTabs.push(defaultFile);
   openTabNames.push(defaultName);
