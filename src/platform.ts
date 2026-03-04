@@ -72,7 +72,29 @@ export function detectPlatform(): Platform {
 }
 
 export function detectScreen(): ScreenInfo {
-  // Desktop defaults — perry_get_screen_* FFI not available on Windows yet
+  try {
+    const w = perry_get_screen_width();
+    const h = perry_get_screen_height();
+    const s = perry_get_scale_factor();
+    const o = perry_get_orientation();
+    // Validate — if FFI stubs returned 0, fall through to defaults
+    if (w > 0 && h > 0) {
+      return {
+        width: w,
+        height: h,
+        scaleFactor: s > 0 ? s : 2,
+        orientation: o === 'landscape' ? 'landscape' : 'portrait',
+      };
+    }
+  } catch {
+    // FFI not available
+  }
+  // Platform-appropriate defaults
+  if (__platform__ === 1) {
+    // iOS (iPhone) — compact portrait
+    return { width: 393, height: 852, scaleFactor: 3, orientation: 'portrait' };
+  }
+  // Desktop fallback
   return { width: 1440, height: 900, scaleFactor: 2, orientation: 'landscape' };
 }
 
@@ -116,7 +138,9 @@ export function selectLayoutMode(
     }
     return 'split';
   }
-  // Desktop + web wide
+  // Desktop: always full layout (macOS, Windows, Linux)
+  if (deviceClass === 'desktop') return 'full';
+  // Web: use viewport width for responsive layout
   if (screen.width <= COMPACT_MAX_WIDTH) return 'compact';
   if (screen.width <= SPLIT_MAX_WIDTH) return 'split';
   return 'full';

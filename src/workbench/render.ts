@@ -16,9 +16,11 @@ import {
   textSetColor, textSetFontSize, textSetFontWeight, textSetFontFamily,
   textSetString,
   buttonSetBordered, buttonSetTextColor, buttonSetTitle, buttonSetImage,
-  buttonSetContentTintColor,
-  widgetSetBackgroundColor, widgetAddChild, widgetClearChildren,
-  widgetSetWidth, widgetSetHugging, widgetSetHidden, embedNSView,
+  buttonSetImagePosition, buttonSetContentTintColor,
+  widgetSetBackgroundColor, widgetAddChild, widgetAddChildAt, widgetClearChildren,
+  widgetSetWidth, widgetSetHugging, widgetSetHidden, widgetRemoveChild,
+  widgetSetContextMenu, menuCreate, menuAddItem,
+  embedNSView,
   openFolderDialog, openFileDialog,
 } from 'perry/ui';
 import { Editor } from '@honeide/editor/perry';
@@ -86,39 +88,41 @@ interface FileEntry {
 let workspaceRoot = '';
 let fileEntries: FileEntry[] = [];
 
-/** Load a flat file list from a directory (1 level deep). */
-function loadFileTree(rootPath: string): void {
-  workspaceRoot = rootPath;
-  fileEntries = [];
-  const names: string[] = readdirSync(rootPath);
-  // Separate dirs and files, then sort each alphabetically
-  const dirs: string[] = [];
-  const files: string[] = [];
-  for (let i = 0; i < names.length; i++) {
-    const name = names[i];
-    // Skip hidden files/dirs
-    if (name.charAt(0) === '.') continue;
-    const fullPath = join(rootPath, name);
-    if (isDirectory(fullPath)) {
-      dirs.push(name);
-    } else {
-      files.push(name);
-    }
-  }
-  dirs.sort();
-  files.sort();
-  // Dirs first, then files
-  for (let i = 0; i < dirs.length; i++) {
-    const name = dirs[i];
-    const fullPath = join(rootPath, name);
-    fileEntries.push({ name: name, path: fullPath, depth: 0, isDir: true, label: name });
-  }
-  for (let i = 0; i < files.length; i++) {
-    const name = files[i];
-    const fullPath = join(rootPath, name);
-    fileEntries.push({ name: name, path: fullPath, depth: 0, isDir: false, label: name });
-  }
+// Expanded directory tracking — individual module-level variables (no arrays).
+// Uses pathHash = length * 256 + lastCharCode for collision-resistant IDs.
+let exp0 = -1;
+let exp1 = -1;
+let exp2 = -1;
+let exp3 = -1;
+let exp4 = -1;
+let exp5 = -1;
+let exp6 = -1;
+let exp7 = -1;
+
+/** Compute a numeric hash for a path: length * 256 + lastCharCode. */
+function pathId(path: string): number {
+  const len = path.length;
+  const last = path.charCodeAt(len - 1);
+  return len * 256 + last;
 }
+
+/** Check if a directory path is currently expanded (no array, no loop). */
+function isDirExpanded(path: string): boolean {
+  const id = pathId(path);
+  if (exp0 === id) return true;
+  if (exp1 === id) return true;
+  if (exp2 === id) return true;
+  if (exp3 === id) return true;
+  if (exp4 === id) return true;
+  if (exp5 === id) return true;
+  if (exp6 === id) return true;
+  if (exp7 === id) return true;
+  return false;
+}
+
+
+/** Track entry count explicitly (Perry .length may be stale on module-level arrays). */
+let fileEntryCount = 0;
 
 // ---------------------------------------------------------------------------
 // Data
@@ -129,6 +133,7 @@ const PANELS = ['Files', 'Search', 'Git', 'Debug', 'Ext'];
 /** Open tabs — each entry is a file path */
 let openTabs: string[] = [];
 let openTabNames: string[] = [];
+let openTabCount: number = 0;  // Manual count since Perry .push() may not update .length across calls
 
 // ---------------------------------------------------------------------------
 // Module-level widget refs (Perry closures capture by value, so we must
@@ -145,6 +150,7 @@ let activeActivityIdx = 0;
 let fileTreeButtons: unknown[] = [];
 let selectedFileIdx = -1;
 let sidebarContainer: unknown = null;
+let sidebarReady: number = 0;
 
 // Editor tabs
 let tabBarButtons: unknown[] = [];
@@ -152,6 +158,7 @@ let activeTabIdx = 0;
 
 // Editor content widgets
 let tabBarContainer: unknown = null;
+let tabBarReady: number = 0;  // 0 = not set, 1 = ready (numeric flag avoids NaN-box truthiness issue)
 
 // The real editor instance — avoid union type (Editor | null) since Perry
 // inverts null checks on union-typed variables and closures lose `this`.
@@ -163,6 +170,7 @@ let editorWidget: unknown = null;
 let sidebarWidget: unknown = null;
 let sidebarBorderWidget: unknown = null;
 let sidebarVisible: number = 1;
+let sidebarToggleReady: number = 0;
 
 // Compact layout panel toggling
 let compactEditorPane: unknown = null;
@@ -187,7 +195,7 @@ function updateActivityBar(): void {
 function updateFileTree(): void {
   if (!themeColors) return;
   for (let i = 0; i < fileTreeButtons.length; i++) {
-    if (i === selectedFileIdx && i < fileEntries.length && !fileEntries[i].isDir) {
+    if (i === selectedFileIdx && i < fileEntries.length && !isDirectory(fileEntries[i].path)) {
       setBg(fileTreeButtons[i], themeColors.listActiveSelectionBackground);
       setBtnFg(fileTreeButtons[i], themeColors.listActiveSelectionForeground);
     } else {
@@ -210,9 +218,12 @@ function updateEditorTabs(): void {
   }
 }
 
-/** Rebuild sidebar file tree from current fileEntries. */
+/** Rebuild sidebar file tree by directly reading the filesystem.
+ *  We do this INSIDE refreshSidebar because Perry module-level variable reads
+ *  (exp0, exp1, etc.) work correctly here but NOT in functions called from
+ *  loadFileTree/addDirEntries (those see stale snapshots). */
 function refreshSidebar(): void {
-  if (!themeColors || !sidebarContainer) return;
+  if (sidebarReady < 1) return;
   widgetClearChildren(sidebarContainer);
 
   const title = Text('EXPLORER');
@@ -222,33 +233,110 @@ function refreshSidebar(): void {
   widgetAddChild(sidebarContainer, title);
 
   fileTreeButtons = [];
+  fileEntries = [];
+  fileEntryCount = 0;
   selectedFileIdx = -1;
 
-  for (let i = 0; i < fileEntries.length; i++) {
-    const file = fileEntries[i];
-    const idx = i;
-    const btn = Button(file.label, () => { onFileClick(idx); });
+  if (workspaceRoot.length > 0) {
+    renderTreeLevel(workspaceRoot, 0);
+  }
+
+  widgetAddChild(sidebarContainer, Spacer());
+}
+
+/** Render one level of the file tree directly into sidebarContainer.
+ *  Called from refreshSidebar — reads exp0..exp7 which are fresh in this context. */
+function renderTreeLevel(dirPath: string, depth: number): void {
+  const names: string[] = readdirSync(dirPath);
+  const dirs: string[] = [];
+  const files: string[] = [];
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    if (name.charCodeAt(0) === 46) continue; // skip hidden
+    const fullPath = join(dirPath, name);
+    if (isDirectory(fullPath)) {
+      dirs.push(name);
+    } else {
+      files.push(name);
+    }
+  }
+  dirs.sort();
+  files.sort();
+
+  // Dirs first
+  for (let i = 0; i < dirs.length; i++) {
+    const name = dirs[i];
+    const fullPath = join(dirPath, name);
+    const idx = fileEntryCount;
+    fileEntries[idx] = { name: name, path: fullPath, depth: depth, isDir: true, label: name };
+    fileEntryCount = fileEntryCount + 1;
+
+    const expanded = isDirExpanded(fullPath);
+    // Capture pathId as a NUMBER in the closure — immune to string GC
+    const dirId = pathId(fullPath);
+    const btn = Button(name, () => { onDirToggle(dirId); });
     buttonSetBordered(btn, 0);
     textSetFontSize(btn, 13);
-    if (file.isDir) {
-      buttonSetImage(btn, 'folder.fill');
-      setBtnTint(btn, '#E8AB53');
+    if (expanded) {
+      buttonSetImage(btn, 'folder');
     } else {
-      buttonSetImage(btn, 'doc.text');
-      if (themeColors) {
-        setBtnTint(btn, themeColors.sideBarForeground);
-      }
+      buttonSetImage(btn, 'folder.fill');
     }
-    fileTreeButtons.push(btn);
-    widgetAddChild(sidebarContainer, btn);
+    setBtnTint(btn, '#E8AB53');
+
+    if (depth > 0) {
+      const row = HStack(0, []);
+      const indent = Text('');
+      widgetSetWidth(indent, depth * 16);
+      widgetAddChild(row, indent);
+      widgetAddChild(row, btn);
+      fileTreeButtons.push(btn);
+      widgetAddChild(sidebarContainer, row);
+    } else {
+      fileTreeButtons.push(btn);
+      widgetAddChild(sidebarContainer, btn);
+    }
+
+    // Recurse into expanded dirs
+    if (expanded) {
+      renderTreeLevel(fullPath, depth + 1);
+    }
   }
-  updateFileTree();
-  widgetAddChild(sidebarContainer, Spacer());
+
+  // Files after dirs
+  for (let i = 0; i < files.length; i++) {
+    const name = files[i];
+    const fullPath = join(dirPath, name);
+    const idx = fileEntryCount;
+    fileEntries[idx] = { name: name, path: fullPath, depth: depth, isDir: false, label: name };
+    fileEntryCount = fileEntryCount + 1;
+
+    const btn = Button(name, () => { onFileClick(idx); });
+    buttonSetBordered(btn, 0);
+    textSetFontSize(btn, 13);
+    buttonSetImage(btn, 'doc.text');
+    if (themeColors) {
+      setBtnTint(btn, themeColors.sideBarForeground);
+    }
+
+    if (depth > 0) {
+      const row = HStack(0, []);
+      const indent = Text('');
+      widgetSetWidth(indent, depth * 16);
+      widgetAddChild(row, indent);
+      widgetAddChild(row, btn);
+      fileTreeButtons.push(btn);
+      widgetAddChild(sidebarContainer, row);
+    } else {
+      fileTreeButtons.push(btn);
+      widgetAddChild(sidebarContainer, btn);
+    }
+  }
 }
 
 /** Module-level callback for folder dialog — called from menu or elsewhere. */
 function onFolderOpened(folderPath: string): void {
-  loadFileTree(folderPath);
+  workspaceRoot = folderPath;
   refreshSidebar();
 }
 
@@ -266,7 +354,7 @@ function onFolderOpenedCb(path: string): void {
 
 /** Toggle sidebar visibility — callable from menu bar. */
 export function toggleSidebarAction(): void {
-  if (!sidebarWidget) return;
+  if (sidebarToggleReady < 1) return;
   if (sidebarVisible > 0) {
     sidebarVisible = 0;
     widgetSetHidden(sidebarWidget, 1);
@@ -280,59 +368,60 @@ export function toggleSidebarAction(): void {
 
 /** Close the active editor tab — callable from menu bar. */
 export function closeEditorAction(): void {
-  if (openTabs.length === 0) return;
-  if (activeTabIdx < 0 || activeTabIdx >= openTabs.length) return;
-
-  // Build new arrays without the closed tab (avoid splice — Perry safety)
-  const newTabs: string[] = [];
-  const newNames: string[] = [];
-  for (let i = 0; i < openTabs.length; i++) {
-    if (i !== activeTabIdx) {
-      newTabs.push(openTabs[i]);
-      newNames.push(openTabNames[i]);
-    }
-  }
-  openTabs = newTabs;
-  openTabNames = newNames;
-
-  // Adjust active index
-  if (activeTabIdx >= openTabs.length && openTabs.length > 0) {
-    activeTabIdx = openTabs.length - 1;
-  }
-
-  // Rebuild tab bar
-  rebuildTabBar();
-
-  // Show content of new active tab
-  if (openTabs.length > 0 && activeTabIdx >= 0) {
-    displayFileContent(openTabs[activeTabIdx]);
-  }
+  onTabClose(activeTabIdx);
 }
 
 /** Rebuild the tab bar from current openTabs/openTabNames. */
 function rebuildTabBar(): void {
-  if (!tabBarContainer || !themeColors) return;
-  widgetClearChildren(tabBarContainer);
-  tabBarButtons = [];
-
-  for (let i = 0; i < openTabs.length; i++) {
-    const idx = i;
-    const name = openTabNames[i];
-    const btn = Button(name, () => { onTabClick(idx); });
-    buttonSetBordered(btn, 0);
-    textSetFontSize(btn, 13);
-    tabBarButtons.push(btn);
-    widgetAddChild(tabBarContainer, btn);
+  if (tabBarReady > 0) {
+    rebuildTabBarDirect(openTabCount, openTabNames, openTabs, tabBarContainer);
   }
-  widgetAddChild(tabBarContainer, Spacer());
-  updateEditorTabs();
 }
 
-/** Extract filename from a full path. */
+/** Rebuild the tab bar — pass all data directly to avoid stale module-level reads. */
+function rebuildTabBarDirect(count: number, names: string[], paths: string[], container: unknown): void {
+  widgetClearChildren(container);
+  tabBarButtons = [];
+
+  for (let i = 0; i < count; i++) {
+    const idx = i;
+    const name = names[i];
+    const path = paths[i];
+    // Capture path in closure so tab click doesn't need module-level array reads
+    const btn = Button(name, () => { onTabClickDirect(idx, path); });
+    buttonSetBordered(btn, 0);
+    textSetFontSize(btn, 13);
+    tabBarButtons[i] = btn;
+    widgetAddChild(container, btn);
+  }
+  widgetAddChild(container, Spacer());
+
+  // Apply colors inline (avoid reading themeColors from a separate function)
+  applyTabColors(count);
+}
+
+/** Apply tab colors to current tabBarButtons. */
+function applyTabColors(count: number): void {
+  if (!themeColors) return;
+  for (let i = 0; i < count; i++) {
+    if (i === activeTabIdx) {
+      setBtnFg(tabBarButtons[i], themeColors.tabActiveForeground);
+      setBg(tabBarButtons[i], themeColors.tabActiveBackground);
+    } else {
+      setBtnFg(tabBarButtons[i], themeColors.tabInactiveForeground);
+      setBg(tabBarButtons[i], themeColors.tabInactiveBackground);
+    }
+  }
+}
+
+
+/** Extract filename from a full path. Uses charCodeAt for comparison
+ *  since Perry's string === is broken (always returns true). */
 function getFileName(filePath: string): string {
   let lastSlash = -1;
   for (let i = 0; i < filePath.length; i++) {
-    if (filePath.charAt(i) === '/') lastSlash = i;
+    // 47 = '/' char code
+    if (filePath.charCodeAt(i) === 47) lastSlash = i;
   }
   if (lastSlash >= 0) {
     return filePath.slice(lastSlash + 1);
@@ -375,40 +464,76 @@ function displayFileContent(filePath: string): void {
 }
 
 function openFileInEditor(filePath: string, fileName: string): void {
-  if (!themeColors) return;
+  // Compute display name inline (Perry function returns for strings are unreliable)
+  let lastSlash = -1;
+  for (let i = 0; i < filePath.length; i++) {
+    if (filePath.charCodeAt(i) === 47) lastSlash = i;  // 47 = '/'
+  }
+  let displayName = filePath;
+  if (lastSlash >= 0) {
+    displayName = filePath.slice(lastSlash + 1);
+  }
 
-  // Check if already open
-  let tabIdx = -1;
-  for (let i = 0; i < openTabs.length; i++) {
-    if (openTabs[i] === filePath) {
-      tabIdx = i;
-      break;
+  // Append a new tab to the tab bar (don't clear — module-level arrays are stale
+  // from callbacks, so we can't rebuild from stored data).
+  if (tabBarReady > 0) {
+    // Create tab group: [name button, close button] with padding
+    const tabGroup = HStackWithInsets(4, 0, 10, 0, 6);
+    const tabBtn = Button(displayName, () => { loadFileFromTab(filePath); });
+    buttonSetBordered(tabBtn, 0);
+    textSetFontSize(tabBtn, 13);
+    // Close button — xmark icon
+    const closeBtn = Button('', () => { removeTabGroup(tabGroup); });
+    buttonSetBordered(closeBtn, 0);
+    buttonSetImage(closeBtn, 'xmark');
+    buttonSetImagePosition(closeBtn, 1);
+    textSetFontSize(closeBtn, 9);
+    widgetAddChild(tabGroup, tabBtn);
+    widgetAddChild(tabGroup, closeBtn);
+    if (themeColors) {
+      setBtnFg(tabBtn, themeColors.tabActiveForeground);
+      setBg(tabGroup, themeColors.tabActiveBackground);
+      setBtnFg(closeBtn, themeColors.tabActiveForeground);
     }
+    // Context menu for right-click
+    const tabMenu = menuCreate();
+    menuAddItem(tabMenu, 'Close', () => { removeTabGroup(tabGroup); });
+    menuAddItem(tabMenu, 'Close Others', () => { closeOtherTabGroups(tabGroup); });
+    menuAddItem(tabMenu, 'Close All', () => { closeAllTabs(); });
+    widgetSetContextMenu(tabGroup, tabMenu);
+    widgetAddChild(tabBarContainer, tabGroup);
   }
 
-  if (tabIdx >= 0) {
-    // Already open — just switch to it
-    activeTabIdx = tabIdx;
-    updateEditorTabs();
-    displayFileContent(filePath);
-    return;
+  // Load file content
+  if (editorReady > 0) {
+    const content = readFileSync(filePath);
+    editorInstance.setContent(content);
+    editorInstance.render();
   }
+}
 
-  // Add new tab
-  openTabs.push(filePath);
-  openTabNames.push(fileName);
+/** Load file content — called from tab click closures with captured path. */
+function loadFileFromTab(filePath: string): void {
+  if (editorReady > 0) {
+    const content = readFileSync(filePath);
+    editorInstance.setContent(content);
+    editorInstance.render();
+  }
+}
 
-  // Create tab button and add to tab bar
-  const idx = openTabs.length - 1;
-  const btn = Button(fileName, () => { onTabClick(idx); });
-  buttonSetBordered(btn, 0);
-  textSetFontSize(btn, 13);
-  tabBarButtons.push(btn);
-  widgetAddChild(tabBarContainer, btn);
+/** Hide a tab group (close the tab). */
+function removeTabGroup(group: unknown): void {
+  widgetRemoveChild(tabBarContainer, group);
+}
 
-  activeTabIdx = idx;
-  updateEditorTabs();
-  displayFileContent(filePath);
+function closeAllTabs(): void {
+  widgetClearChildren(tabBarContainer);
+}
+
+function closeOtherTabGroups(keepGroup: unknown): void {
+  // Clear all and re-add the one to keep
+  widgetClearChildren(tabBarContainer);
+  widgetAddChild(tabBarContainer, keepGroup);
 }
 
 function onActivityClick(idx: number): void {
@@ -419,7 +544,7 @@ function onActivityClick(idx: number): void {
 
 /** Switch sidebar content based on activity bar selection. */
 function switchSidebarPanel(idx: number): void {
-  if (!themeColors || !sidebarContainer) return;
+  if (sidebarReady < 1) return;
   if (idx === 0) {
     // Explorer — rebuild file tree
     refreshSidebar();
@@ -450,26 +575,97 @@ function switchSidebarPanel(idx: number): void {
   widgetAddChild(sidebarContainer, Spacer());
 }
 
-function onFileClick(idx: number): void {
-  selectedFileIdx = idx;
-  updateFileTree();
+/** Toggle dir expansion using pre-computed numeric ID (no string reads at click time). */
+function onDirToggle(id: number): void {
+  toggleExpById(id);
+  refreshSidebar();
+}
 
-  if (idx >= fileEntries.length) return;
+/** Toggle expansion by numeric ID directly (no pathId computation needed). */
+function toggleExpById(id: number): void {
+  if (exp0 === id) { exp0 = -1; return; }
+  if (exp1 === id) { exp1 = -1; return; }
+  if (exp2 === id) { exp2 = -1; return; }
+  if (exp3 === id) { exp3 = -1; return; }
+  if (exp4 === id) { exp4 = -1; return; }
+  if (exp5 === id) { exp5 = -1; return; }
+  if (exp6 === id) { exp6 = -1; return; }
+  if (exp7 === id) { exp7 = -1; return; }
+  if (exp0 === -1) { exp0 = id; return; }
+  if (exp1 === -1) { exp1 = id; return; }
+  if (exp2 === -1) { exp2 = id; return; }
+  if (exp3 === -1) { exp3 = id; return; }
+  if (exp4 === -1) { exp4 = id; return; }
+  if (exp5 === -1) { exp5 = id; return; }
+  if (exp6 === -1) { exp6 = id; return; }
+  if (exp7 === -1) { exp7 = id; return; }
+}
+
+function onFileClick(idx: number): void {
+  if (idx >= fileEntryCount) return;
   const entry = fileEntries[idx];
-  if (!entry.isDir) {
-    openFileInEditor(entry.path, entry.name);
-    // Auto-hide explorer in compact mode
-    if (compactShowingExplorer > 0) {
-      hideExplorer();
-    }
+  openFileInEditor(entry.path, entry.label);
+  if (compactShowingExplorer > 0) {
+    hideExplorer();
   }
 }
 
 function onTabClick(idx: number): void {
   activeTabIdx = idx;
   updateEditorTabs();
-  if (idx < openTabs.length) {
+  if (idx < openTabCount) {
     displayFileContent(openTabs[idx]);
+  }
+}
+
+/** Tab click with captured path — avoids stale module-level array reads. */
+function onTabClickDirect(idx: number, path: string): void {
+  activeTabIdx = idx;
+  // Color update — tabBarButtons may be stale from callback, skip if empty
+  if (tabBarButtons.length > 0) {
+    applyTabColors(tabBarButtons.length);
+  }
+  // Load file content using captured path (not module-level array)
+  if (editorReady > 0) {
+    const content = readFileSync(path);
+    editorInstance.setContent(content);
+    editorInstance.render();
+  }
+}
+
+function onTabClose(idx: number): void {
+  if (openTabCount < 2) return; // Don't close the last tab
+  // Build new arrays without the closed tab
+  const newTabs: string[] = [];
+  const newNames: string[] = [];
+  let j = 0;
+  for (let i = 0; i < openTabCount; i++) {
+    if (i === idx) continue;
+    newTabs[j] = openTabs[i];
+    newNames[j] = openTabNames[i];
+    j = j + 1;
+  }
+  const newCount = j;
+  openTabs = newTabs;
+  openTabNames = newNames;
+  openTabCount = newCount;
+
+  // Adjust active tab index
+  if (activeTabIdx >= newCount) {
+    activeTabIdx = newCount - 1;
+  }
+  if (activeTabIdx > idx) {
+    activeTabIdx = activeTabIdx - 1;
+  }
+
+  // Rebuild tab bar — pass local refs
+  if (tabBarReady > 0) {
+    rebuildTabBarDirect(newCount, newNames, newTabs, tabBarContainer);
+  }
+  if (editorReady > 0 && activeTabIdx >= 0) {
+    const content = readFileSync(newTabs[activeTabIdx]);
+    editorInstance.setContent(content);
+    editorInstance.render();
   }
 }
 
@@ -488,7 +684,7 @@ function renderActivityBarDesktop(colors: ResolvedUIColors): unknown {
     const btn = Button('', () => { onActivityClick(idx); });
     buttonSetBordered(btn, 0);
     buttonSetImage(btn, icons[i]);
-    // Set icon tint to white/foreground color
+    buttonSetImagePosition(btn, 1); // NSImageOnly — icon only, no text
     setBtnTint(btn, colors.activityBarForeground);
     activityButtons.push(btn);
   }
@@ -506,6 +702,7 @@ function renderActivityBarDesktop(colors: ResolvedUIColors): unknown {
   const settingsBtn = Button('', () => { onActivityClick(5); });
   buttonSetBordered(settingsBtn, 0);
   buttonSetImage(settingsBtn, 'gearshape');
+  buttonSetImagePosition(settingsBtn, 1); // NSImageOnly
   setBtnTint(settingsBtn, colors.activityBarInactiveForeground);
   widgetAddChild(bar, settingsBtn);
 
@@ -521,6 +718,7 @@ function renderActivityBarCompact(colors: ResolvedUIColors): unknown {
     const btn = Button('', () => { onActivityClick(idx); });
     buttonSetBordered(btn, 0);
     buttonSetImage(btn, icons[i]);
+    buttonSetImagePosition(btn, 1); // NSImageOnly
     setBtnTint(btn, colors.activityBarForeground);
     activityButtons.push(btn);
   }
@@ -543,44 +741,11 @@ function renderSidebar(colors: ResolvedUIColors): unknown {
   const sidebar = VStackWithInsets(1, 8, 8, 8, 8);
   setBg(sidebar, colors.sideBarBackground);
   sidebarContainer = sidebar;
+  sidebarReady = 1;
 
-  const title = Text('EXPLORER');
-  textSetFontSize(title, 11);
-  textSetFontWeight(title, 11, 0.7);
-  setFg(title, colors.sideBarForeground);
-  widgetAddChild(sidebar, title);
+  // Populate using refreshSidebar (reads filesystem + expansion state inline)
+  refreshSidebar();
 
-  fileTreeButtons = [];
-
-  if (fileEntries.length === 0) {
-    // Show hint to open a folder
-    const hint = Text('Open a folder to get started');
-    textSetFontSize(hint, 12);
-    setFg(hint, colors.sideBarForeground);
-    widgetAddChild(sidebar, hint);
-  } else {
-    for (let i = 0; i < fileEntries.length; i++) {
-      const file = fileEntries[i];
-      const idx = i;
-      const btn = Button(file.label, () => { onFileClick(idx); });
-      buttonSetBordered(btn, 0);
-      textSetFontSize(btn, 13);
-      if (file.isDir) {
-        buttonSetImage(btn, 'folder.fill');
-        // Folder icon in warm yellow/gold
-        setBtnTint(btn, '#E8AB53');
-      } else {
-        buttonSetImage(btn, 'doc.text');
-        // File icon in sidebar foreground color
-        setBtnTint(btn, colors.sideBarForeground);
-      }
-      fileTreeButtons.push(btn);
-      widgetAddChild(sidebar, btn);
-    }
-    updateFileTree();
-  }
-
-  widgetAddChild(sidebar, Spacer());
   return sidebar;
 }
 
@@ -590,31 +755,44 @@ function renderSidebar(colors: ResolvedUIColors): unknown {
 
 function renderEditorArea(colors: ResolvedUIColors): unknown {
   tabBarButtons = [];
-  openTabs = [];
-  openTabNames = [];
 
-  if (__platform__ !== 5) {
-    // Native: open default file on startup
-    const defaultFile = '/Users/amlug/projects/hone/hone-ide/src/app.ts';
-    const defaultName = 'app.ts';
-    openTabs.push(defaultFile);
-    openTabNames.push(defaultName);
+  // Always set up default file (no __platform__ guard — !== may be unreliable)
+  const defaultFile = '/Users/amlug/projects/hone/hone-ide/src/app.ts';
+  const defaultName = 'app.ts';
+  openTabs = [defaultFile];
+  openTabNames = [defaultName];
+  openTabCount = 1;
 
-    const btn = Button(' app.ts ', () => { onTabClick(0); });
-    buttonSetBordered(btn, 0);
-    textSetFontSize(btn, 13);
-    tabBarButtons.push(btn);
-  }
+  const defaultPath = defaultFile;
+  const initTabGroup = HStackWithInsets(4, 0, 10, 0, 6);
+  const btn = Button('app.ts', () => { loadFileFromTab(defaultPath); });
+  buttonSetBordered(btn, 0);
+  textSetFontSize(btn, 13);
+  const initCloseBtn = Button('', () => { removeTabGroup(initTabGroup); });
+  buttonSetBordered(initCloseBtn, 0);
+  buttonSetImage(initCloseBtn, 'xmark');
+  buttonSetImagePosition(initCloseBtn, 1);
+  textSetFontSize(initCloseBtn, 9);
+  widgetAddChild(initTabGroup, btn);
+  widgetAddChild(initTabGroup, initCloseBtn);
+  setBtnFg(btn, colors.tabActiveForeground);
+  setBg(initTabGroup, colors.tabActiveBackground);
+  setBtnFg(initCloseBtn, colors.tabActiveForeground);
+  // Context menu for initial tab
+  const initTabMenu = menuCreate();
+  menuAddItem(initTabMenu, 'Close', () => { removeTabGroup(initTabGroup); });
+  menuAddItem(initTabMenu, 'Close Others', () => { closeOtherTabGroups(initTabGroup); });
+  menuAddItem(initTabMenu, 'Close All', () => { closeAllTabs(); });
+  widgetSetContextMenu(initTabGroup, initTabMenu);
+  tabBarButtons = [initTabGroup];
 
-  activeTabIdx = 0;
-  updateEditorTabs();
-
-  tabBarContainer = HStack(0, []);
+  const tbc = HStack(0, []);
+  tabBarContainer = tbc;
+  tabBarReady = 1;
   setBg(tabBarContainer, colors.tabInactiveBackground);
   for (let i = 0; i < tabBarButtons.length; i++) {
     widgetAddChild(tabBarContainer, tabBarButtons[i]);
   }
-  widgetAddChild(tabBarContainer, Spacer());
 
   // Create the editor (simplified constructor — no object spread or ??)
   const ed = new Editor(800, 600);
@@ -625,15 +803,11 @@ function renderEditorArea(colors: ResolvedUIColors): unknown {
   const nsviewPtr = hone_editor_nsview(ed.nativeHandle as number);
   editorWidget = embedNSView(nsviewPtr);
 
-  // Load default file content (native only — on web, no file open yet)
-  if (__platform__ !== 5 && openTabs.length > 0) {
-    displayFileContent(openTabs[0]);
-  }
+  // Load default file content
+  displayFileContent(openTabs[0]);
 
   // Editor widget must be in the initial VStack children array — Perry's
   // NSStackView layout doesn't properly size views added via widgetAddChild().
-  // No Spacer() — the editor should fill remaining space (like the working
-  // perry-app example: VStack(0, [toolbar, hed.widget, statusBar])).
   const editorPane = VStack(0, [tabBarContainer, editorWidget]);
   setBg(editorPane, colors.editorBackground);
 
@@ -692,6 +866,11 @@ function renderBottomToolbar(colors: ResolvedUIColors): unknown {
   buttonSetImage(aiBtn, 'sparkles');
   buttonSetImage(termBtn, 'terminal');
   buttonSetImage(settingsBtn, 'gearshape');
+  buttonSetImagePosition(filesBtn, 1);
+  buttonSetImagePosition(editorBtn, 1);
+  buttonSetImagePosition(aiBtn, 1);
+  buttonSetImagePosition(termBtn, 1);
+  buttonSetImagePosition(settingsBtn, 1);
 
   const allBtns = [filesBtn, editorBtn, aiBtn, termBtn, settingsBtn];
   for (let i = 0; i < allBtns.length; i++) {
@@ -734,10 +913,9 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
 
   themeColors = theme.uiColors;
 
-  // Load default workspace (hone-ide project dir) if no folder open yet
-  // On web (__platform__ === 5), skip — user opens a folder via File System Access API
-  if (fileEntries.length === 0 && __platform__ !== 5) {
-    loadFileTree('/Users/amlug/projects/hone/hone-ide');
+  // Set default workspace root if not already set
+  if (workspaceRoot.length === 0) {
+    workspaceRoot = '/Users/amlug/projects/hone/hone-ide';
   }
 
   if (layoutMode === 'compact') {
@@ -780,6 +958,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
     // Store refs for sidebar toggling
     sidebarWidget = sidebar;
     sidebarBorderWidget = sidebarBorder;
+    sidebarToggleReady = 1;
 
     const mainRow = HStack(0, [sidebar, sidebarBorder, editorArea]);
     widgetSetHugging(mainRow, 1);
@@ -813,6 +992,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   // Store refs for sidebar toggling
   sidebarWidget = sidebar;
   sidebarBorderWidget = sidebarBorder;
+  sidebarToggleReady = 1;
 
   // Sidebar location: left (default) or right
   const mainRow = sidebarLocation === 'right'
