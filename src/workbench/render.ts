@@ -17,7 +17,7 @@ import {
   textSetString,
   buttonSetBordered, buttonSetTextColor, buttonSetTitle,
   widgetSetBackgroundColor, widgetAddChild, widgetClearChildren,
-  widgetSetWidth, widgetSetHugging, embedNSView,
+  widgetSetWidth, widgetSetHugging, widgetSetHidden, embedNSView,
 } from 'perry/ui';
 import { Editor } from '@honeide/editor/perry';
 import { getActiveTheme, type ResolvedUIColors } from './theme/theme-loader';
@@ -127,9 +127,16 @@ let activeTabIdx = 0;
 // Editor content widgets
 let tabBarContainer: unknown = null;
 
-// The real editor instance
-let editor: Editor | null = null;
+// The real editor instance — avoid union type (Editor | null) since Perry
+// inverts null checks on union-typed variables and closures lose `this`.
+let editorInstance: Editor = null as any;  // non-union type
+let editorReady: number = 0;              // 0 = not ready, 1 = ready (numeric, not boolean)
 let editorWidget: unknown = null;
+
+// Compact layout panel toggling
+let compactEditorPane: unknown = null;
+let compactExplorerPane: unknown = null;
+let compactShowingExplorer: number = 0;  // 0 = editor visible, 1 = explorer visible
 
 // ---------------------------------------------------------------------------
 // Named update functions (read module-level refs at call time)
@@ -188,17 +195,10 @@ function detectLanguage(filePath: string): string {
 }
 
 function displayFileContent(filePath: string): void {
-  const ed = editor;
-  if (!ed) return;
+  if (editorReady < 1) return;  // numeric check, no union-type issue
   const content = readFileSync(filePath);
-  ed.setContent(content);
-  ed.render();
-}
-
-function displayFileContentDirect(ed: Editor, filePath: string): void {
-  const content = readFileSync(filePath);
-  ed.setContent(content);
-  ed.render();
+  editorInstance.setContent(content);
+  editorInstance.render();
 }
 
 function openFileInEditor(filePath: string, fileName: string): void {
@@ -254,6 +254,10 @@ function onFileClick(idx: number): void {
   const entry = FILE_ENTRIES[idx];
   if (!entry.isDir) {
     openFileInEditor(entry.path, entry.name);
+    // Auto-hide explorer in compact mode
+    if (compactShowingExplorer > 0) {
+      hideExplorer();
+    }
   }
 }
 
@@ -386,29 +390,83 @@ function renderEditorArea(colors: ResolvedUIColors): unknown {
 
   // Create the editor (simplified constructor — no object spread or ??)
   const ed = new Editor(800, 600);
-  editor = ed;
+  editorInstance = ed;
+  editorReady = 1;
 
   // Get the native NSView and embed it in Perry's layout.
-  // Use local `ed` (type Editor) not module-level `editor` (type Editor|null)
-  // to ensure Perry uses direct field access instead of dynamic property lookup.
-  // NOTE: Skip null check — Perry inverts `!== null` on union-typed fields.
-  // The constructor always sets nativeHandle, so it's safe to use directly.
   const nsviewPtr = hone_editor_nsview(ed.nativeHandle as number);
   editorWidget = embedNSView(nsviewPtr);
 
-  // Load default file content — pass ed directly to avoid module-level union-type check
-  displayFileContentDirect(ed, defaultFile);
+  // Load default file content
+  displayFileContent(defaultFile);
 
-  const editorPane = VStack(0, [tabBarContainer]);
+  // Editor widget must be in the initial VStack children array — Perry's
+  // NSStackView layout doesn't properly size views added via widgetAddChild().
+  // No Spacer() — the editor should fill remaining space (like the working
+  // perry-app example: VStack(0, [toolbar, hed.widget, statusBar])).
+  const editorPane = VStack(0, [tabBarContainer, editorWidget]);
   setBg(editorPane, colors.editorBackground);
 
-  // Add the embedded editor view
-  if (editorWidget) {
-    widgetAddChild(editorPane, editorWidget);
-  }
-  widgetAddChild(editorPane, Spacer());
-
   return editorPane;
+}
+
+// ---------------------------------------------------------------------------
+// Compact layout — panel toggling
+// ---------------------------------------------------------------------------
+
+function showExplorer(): void {
+  compactShowingExplorer = 1;
+  widgetSetHidden(compactEditorPane, 1);    // hide editor
+  widgetSetHidden(compactExplorerPane, 0);  // show explorer
+}
+
+function hideExplorer(): void {
+  compactShowingExplorer = 0;
+  widgetSetHidden(compactEditorPane, 0);    // show editor
+  widgetSetHidden(compactExplorerPane, 1);  // hide explorer
+}
+
+function onBottomBarFiles(): void {
+  if (compactShowingExplorer > 0) {
+    hideExplorer();
+  } else {
+    showExplorer();
+  }
+}
+
+function onBottomBarEditor(): void {
+  hideExplorer();
+}
+
+function onBottomBarAI(): void {
+  // Placeholder — future AI panel
+}
+
+function onBottomBarTerm(): void {
+  // Placeholder — future terminal panel
+}
+
+function onBottomBarSettings(): void {
+  // Placeholder — future settings panel
+}
+
+function renderBottomToolbar(colors: ResolvedUIColors): unknown {
+  const filesBtn = Button('F', () => { onBottomBarFiles(); });
+  const editorBtn = Button('E', () => { onBottomBarEditor(); });
+  const aiBtn = Button('A', () => { onBottomBarAI(); });
+  const termBtn = Button('T', () => { onBottomBarTerm(); });
+  const settingsBtn = Button('S', () => { onBottomBarSettings(); });
+
+  const allBtns = [filesBtn, editorBtn, aiBtn, termBtn, settingsBtn];
+  for (let i = 0; i < allBtns.length; i++) {
+    buttonSetBordered(allBtns[i], 0);
+    textSetFontSize(allBtns[i], 20);
+    setBtnFg(allBtns[i], colors.activityBarForeground);
+  }
+
+  const bar = HStack(0, [filesBtn, Spacer(), editorBtn, Spacer(), aiBtn, Spacer(), termBtn, Spacer(), settingsBtn]);
+  setBg(bar, colors.activityBarBackground);
+  return bar;
 }
 
 // ---------------------------------------------------------------------------
@@ -443,9 +501,41 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
 
   if (layoutMode === 'compact') {
     const editorArea = renderEditorArea(themeColors);
-    const bottomBar = renderActivityBarCompact(themeColors);
+    const explorerPanel = renderSidebar(themeColors);
+    const bottomBar = renderBottomToolbar(themeColors);
     const statusBar = renderStatusBar(themeColors);
-    const shell = VStack(0, [editorArea, statusBar, bottomBar]);
+
+    compactEditorPane = editorArea;
+    compactExplorerPane = explorerPanel;
+
+    // Explorer starts hidden
+    widgetSetHidden(explorerPanel, 1);
+
+    // Both panels in same VStack — hidden one collapses automatically
+    const contentArea = VStack(0, [editorArea, explorerPanel]);
+    widgetSetHugging(contentArea, 1);  // fill available space
+
+    const shell = VStack(0, [contentArea, statusBar, bottomBar]);
+    setBg(shell, themeColors.editorBackground);
+    return shell;
+  }
+
+  if (layoutMode === 'split') {
+    const sidebar = renderSidebar(themeColors);
+    const editorArea = renderEditorArea(themeColors);
+    const statusBar = renderStatusBar(themeColors);
+
+    widgetSetWidth(sidebar, 180);
+    widgetSetHugging(sidebar, 750);
+    widgetSetHugging(editorArea, 1);
+
+    const sidebarBorder = VStack(0, []);
+    setBg(sidebarBorder, themeColors.panelBorder);
+    widgetSetWidth(sidebarBorder, 1);
+    widgetSetHugging(sidebarBorder, 1000);
+
+    const mainRow = HStack(0, [sidebar, sidebarBorder, editorArea]);
+    const shell = VStack(0, [mainRow, statusBar]);
     setBg(shell, themeColors.editorBackground);
     return shell;
   }

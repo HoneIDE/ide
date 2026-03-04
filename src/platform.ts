@@ -16,6 +16,10 @@ declare function perry_get_orientation(): string;
 declare function perry_on_resize(callback: (width: number, height: number) => void): void;
 declare function perry_on_orientation_change(callback: (orientation: string) => void): void;
 
+// Compile-time platform ID injected by Perry codegen:
+// 0 = macOS, 1 = iOS, 2 = Android, 3 = Windows, 4 = Linux
+declare const __platform__: number;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -73,6 +77,15 @@ const SPLIT_MAX_WIDTH = 1023;
 // ---------------------------------------------------------------------------
 
 export function detectPlatform(): Platform {
+  // Use compile-time __platform__ constant (Perry injects at codegen time)
+  // 0=macOS, 1=iOS, 2=Android, 3=Windows, 4=Linux
+  if (__platform__ === 1) return 'ios';
+  if (__platform__ === 2) return 'android';
+  if (__platform__ === 3) return 'windows';
+  if (__platform__ === 4) return 'linux';
+  if (__platform__ === 0) return 'macos';
+
+  // Fallback: try FFI (may not be implemented)
   try {
     const p = perry_get_platform();
     if (p === 'macos' || p === 'windows' || p === 'linux' ||
@@ -98,7 +111,12 @@ export function detectScreen(): ScreenInfo {
       orientation: o === 'landscape' ? 'landscape' : 'portrait',
     };
   } catch {
-    // Default for test/web environment
+    // FFI not available — use platform-appropriate defaults
+    if (__platform__ === 1) {
+      // iOS (iPhone) — compact portrait
+      return { width: 393, height: 852, scaleFactor: 3, orientation: 'portrait' };
+    }
+    // Desktop / web fallback
     return { width: 1440, height: 900, scaleFactor: 2, orientation: 'landscape' };
   }
 }
