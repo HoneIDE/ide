@@ -18,30 +18,44 @@ import {
 // ---------------------------------------------------------------------------
 
 function dispatchCommand(command: string): void {
-  if (command === 'file.openFile') {
+  // Perry string === is unreliable — use charCodeAt checks
+  if (command.length === 13 && command.charCodeAt(0) === 102) {
+    // file.openFile
     openFileAction();
-  } else if (command === 'file.openFolder') {
+  } else if (command.length === 15 && command.charCodeAt(5) === 111) {
+    // file.openFolder
     openFolderAction();
-  } else if (command === 'view.toggleSidebar') {
+  } else if (command.length === 18 && command.charCodeAt(5) === 116) {
+    // view.toggleSidebar
     toggleSidebarAction();
-  } else if (command === 'workbench.action.closeActiveEditor') {
+  } else if (command.length === 37 && command.charCodeAt(0) === 119) {
+    // workbench.action.closeActiveEditor
     closeEditorAction();
   }
-  // Other commands are no-ops for now
 }
 
 // ---------------------------------------------------------------------------
 // Build native menus from menu data
 // ---------------------------------------------------------------------------
 
+/** Check if type field starts with 's' (separator) — charCode 115 */
+function isSeparator(mi: MenuItem): boolean {
+  return mi.type.charCodeAt(0) === 115;
+}
+
+/** Check if type field starts with 'su' (submenu) — length 7 */
+function isSubmenu(mi: MenuItem): boolean {
+  return mi.type.length === 7;
+}
+
 function buildNativeMenu(items: MenuItem[]): unknown {
   const menu = menuCreate();
   const len = items.length;
   for (let i = 0; i < len; i = i + 1) {
     const mi = items[i];
-    if (mi.type === 'separator') {
+    if (isSeparator(mi)) {
       menuAddSeparator(menu);
-    } else if (mi.type === 'submenu' && mi.submenu) {
+    } else if (isSubmenu(mi) && mi.submenu) {
       const sub = buildNativeMenu(mi.submenu);
       menuAddSubmenu(menu, mi.label, sub);
     } else {
