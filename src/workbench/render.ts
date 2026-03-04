@@ -282,7 +282,9 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     } else {
       buttonSetImage(btn, 'folder.fill');
     }
-    setBtnTint(btn, '#E8AB53');
+    if (themeColors) {
+      setBtnFg(btn, themeColors.sideBarForeground);
+    }
 
     if (depth > 0) {
       const row = HStack(0, []);
@@ -316,7 +318,7 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     textSetFontSize(btn, 13);
     buttonSetImage(btn, 'doc.text');
     if (themeColors) {
-      setBtnTint(btn, themeColors.sideBarForeground);
+      setBtnFg(btn, themeColors.sideBarForeground);
     }
 
     if (depth > 0) {
@@ -757,7 +759,7 @@ function renderEditorArea(colors: ResolvedUIColors): unknown {
   tabBarButtons = [];
 
   // Always set up default file (no __platform__ guard — !== may be unreliable)
-  const defaultFile = '/Users/amlug/projects/hone/hone-ide/src/app.ts';
+  const defaultFile = 'C:/Users/Ralph/projects/hone/hone-ide/src/app.ts';
   const defaultName = 'app.ts';
   openTabs = [defaultFile];
   openTabNames = [defaultName];
@@ -915,7 +917,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
 
   // Set default workspace root if not already set
   if (workspaceRoot.length === 0) {
-    workspaceRoot = '/Users/amlug/projects/hone/hone-ide';
+    workspaceRoot = 'C:/Users/Ralph/projects/hone/hone-ide';
   }
 
   if (layoutMode === 'compact') {
