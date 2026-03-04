@@ -25,6 +25,7 @@ import { getDefaultKeybindings, type Keybinding } from './keybindings';
 import { loadTheme, setActiveTheme, type ThemeData } from './workbench/theme/theme-loader';
 import { HONE_DARK } from './workbench/theme/builtin-themes';
 import { renderWorkbench } from './workbench/render';
+import { setupNativeMenuBar } from './workbench/native-menu';
 
 // ---------------------------------------------------------------------------
 // App state
@@ -62,6 +63,10 @@ registerBuiltinCommands();
 for (let i = 0; i < BUILTIN_PANELS.length; i = i + 1) {
   registerPanel(BUILTIN_PANELS[i]);
 }
+
+// Set up native menu bar (before App() so it's ready when window appears)
+// On macOS, always set up the menu bar regardless of layout mode
+setupNativeMenuBar();
 
 // Build the visual workbench
 const workbench = renderWorkbench(ctx.layoutMode);

@@ -15,15 +15,22 @@ import {
   VStackWithInsets, HStackWithInsets,
   textSetColor, textSetFontSize, textSetFontWeight, textSetFontFamily,
   textSetString,
-  buttonSetBordered, buttonSetTextColor, buttonSetTitle,
+  buttonSetBordered, buttonSetTextColor, buttonSetTitle, buttonSetImage,
+  buttonSetContentTintColor,
   widgetSetBackgroundColor, widgetAddChild, widgetClearChildren,
   widgetSetWidth, widgetSetHugging, widgetSetHidden, embedNSView,
+  openFolderDialog, openFileDialog,
 } from 'perry/ui';
 import { Editor } from '@honeide/editor/perry';
 import { getActiveTheme, type ResolvedUIColors } from './theme/theme-loader';
 import type { LayoutMode } from '../platform';
 import { getWorkbenchSettings } from './settings';
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync, isDirectory } from 'fs';
+import { join } from 'path';
+
+// Compile-time platform ID injected by Perry codegen:
+// 0 = macOS, 1 = iOS, 2 = Android, 3 = Windows, 4 = Linux, 5 = Web
+declare const __platform__: number;
 
 // FFI function from @honeide/editor — returns raw NSView* for an EditorView
 declare function hone_editor_nsview(handle: number): number;
@@ -58,6 +65,11 @@ function setBtnFg(btn: unknown, hex: string): void {
   buttonSetTextColor(btn, r, g, b, a);
 }
 
+function setBtnTint(btn: unknown, hex: string): void {
+  const [r, g, b, a] = hexToRGBA(hex);
+  buttonSetContentTintColor(btn, r, g, b, a);
+}
+
 // ---------------------------------------------------------------------------
 // File tree data — real project paths
 // ---------------------------------------------------------------------------
@@ -70,44 +82,43 @@ interface FileEntry {
   label: string;
 }
 
-// Perry string + operator is broken — all paths and labels must be full string literals
-const FILE_ENTRIES: FileEntry[] = [
-  { name: 'src/', path: 'C:/Users/Ralph/projects/hone/hone-ide/src', depth: 0, isDir: true, label: '\u25B6 src/' },
-  { name: 'app.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/app.ts', depth: 1, isDir: false, label: '    app.ts' },
-  { name: 'commands.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/commands.ts', depth: 1, isDir: false, label: '    commands.ts' },
-  { name: 'keybindings.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/keybindings.ts', depth: 1, isDir: false, label: '    keybindings.ts' },
-  { name: 'menu.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/menu.ts', depth: 1, isDir: false, label: '    menu.ts' },
-  { name: 'platform.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/platform.ts', depth: 1, isDir: false, label: '    platform.ts' },
-  { name: 'window.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/window.ts', depth: 1, isDir: false, label: '    window.ts' },
-  { name: 'workbench/', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench', depth: 1, isDir: true, label: '  \u25B6 workbench/' },
-  { name: 'render.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/render.ts', depth: 2, isDir: false, label: '        render.ts' },
-  { name: 'settings.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/settings.ts', depth: 2, isDir: false, label: '        settings.ts' },
-  { name: 'layout/', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/layout', depth: 2, isDir: true, label: '    \u25B6 layout/' },
-  { name: 'activity-bar.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/layout/activity-bar.ts', depth: 3, isDir: false, label: '            activity-bar.ts' },
-  { name: 'grid.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/layout/grid.ts', depth: 3, isDir: false, label: '            grid.ts' },
-  { name: 'index.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/layout/index.ts', depth: 3, isDir: false, label: '            index.ts' },
-  { name: 'panel-registry.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/layout/panel-registry.ts', depth: 3, isDir: false, label: '            panel-registry.ts' },
-  { name: 'status-bar.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/layout/status-bar.ts', depth: 3, isDir: false, label: '            status-bar.ts' },
-  { name: 'tab-manager.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/layout/tab-manager.ts', depth: 3, isDir: false, label: '            tab-manager.ts' },
-  { name: 'theme/', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/theme', depth: 2, isDir: true, label: '    \u25B6 theme/' },
-  { name: 'builtin-themes.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/theme/builtin-themes.ts', depth: 3, isDir: false, label: '            builtin-themes.ts' },
-  { name: 'index.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/theme/index.ts', depth: 3, isDir: false, label: '            index.ts' },
-  { name: 'load-builtin-themes.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/theme/load-builtin-themes.ts', depth: 3, isDir: false, label: '            load-builtin-themes.ts' },
-  { name: 'theme-loader.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/theme/theme-loader.ts', depth: 3, isDir: false, label: '            theme-loader.ts' },
-  { name: 'token-theme.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/theme/token-theme.ts', depth: 3, isDir: false, label: '            token-theme.ts' },
-  { name: 'ui-theme.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/theme/ui-theme.ts', depth: 3, isDir: false, label: '            ui-theme.ts' },
-  { name: 'views/', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/views', depth: 2, isDir: true, label: '    \u25B6 views/' },
-  { name: 'explorer/', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/views/explorer', depth: 3, isDir: true, label: '      \u25B6 explorer/' },
-  { name: 'file-operations.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/views/explorer/file-operations.ts', depth: 4, isDir: false, label: '                file-operations.ts' },
-  { name: 'file-tree-item.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/views/explorer/file-tree-item.ts', depth: 4, isDir: false, label: '                file-tree-item.ts' },
-  { name: 'file-tree.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/views/explorer/file-tree.ts', depth: 4, isDir: false, label: '                file-tree.ts' },
-  { name: 'index.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/views/explorer/index.ts', depth: 4, isDir: false, label: '                index.ts' },
-  { name: 'quick-open/', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/views/quick-open', depth: 3, isDir: true, label: '      \u25B6 quick-open/' },
-  { name: 'quick-open.ts', path: 'C:/Users/Ralph/projects/hone/hone-ide/src/workbench/views/quick-open/quick-open.ts', depth: 4, isDir: false, label: '                quick-open.ts' },
-  { name: 'package.json', path: 'C:/Users/Ralph/projects/hone/hone-ide/package.json', depth: 0, isDir: false, label: '  package.json' },
-  { name: 'tsconfig.json', path: 'C:/Users/Ralph/projects/hone/hone-ide/tsconfig.json', depth: 0, isDir: false, label: '  tsconfig.json' },
-  { name: 'CLAUDE.md', path: 'C:/Users/Ralph/projects/hone/hone-ide/CLAUDE.md', depth: 0, isDir: false, label: '  CLAUDE.md' },
-];
+// Dynamic file tree — loaded from opened folder
+let workspaceRoot = '';
+let fileEntries: FileEntry[] = [];
+
+/** Load a flat file list from a directory (1 level deep). */
+function loadFileTree(rootPath: string): void {
+  workspaceRoot = rootPath;
+  fileEntries = [];
+  const names: string[] = readdirSync(rootPath);
+  // Separate dirs and files, then sort each alphabetically
+  const dirs: string[] = [];
+  const files: string[] = [];
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    // Skip hidden files/dirs
+    if (name.charAt(0) === '.') continue;
+    const fullPath = join(rootPath, name);
+    if (isDirectory(fullPath)) {
+      dirs.push(name);
+    } else {
+      files.push(name);
+    }
+  }
+  dirs.sort();
+  files.sort();
+  // Dirs first, then files
+  for (let i = 0; i < dirs.length; i++) {
+    const name = dirs[i];
+    const fullPath = join(rootPath, name);
+    fileEntries.push({ name: name, path: fullPath, depth: 0, isDir: true, label: name });
+  }
+  for (let i = 0; i < files.length; i++) {
+    const name = files[i];
+    const fullPath = join(rootPath, name);
+    fileEntries.push({ name: name, path: fullPath, depth: 0, isDir: false, label: name });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Data
@@ -133,6 +144,7 @@ let activeActivityIdx = 0;
 // Sidebar file tree
 let fileTreeButtons: unknown[] = [];
 let selectedFileIdx = -1;
+let sidebarContainer: unknown = null;
 
 // Editor tabs
 let tabBarButtons: unknown[] = [];
@@ -147,6 +159,11 @@ let editorInstance: Editor = null as any;  // non-union type
 let editorReady: number = 0;              // 0 = not ready, 1 = ready (numeric, not boolean)
 let editorWidget: unknown = null;
 
+// Sidebar toggling (full/split layouts)
+let sidebarWidget: unknown = null;
+let sidebarBorderWidget: unknown = null;
+let sidebarVisible: number = 1;
+
 // Compact layout panel toggling
 let compactEditorPane: unknown = null;
 let compactExplorerPane: unknown = null;
@@ -160,9 +177,9 @@ function updateActivityBar(): void {
   if (!themeColors) return;
   for (let i = 0; i < activityButtons.length; i++) {
     if (i === activeActivityIdx) {
-      setBtnFg(activityButtons[i], themeColors.activityBarForeground);
+      setBtnTint(activityButtons[i], themeColors.activityBarForeground);
     } else {
-      setBtnFg(activityButtons[i], themeColors.activityBarInactiveForeground);
+      setBtnTint(activityButtons[i], themeColors.activityBarInactiveForeground);
     }
   }
 }
@@ -170,7 +187,7 @@ function updateActivityBar(): void {
 function updateFileTree(): void {
   if (!themeColors) return;
   for (let i = 0; i < fileTreeButtons.length; i++) {
-    if (i === selectedFileIdx && !FILE_ENTRIES[i].isDir) {
+    if (i === selectedFileIdx && i < fileEntries.length && !fileEntries[i].isDir) {
       setBg(fileTreeButtons[i], themeColors.listActiveSelectionBackground);
       setBtnFg(fileTreeButtons[i], themeColors.listActiveSelectionForeground);
     } else {
@@ -191,6 +208,148 @@ function updateEditorTabs(): void {
       setBg(tabBarButtons[i], themeColors.tabInactiveBackground);
     }
   }
+}
+
+/** Rebuild sidebar file tree from current fileEntries. */
+function refreshSidebar(): void {
+  if (!themeColors || !sidebarContainer) return;
+  widgetClearChildren(sidebarContainer);
+
+  const title = Text('EXPLORER');
+  textSetFontSize(title, 11);
+  textSetFontWeight(title, 11, 0.7);
+  setFg(title, themeColors.sideBarForeground);
+  widgetAddChild(sidebarContainer, title);
+
+  fileTreeButtons = [];
+  selectedFileIdx = -1;
+
+  for (let i = 0; i < fileEntries.length; i++) {
+    const file = fileEntries[i];
+    const idx = i;
+    const btn = Button(file.label, () => { onFileClick(idx); });
+    buttonSetBordered(btn, 0);
+    textSetFontSize(btn, 13);
+    if (file.isDir) {
+      buttonSetImage(btn, 'folder.fill');
+      setBtnTint(btn, '#E8AB53');
+    } else {
+      buttonSetImage(btn, 'doc.text');
+      if (themeColors) {
+        setBtnTint(btn, themeColors.sideBarForeground);
+      }
+    }
+    fileTreeButtons.push(btn);
+    widgetAddChild(sidebarContainer, btn);
+  }
+  updateFileTree();
+  widgetAddChild(sidebarContainer, Spacer());
+}
+
+/** Module-level callback for folder dialog — called from menu or elsewhere. */
+function onFolderOpened(folderPath: string): void {
+  loadFileTree(folderPath);
+  refreshSidebar();
+}
+
+/** Open folder dialog — callable from menu bar or command. */
+export function openFolderAction(): void {
+  openFolderDialog((path: string) => { onFolderOpenedCb(path); });
+}
+
+// Module-level function for the callback (Perry closures can't call methods on captured this)
+function onFolderOpenedCb(path: string): void {
+  // Guard against cancelled dialog
+  if (path.length < 1) return;
+  onFolderOpened(path);
+}
+
+/** Toggle sidebar visibility — callable from menu bar. */
+export function toggleSidebarAction(): void {
+  if (!sidebarWidget) return;
+  if (sidebarVisible > 0) {
+    sidebarVisible = 0;
+    widgetSetHidden(sidebarWidget, 1);
+    if (sidebarBorderWidget) widgetSetHidden(sidebarBorderWidget, 1);
+  } else {
+    sidebarVisible = 1;
+    widgetSetHidden(sidebarWidget, 0);
+    if (sidebarBorderWidget) widgetSetHidden(sidebarBorderWidget, 0);
+  }
+}
+
+/** Close the active editor tab — callable from menu bar. */
+export function closeEditorAction(): void {
+  if (openTabs.length === 0) return;
+  if (activeTabIdx < 0 || activeTabIdx >= openTabs.length) return;
+
+  // Build new arrays without the closed tab (avoid splice — Perry safety)
+  const newTabs: string[] = [];
+  const newNames: string[] = [];
+  for (let i = 0; i < openTabs.length; i++) {
+    if (i !== activeTabIdx) {
+      newTabs.push(openTabs[i]);
+      newNames.push(openTabNames[i]);
+    }
+  }
+  openTabs = newTabs;
+  openTabNames = newNames;
+
+  // Adjust active index
+  if (activeTabIdx >= openTabs.length && openTabs.length > 0) {
+    activeTabIdx = openTabs.length - 1;
+  }
+
+  // Rebuild tab bar
+  rebuildTabBar();
+
+  // Show content of new active tab
+  if (openTabs.length > 0 && activeTabIdx >= 0) {
+    displayFileContent(openTabs[activeTabIdx]);
+  }
+}
+
+/** Rebuild the tab bar from current openTabs/openTabNames. */
+function rebuildTabBar(): void {
+  if (!tabBarContainer || !themeColors) return;
+  widgetClearChildren(tabBarContainer);
+  tabBarButtons = [];
+
+  for (let i = 0; i < openTabs.length; i++) {
+    const idx = i;
+    const name = openTabNames[i];
+    const btn = Button(name, () => { onTabClick(idx); });
+    buttonSetBordered(btn, 0);
+    textSetFontSize(btn, 13);
+    tabBarButtons.push(btn);
+    widgetAddChild(tabBarContainer, btn);
+  }
+  widgetAddChild(tabBarContainer, Spacer());
+  updateEditorTabs();
+}
+
+/** Extract filename from a full path. */
+function getFileName(filePath: string): string {
+  let lastSlash = -1;
+  for (let i = 0; i < filePath.length; i++) {
+    if (filePath.charAt(i) === '/') lastSlash = i;
+  }
+  if (lastSlash >= 0) {
+    return filePath.slice(lastSlash + 1);
+  }
+  return filePath;
+}
+
+/** Open a file via the native file dialog — callable from menu bar. */
+export function openFileAction(): void {
+  openFileDialog((path: string) => { onFileOpenedCb2(path); });
+}
+
+function onFileOpenedCb2(filePath: string): void {
+  // Guard against cancelled dialog (TAG_UNDEFINED → empty string)
+  if (filePath.length < 1) return;
+  const name = getFileName(filePath);
+  openFileInEditor(filePath, name);
 }
 
 /** Detect language from file extension. */
@@ -239,15 +398,12 @@ function openFileInEditor(filePath: string, fileName: string): void {
   openTabs.push(filePath);
   openTabNames.push(fileName);
 
-  // Create tab button
+  // Create tab button and add to tab bar
   const idx = openTabs.length - 1;
-  // Perry string + is broken — use fileName directly (no padding spaces)
   const btn = Button(fileName, () => { onTabClick(idx); });
   buttonSetBordered(btn, 0);
   textSetFontSize(btn, 13);
   tabBarButtons.push(btn);
-
-  // Add to tab bar
   widgetAddChild(tabBarContainer, btn);
 
   activeTabIdx = idx;
@@ -258,14 +414,48 @@ function openFileInEditor(filePath: string, fileName: string): void {
 function onActivityClick(idx: number): void {
   activeActivityIdx = idx;
   updateActivityBar();
+  switchSidebarPanel(idx);
+}
+
+/** Switch sidebar content based on activity bar selection. */
+function switchSidebarPanel(idx: number): void {
+  if (!themeColors || !sidebarContainer) return;
+  if (idx === 0) {
+    // Explorer — rebuild file tree
+    refreshSidebar();
+    return;
+  }
+  widgetClearChildren(sidebarContainer);
+  fileTreeButtons = [];
+  selectedFileIdx = -1;
+
+  // Determine panel title — use literal strings (Perry string + is broken)
+  let panelTitle = 'SEARCH';
+  let panelHint = 'Type to search across files';
+  if (idx === 2) { panelTitle = 'SOURCE CONTROL'; panelHint = 'No repository detected'; }
+  if (idx === 3) { panelTitle = 'RUN AND DEBUG'; panelHint = 'No launch configuration'; }
+  if (idx === 4) { panelTitle = 'EXTENSIONS'; panelHint = 'No extensions installed'; }
+  if (idx === 5) { panelTitle = 'SETTINGS'; panelHint = 'Settings editor coming soon'; }
+
+  const title = Text(panelTitle);
+  textSetFontSize(title, 11);
+  textSetFontWeight(title, 11, 0.7);
+  setFg(title, themeColors.sideBarForeground);
+  widgetAddChild(sidebarContainer, title);
+
+  const hint = Text(panelHint);
+  textSetFontSize(hint, 12);
+  setFg(hint, themeColors.sideBarForeground);
+  widgetAddChild(sidebarContainer, hint);
+  widgetAddChild(sidebarContainer, Spacer());
 }
 
 function onFileClick(idx: number): void {
   selectedFileIdx = idx;
   updateFileTree();
 
-  // Open file in editor if it's not a directory
-  const entry = FILE_ENTRIES[idx];
+  if (idx >= fileEntries.length) return;
+  const entry = fileEntries[idx];
   if (!entry.isDir) {
     openFileInEditor(entry.path, entry.name);
     // Auto-hide explorer in compact mode
@@ -290,40 +480,48 @@ function onTabClick(idx: number): void {
 function renderActivityBarDesktop(colors: ResolvedUIColors): unknown {
   activityButtons = [];
 
+  // SF Symbol icons for each panel
+  const icons = ['doc.on.doc', 'magnifyingglass', 'arrow.triangle.branch', 'ladybug', 'puzzlepiece.extension'];
+
   for (let i = 0; i < PANELS.length; i++) {
     const idx = i;
-    const btn = Button(PANELS[i].charAt(0), () => { onActivityClick(idx); });
+    const btn = Button('', () => { onActivityClick(idx); });
     buttonSetBordered(btn, 0);
-    textSetFontSize(btn, 18);
+    buttonSetImage(btn, icons[i]);
+    // Set icon tint to white/foreground color
+    setBtnTint(btn, colors.activityBarForeground);
     activityButtons.push(btn);
   }
 
   updateActivityBar();
 
-  const bar = VStackWithInsets(12, 12, 6, 12, 6);
+  const bar = VStackWithInsets(8, 12, 6, 12, 6);
   setBg(bar, colors.activityBarBackground);
   for (let i = 0; i < activityButtons.length; i++) {
     widgetAddChild(bar, activityButtons[i]);
   }
   widgetAddChild(bar, Spacer());
 
-  const settings = Text('\u2699');
-  textSetFontSize(settings, 16);
-  setFg(settings, colors.activityBarInactiveForeground);
-  widgetAddChild(bar, settings);
+  // Settings gear icon
+  const settingsBtn = Button('', () => { onActivityClick(5); });
+  buttonSetBordered(settingsBtn, 0);
+  buttonSetImage(settingsBtn, 'gearshape');
+  setBtnTint(settingsBtn, colors.activityBarInactiveForeground);
+  widgetAddChild(bar, settingsBtn);
 
   return bar;
 }
 
 function renderActivityBarCompact(colors: ResolvedUIColors): unknown {
-  const labels = ['Files', 'Editor', 'AI', 'Term'];
+  const icons = ['folder', 'doc.text', 'sparkles', 'terminal'];
   activityButtons = [];
 
-  for (let i = 0; i < labels.length; i++) {
+  for (let i = 0; i < icons.length; i++) {
     const idx = i;
-    const btn = Button(labels[i], () => { onActivityClick(idx); });
+    const btn = Button('', () => { onActivityClick(idx); });
     buttonSetBordered(btn, 0);
-    textSetFontSize(btn, 12);
+    buttonSetImage(btn, icons[i]);
+    setBtnTint(btn, colors.activityBarForeground);
     activityButtons.push(btn);
   }
 
@@ -342,33 +540,47 @@ function renderActivityBarCompact(colors: ResolvedUIColors): unknown {
 // ---------------------------------------------------------------------------
 
 function renderSidebar(colors: ResolvedUIColors): unknown {
+  const sidebar = VStackWithInsets(1, 8, 8, 8, 8);
+  setBg(sidebar, colors.sideBarBackground);
+  sidebarContainer = sidebar;
+
   const title = Text('EXPLORER');
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.7);
   setFg(title, colors.sideBarForeground);
+  widgetAddChild(sidebar, title);
 
   fileTreeButtons = [];
 
-  for (let i = 0; i < FILE_ENTRIES.length; i++) {
-    const file = FILE_ENTRIES[i];
-    // Use pre-computed label — Perry string + and .repeat() are broken
-    const idx = i;
-    const btn = Button(file.label, () => { onFileClick(idx); });
-    buttonSetBordered(btn, 0);
-    textSetFontSize(btn, 13);
-    fileTreeButtons.push(btn);
+  if (fileEntries.length === 0) {
+    // Show hint to open a folder
+    const hint = Text('Open a folder to get started');
+    textSetFontSize(hint, 12);
+    setFg(hint, colors.sideBarForeground);
+    widgetAddChild(sidebar, hint);
+  } else {
+    for (let i = 0; i < fileEntries.length; i++) {
+      const file = fileEntries[i];
+      const idx = i;
+      const btn = Button(file.label, () => { onFileClick(idx); });
+      buttonSetBordered(btn, 0);
+      textSetFontSize(btn, 13);
+      if (file.isDir) {
+        buttonSetImage(btn, 'folder.fill');
+        // Folder icon in warm yellow/gold
+        setBtnTint(btn, '#E8AB53');
+      } else {
+        buttonSetImage(btn, 'doc.text');
+        // File icon in sidebar foreground color
+        setBtnTint(btn, colors.sideBarForeground);
+      }
+      fileTreeButtons.push(btn);
+      widgetAddChild(sidebar, btn);
+    }
+    updateFileTree();
   }
 
-  updateFileTree();
-
-  const sidebar = VStackWithInsets(1, 8, 8, 8, 8);
-  setBg(sidebar, colors.sideBarBackground);
-  widgetAddChild(sidebar, title);
-  for (let i = 0; i < fileTreeButtons.length; i++) {
-    widgetAddChild(sidebar, fileTreeButtons[i]);
-  }
   widgetAddChild(sidebar, Spacer());
-
   return sidebar;
 }
 
@@ -381,16 +593,18 @@ function renderEditorArea(colors: ResolvedUIColors): unknown {
   openTabs = [];
   openTabNames = [];
 
-  // Start with app.ts open — use literal paths (Perry string + is broken)
-  const defaultFile = 'C:/Users/Ralph/projects/hone/hone-ide/src/app.ts';
-  const defaultName = 'app.ts';
-  openTabs.push(defaultFile);
-  openTabNames.push(defaultName);
+  if (__platform__ !== 5) {
+    // Native: open default file on startup
+    const defaultFile = '/Users/amlug/projects/hone/hone-ide/src/app.ts';
+    const defaultName = 'app.ts';
+    openTabs.push(defaultFile);
+    openTabNames.push(defaultName);
 
-  const btn = Button(' app.ts ', () => { onTabClick(0); });
-  buttonSetBordered(btn, 0);
-  textSetFontSize(btn, 13);
-  tabBarButtons.push(btn);
+    const btn = Button(' app.ts ', () => { onTabClick(0); });
+    buttonSetBordered(btn, 0);
+    textSetFontSize(btn, 13);
+    tabBarButtons.push(btn);
+  }
 
   activeTabIdx = 0;
   updateEditorTabs();
@@ -411,8 +625,10 @@ function renderEditorArea(colors: ResolvedUIColors): unknown {
   const nsviewPtr = hone_editor_nsview(ed.nativeHandle as number);
   editorWidget = embedNSView(nsviewPtr);
 
-  // Load default file content
-  displayFileContent(defaultFile);
+  // Load default file content (native only — on web, no file open yet)
+  if (__platform__ !== 5 && openTabs.length > 0) {
+    displayFileContent(openTabs[0]);
+  }
 
   // Editor widget must be in the initial VStack children array — Perry's
   // NSStackView layout doesn't properly size views added via widgetAddChild().
@@ -465,17 +681,22 @@ function onBottomBarSettings(): void {
 }
 
 function renderBottomToolbar(colors: ResolvedUIColors): unknown {
-  const filesBtn = Button('F', () => { onBottomBarFiles(); });
-  const editorBtn = Button('E', () => { onBottomBarEditor(); });
-  const aiBtn = Button('A', () => { onBottomBarAI(); });
-  const termBtn = Button('T', () => { onBottomBarTerm(); });
-  const settingsBtn = Button('S', () => { onBottomBarSettings(); });
+  const filesBtn = Button('', () => { onBottomBarFiles(); });
+  const editorBtn = Button('', () => { onBottomBarEditor(); });
+  const aiBtn = Button('', () => { onBottomBarAI(); });
+  const termBtn = Button('', () => { onBottomBarTerm(); });
+  const settingsBtn = Button('', () => { onBottomBarSettings(); });
+
+  buttonSetImage(filesBtn, 'folder');
+  buttonSetImage(editorBtn, 'doc.text');
+  buttonSetImage(aiBtn, 'sparkles');
+  buttonSetImage(termBtn, 'terminal');
+  buttonSetImage(settingsBtn, 'gearshape');
 
   const allBtns = [filesBtn, editorBtn, aiBtn, termBtn, settingsBtn];
   for (let i = 0; i < allBtns.length; i++) {
     buttonSetBordered(allBtns[i], 0);
-    textSetFontSize(allBtns[i], 20);
-    setBtnFg(allBtns[i], colors.activityBarForeground);
+    setBtnTint(allBtns[i], colors.activityBarForeground);
   }
 
   const bar = HStack(0, [filesBtn, Spacer(), editorBtn, Spacer(), aiBtn, Spacer(), termBtn, Spacer(), settingsBtn]);
@@ -513,6 +734,12 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
 
   themeColors = theme.uiColors;
 
+  // Load default workspace (hone-ide project dir) if no folder open yet
+  // On web (__platform__ === 5), skip — user opens a folder via File System Access API
+  if (fileEntries.length === 0 && __platform__ !== 5) {
+    loadFileTree('/Users/amlug/projects/hone/hone-ide');
+  }
+
   if (layoutMode === 'compact') {
     const editorArea = renderEditorArea(themeColors);
     const explorerPanel = renderSidebar(themeColors);
@@ -529,6 +756,8 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
     const contentArea = VStack(0, [editorArea, explorerPanel]);
     widgetSetHugging(contentArea, 1);  // fill available space
 
+    widgetSetHugging(statusBar, 750);
+    widgetSetHugging(bottomBar, 750);
     const shell = VStack(0, [contentArea, statusBar, bottomBar]);
     setBg(shell, themeColors.editorBackground);
     return shell;
@@ -548,7 +777,13 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
     widgetSetWidth(sidebarBorder, 1);
     widgetSetHugging(sidebarBorder, 1000);
 
+    // Store refs for sidebar toggling
+    sidebarWidget = sidebar;
+    sidebarBorderWidget = sidebarBorder;
+
     const mainRow = HStack(0, [sidebar, sidebarBorder, editorArea]);
+    widgetSetHugging(mainRow, 1);
+    widgetSetHugging(statusBar, 750);
     const shell = VStack(0, [mainRow, statusBar]);
     setBg(shell, themeColors.editorBackground);
     return shell;
@@ -575,11 +810,17 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   widgetSetWidth(sidebarBorder, 1);
   widgetSetHugging(sidebarBorder, 1000);
 
+  // Store refs for sidebar toggling
+  sidebarWidget = sidebar;
+  sidebarBorderWidget = sidebarBorder;
+
   // Sidebar location: left (default) or right
   const mainRow = sidebarLocation === 'right'
     ? HStack(0, [activityBar, editorArea, sidebarBorder, sidebar])
     : HStack(0, [activityBar, sidebar, sidebarBorder, editorArea]);
 
+  widgetSetHugging(mainRow, 1);
+  widgetSetHugging(statusBar, 750);
   const shell = VStack(0, [mainRow, statusBar]);
   setBg(shell, themeColors.editorBackground);
   return shell;
