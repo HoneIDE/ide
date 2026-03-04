@@ -88,6 +88,12 @@ interface FileEntry {
 let workspaceRoot = '';
 let fileEntries: FileEntry[] = [];
 
+// Flat arrays for file paths/names — indexed by numeric ID for closure capture.
+// Perry's GC may collect strings captured directly in closures, so we store them
+// in module-level arrays and read via a named function at click time.
+let flatFilePaths: string[] = [];
+let flatFileNames: string[] = [];
+
 // Expanded directory tracking — individual module-level variables (no arrays).
 // Uses pathHash = length * 256 + lastCharCode for collision-resistant IDs.
 let exp0 = -1;
@@ -234,6 +240,8 @@ function refreshSidebar(): void {
 
   fileTreeButtons = [];
   fileEntries = [];
+  flatFilePaths = [];
+  flatFileNames = [];
   fileEntryCount = 0;
   selectedFileIdx = -1;
 
@@ -252,7 +260,8 @@ function renderTreeLevel(dirPath: string, depth: number): void {
   const files: string[] = [];
   for (let i = 0; i < names.length; i++) {
     const name = names[i];
-    if (name.charCodeAt(0) === 46) continue; // skip hidden
+    const ch0 = name.charCodeAt(0);
+    if (ch0 === 46) continue; // skip hidden (.)
     const fullPath = join(dirPath, name);
     if (isDirectory(fullPath)) {
       dirs.push(name);
@@ -269,6 +278,8 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     const fullPath = join(dirPath, name);
     const idx = fileEntryCount;
     fileEntries[idx] = { name: name, path: fullPath, depth: depth, isDir: true, label: name };
+    flatFilePaths[idx] = fullPath;
+    flatFileNames[idx] = name;
     fileEntryCount = fileEntryCount + 1;
 
     const expanded = isDirExpanded(fullPath);
@@ -311,9 +322,13 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     const fullPath = join(dirPath, name);
     const idx = fileEntryCount;
     fileEntries[idx] = { name: name, path: fullPath, depth: depth, isDir: false, label: name };
+    flatFilePaths[idx] = fullPath;
+    flatFileNames[idx] = name;
     fileEntryCount = fileEntryCount + 1;
 
-    const btn = Button(name, () => { onFileClick(idx); });
+    // Capture numeric index — named function reads from module-level arrays at click time
+    const capturedIdx = idx;
+    const btn = Button(name, () => { onFileClick(capturedIdx); });
     buttonSetBordered(btn, 0);
     textSetFontSize(btn, 13);
     buttonSetImage(btn, 'doc.text');
@@ -422,8 +437,8 @@ function applyTabColors(count: number): void {
 function getFileName(filePath: string): string {
   let lastSlash = -1;
   for (let i = 0; i < filePath.length; i++) {
-    // 47 = '/' char code
-    if (filePath.charCodeAt(i) === 47) lastSlash = i;
+    const ch = filePath.charCodeAt(i);
+    if (ch === 47 || ch === 92) lastSlash = i;  // '/' or '\'
   }
   if (lastSlash >= 0) {
     return filePath.slice(lastSlash + 1);
@@ -469,7 +484,8 @@ function openFileInEditor(filePath: string, fileName: string): void {
   // Compute display name inline (Perry function returns for strings are unreliable)
   let lastSlash = -1;
   for (let i = 0; i < filePath.length; i++) {
-    if (filePath.charCodeAt(i) === 47) lastSlash = i;  // 47 = '/'
+    const ch = filePath.charCodeAt(i);
+    if (ch === 47 || ch === 92) lastSlash = i;  // 47='/' 92='\'
   }
   let displayName = filePath;
   if (lastSlash >= 0) {
@@ -604,9 +620,11 @@ function toggleExpById(id: number): void {
 }
 
 function onFileClick(idx: number): void {
-  if (idx >= fileEntryCount) return;
-  const entry = fileEntries[idx];
-  openFileInEditor(entry.path, entry.label);
+  // Read from flat arrays (not object fields — avoids corrupted keys_array)
+  const path = flatFilePaths[idx];
+  const name = flatFileNames[idx];
+  if (path.length < 1) return;  // guard against undefined/empty
+  openFileInEditor(path, name);
   if (compactShowingExplorer > 0) {
     hideExplorer();
   }
