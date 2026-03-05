@@ -246,7 +246,7 @@ function refreshSidebar(): void {
   selectedFileIdx = -1;
 
   if (workspaceRoot.length > 0) {
-    renderTreeLevel(workspaceRoot, 0);
+    fileEntryCount = renderTreeLevel(workspaceRoot, 0, 0);
   }
 
   widgetAddChild(sidebarContainer, Spacer());
@@ -254,7 +254,8 @@ function refreshSidebar(): void {
 
 /** Render one level of the file tree directly into sidebarContainer.
  *  Called from refreshSidebar — reads exp0..exp7 which are fresh in this context. */
-function renderTreeLevel(dirPath: string, depth: number): void {
+function renderTreeLevel(dirPath: string, depth: number, startIdx: number): number {
+  let currentIdx = startIdx;
   const names: string[] = readdirSync(dirPath);
   const dirs: string[] = [];
   const files: string[] = [];
@@ -276,11 +277,11 @@ function renderTreeLevel(dirPath: string, depth: number): void {
   for (let i = 0; i < dirs.length; i++) {
     const name = dirs[i];
     const fullPath = join(dirPath, name);
-    const idx = fileEntryCount;
+    const idx = currentIdx;
     fileEntries[idx] = { name: name, path: fullPath, depth: depth, isDir: true, label: name };
     flatFilePaths[idx] = fullPath;
     flatFileNames[idx] = name;
-    fileEntryCount = fileEntryCount + 1;
+    currentIdx = currentIdx + 1;
 
     const expanded = isDirExpanded(fullPath);
     // Capture pathId as a NUMBER in the closure — immune to string GC
@@ -312,7 +313,7 @@ function renderTreeLevel(dirPath: string, depth: number): void {
 
     // Recurse into expanded dirs
     if (expanded) {
-      renderTreeLevel(fullPath, depth + 1);
+      currentIdx = renderTreeLevel(fullPath, depth + 1, currentIdx);
     }
   }
 
@@ -320,11 +321,11 @@ function renderTreeLevel(dirPath: string, depth: number): void {
   for (let i = 0; i < files.length; i++) {
     const name = files[i];
     const fullPath = join(dirPath, name);
-    const idx = fileEntryCount;
+    const idx = currentIdx;
     fileEntries[idx] = { name: name, path: fullPath, depth: depth, isDir: false, label: name };
     flatFilePaths[idx] = fullPath;
     flatFileNames[idx] = name;
-    fileEntryCount = fileEntryCount + 1;
+    currentIdx = currentIdx + 1;
 
     // Capture numeric index — named function reads from module-level arrays at click time
     const capturedIdx = idx;
@@ -349,6 +350,7 @@ function renderTreeLevel(dirPath: string, depth: number): void {
       widgetAddChild(sidebarContainer, btn);
     }
   }
+  return currentIdx;
 }
 
 /** Module-level callback for folder dialog — called from menu or elsewhere. */
