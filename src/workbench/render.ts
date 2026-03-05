@@ -20,7 +20,7 @@ import {
   buttonSetBordered, buttonSetTextColor, buttonSetTitle, buttonSetImage,
   buttonSetImagePosition, buttonSetContentTintColor,
   widgetSetBackgroundColor, widgetAddChild, widgetAddChildAt, widgetClearChildren,
-  widgetSetWidth, widgetSetHugging, widgetSetHidden, widgetRemoveChild,
+  widgetSetWidth, widgetSetHeight, widgetSetHugging, widgetSetHidden, widgetRemoveChild,
   widgetSetContextMenu, menuCreate, menuAddItem,
   embedNSView,
   openFolderDialog, openFileDialog,
@@ -48,7 +48,7 @@ import {
 import { renderDebugPanel } from './views/debug/debug-panel';
 import { renderExtensionsPanel } from './views/extensions/extensions-panel';
 import { renderChatPanel } from './views/ai-chat/chat-panel';
-import { renderTerminalPanel } from './views/terminal/terminal-panel';
+import { renderTerminalPanel, setTerminalCwd } from './views/terminal/terminal-panel';
 import { renderSettingsPanel } from './views/settings-ui/settings-panel';
 import { setWelcomeActions, createWelcomeContent } from './views/welcome/welcome-tab';
 import { initNotifications, showNotification } from './views/notifications/notifications';
@@ -126,8 +126,6 @@ let fileEntryCount = 0;
 // Data
 // ---------------------------------------------------------------------------
 
-const PANELS = ['Files', 'Search', 'Git', 'Debug', 'Ext'];
-
 let openTabs: string[] = [];
 let openTabNames: string[] = [];
 let openTabCount: number = 0;
@@ -178,6 +176,14 @@ let statusBarBranchLabel: unknown = null;
 // Breadcrumb bar
 let breadcrumbContainer: unknown = null;
 let breadcrumbReady: number = 0;
+
+// Right panel (AI Chat — Cursor-style)
+let rightPanelWidget: unknown = null;
+let rightPanelBorder: unknown = null;
+let rightPanelContainer: unknown = null;
+let rightPanelVisible: number = 0;
+let rightPanelRendered: number = 0;
+let mainRowWidget: unknown = null;
 
 // Notification overlay
 let notifOverlay: unknown = null;
@@ -399,6 +405,7 @@ function onFolderOpened(folderPath: string): void {
   workspaceRoot = folderPath;
   setSearchWorkspaceRoot(folderPath);
   setGitWorkspaceRoot(folderPath);
+  setTerminalCwd(folderPath);
   setLspWorkspaceRoot(folderPath);
   initLspBridge();
   refreshSidebar();
@@ -426,8 +433,26 @@ export function toggleSidebarAction(): void {
   }
 }
 
+function toggleRightPanel(): void {
+  if (rightPanelVisible > 0) {
+    rightPanelVisible = 0;
+    widgetSetHidden(rightPanelWidget, 1);
+    widgetSetHidden(rightPanelBorder, 1);
+  } else {
+    rightPanelVisible = 1;
+    widgetSetHidden(rightPanelWidget, 0);
+    widgetSetHidden(rightPanelBorder, 0);
+    // Render chat panel on first open
+    if (rightPanelRendered < 1) {
+      rightPanelRendered = 1;
+      renderChatPanel(rightPanelContainer, themeColors as ResolvedUIColors);
+    }
+  }
+}
+
 export function closeEditorAction(): void {
-  // Placeholder for Cmd+W
+  if (openTabCount < 1) return;
+  onTabClose(activeTabIdx);
 }
 
 export function saveFileAction(): void {
@@ -621,6 +646,11 @@ function onAutocompleteAccept(text: string): void {
 // ---------------------------------------------------------------------------
 
 function onActivityClick(idx: number): void {
+  // AI Chat (idx=5) toggles the right panel instead of the sidebar
+  if (idx === 5) {
+    toggleRightPanel();
+    return;
+  }
   activeActivityIdx = idx;
   updateActivityBar();
   switchSidebarPanel(idx);
@@ -660,10 +690,7 @@ function switchSidebarPanel(idx: number): void {
     return;
   }
 
-  if (idx === 5) {
-    renderChatPanel(sidebarContainer, themeColors as ResolvedUIColors);
-    return;
-  }
+  // idx===5 (AI Chat) handled by toggleRightPanel, not here
 
   if (idx === 6) {
     renderSettingsPanel(sidebarContainer, themeColors as ResolvedUIColors);
@@ -869,7 +896,7 @@ function renderSidebar(colors: ResolvedUIColors): unknown {
 function renderEditorArea(colors: ResolvedUIColors): unknown {
   tabBarButtons = [];
 
-  const defaultFile = '/Users/amlug/projects/hone/hone-ide/src/app.ts';
+  const defaultFile = workspaceRoot + '/src/app.ts';
   const defaultName = 'app.ts';
   openTabs = [defaultFile];
   openTabNames = [defaultName];
@@ -1025,9 +1052,13 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
 
   themeColors = theme.uiColors;
 
-  // Set default workspace root if not already set
+  // Set default workspace root to cwd if not already set
   if (workspaceRoot.length < 1) {
-    workspaceRoot = '/Users/amlug/projects/hone/hone-ide';
+    try {
+      workspaceRoot = execSync('pwd', { encoding: 'utf-8', timeout: 2000 }).trim();
+    } catch (e: any) {
+      workspaceRoot = '';
+    }
   }
 
   // Wire up extracted panel callbacks
@@ -1038,6 +1069,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   setGitWorkspaceRoot(workspaceRoot);
   setGitFileOpener(openFileFromGitPanel);
   setGitStatusBarUpdater(updateStatusBarBranchLabel);
+  setTerminalCwd(workspaceRoot);
 
   // Wire welcome tab actions
   setWelcomeActions(openFolderAction, openFileAction, openFileAction);
@@ -1120,16 +1152,20 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
 
   // Perry string === can be unreliable — use charCodeAt
   const isRight = sidebarLocation.length > 0 && sidebarLocation.charCodeAt(0) === 114; // 'r'
+
   const mainRow = isRight
     ? HStack(0, [activityBar, editorArea, sidebarBorder, sidebar])
     : HStack(0, [activityBar, sidebar, sidebarBorder, editorArea]);
+  mainRowWidget = mainRow;
 
   widgetSetHugging(mainRow, 1);
   widgetSetHugging(statusBar, 750);
 
   // Terminal bottom panel (hidden by default, toggle via Cmd+J)
-  const termPanel = VStackWithInsets(0, 0, 0, 0, 0);
+  const termPanel = VStackWithInsets(0, 4, 0, 0, 0);
   setBg(termPanel, themeColors.editorBackground);
+  widgetSetHeight(termPanel, 200);
+  widgetSetHugging(termPanel, 750);
   renderTerminalPanel(termPanel, themeColors);
   widgetSetHidden(termPanel, 1);
   terminalArea = termPanel;
@@ -1147,7 +1183,32 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   widgetSetHugging(notifOverlay, 750);
   initNotifications(notifOverlay, themeColors);
 
-  const shell = VStack(0, [mainRow, termPanel, statusBar]);
+  // Left content area: mainRow + terminal + status bar
+  const leftContent = VStack(0, [mainRow, termPanel, statusBar]);
+  setBg(leftContent, themeColors.editorBackground);
+  widgetSetHugging(leftContent, 1); // stretch to fill
+
+  // Right panel for AI Chat (Cursor-style) — outside mainRow to avoid
+  // layout conflicts with the embedded editor NSView
+  const rightPanel = VStack(8, []);
+  setBg(rightPanel, themeColors.sideBarBackground);
+  widgetSetWidth(rightPanel, 300);
+  widgetSetHugging(rightPanel, 750);
+  rightPanelContainer = rightPanel;
+  rightPanelWidget = rightPanel;
+  const rightBorderDiv = VStack(0, []);
+  setBg(rightBorderDiv, themeColors.panelBorder);
+  widgetSetWidth(rightBorderDiv, 1);
+  widgetSetHugging(rightBorderDiv, 1000);
+  rightPanelBorder = rightBorderDiv;
+  // Start hidden — toggle via activity bar icon
+  rightPanelVisible = 0;
+  rightPanelRendered = 0;
+  widgetSetHidden(rightPanel, 1);
+  widgetSetHidden(rightBorderDiv, 1);
+
+  // Outer shell: left content + right panel
+  const shell = HStack(0, [leftContent, rightBorderDiv, rightPanel]);
   setBg(shell, themeColors.editorBackground);
   return shell;
 }
