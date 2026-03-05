@@ -48,7 +48,7 @@ import {
 import { renderDebugPanel } from './views/debug/debug-panel';
 // Extensions panel hidden for now — no runtime extension system yet
 import { renderChatPanel } from './views/ai-chat/chat-panel';
-import { renderTerminalPanel, setTerminalCwd } from './views/terminal/terminal-panel';
+import { renderTerminalPanel, setTerminalCwd, destroyTerminalPanel } from './views/terminal/terminal-panel';
 import { renderSettingsPanel } from './views/settings-ui/settings-panel';
 import { setWelcomeActions, createWelcomeContent } from './views/welcome/welcome-tab';
 import { initNotifications, showNotification } from './views/notifications/notifications';
@@ -1461,15 +1461,15 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   widgetSetHugging(statusBar, 750);
 
   // Terminal bottom panel (hidden by default unless persisted, toggle via Cmd+J)
-  const termPanel = VStackWithInsets(0, 4, 0, 0, 0);
+  const termPanel = VStack(0, []);
   setBg(termPanel, themeColors.editorBackground);
   widgetSetHeight(termPanel, 200);
   widgetSetHugging(termPanel, 750);
   renderTerminalPanel(termPanel, themeColors);
-  if (settings.terminalVisible) {
-    terminalVisible = 1;
-  } else {
+  if (!settings.terminalVisible) {
     widgetSetHidden(termPanel, 1);
+  } else {
+    terminalVisible = 1;
   }
   terminalArea = termPanel;
   termPanelWidget = termPanel;
@@ -1523,7 +1523,9 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   // Pin children to fill parent height (HStack default CenterY alignment
   // only centers children instead of stretching them vertically)
   widgetMatchParentHeight(leftContent);
-  widgetMatchParentHeight(mainRow);
+  // NOTE: Do NOT use widgetMatchParentHeight(mainRow) — it conflicts with the
+  // VStack Fill distribution when terminal panel is also in the stack. mainRow
+  // stretches via hugging priority 1 instead.
   widgetMatchParentHeight(activityBar);
   widgetMatchParentHeight(sidebar);
   widgetMatchParentHeight(editorArea);
