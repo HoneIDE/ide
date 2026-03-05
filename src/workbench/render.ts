@@ -34,7 +34,7 @@ import { join } from 'path';
 import { execSync } from 'child_process';
 
 // Extracted modules
-import { hexToRGBA, setBg, setFg, setBtnFg, setBtnTint, pathId, getFileName, strEq, toLowerCode, detectLanguage, isTextFile } from './ui-helpers';
+import { hexToRGBA, setBg, setFg, setBtnFg, setBtnTint, pathId, getFileName, strEq, toLowerCode, detectLanguage, isTextFile, getFileIcon, getFileIconColor, truncateName } from './ui-helpers';
 import {
   renderSearchPanel as renderSearchPanelImpl,
   setSearchWorkspaceRoot, setSearchFileOpener, setSearchEditorReloader,
@@ -44,11 +44,12 @@ import {
   renderGitPanel as renderGitPanelImpl,
   setGitWorkspaceRoot, setGitFileOpener, setGitStatusBarUpdater,
   resetGitPanelReady, refreshGitState, updateStatusBarBranch,
+  getGitFileStatus, getGitDirStatus,
 } from './views/git/git-panel';
 import { renderDebugPanel } from './views/debug/debug-panel';
 // Extensions panel hidden for now — no runtime extension system yet
 import { renderChatPanel } from './views/ai-chat/chat-panel';
-import { renderTerminalPanel, setTerminalCwd, destroyTerminalPanel } from './views/terminal/terminal-panel';
+import { renderTerminalPanel, setTerminalCwd, destroyTerminalPanel, setTerminalCloseCallback } from './views/terminal/terminal-panel';
 import { renderSettingsPanel } from './views/settings-ui/settings-panel';
 import { setWelcomeActions, createWelcomeContent } from './views/welcome/welcome-tab';
 import { initNotifications, showNotification } from './views/notifications/notifications';
@@ -121,6 +122,7 @@ function isDirExpanded(path: string): boolean {
 }
 
 let fileEntryCount = 0;
+let fileRowWidgets: unknown[] = [];
 
 // ---------------------------------------------------------------------------
 // Data
@@ -138,6 +140,7 @@ let themeColors: ResolvedUIColors | null = null;
 
 // Activity bar
 let activityButtons: unknown[] = [];
+let activityIndicators: unknown[] = [];
 let activeActivityIdx = 0;
 
 // Sidebar file tree
@@ -148,6 +151,10 @@ let sidebarReady: number = 0;
 
 // Editor tabs
 let tabBarButtons: unknown[] = [];
+let tabAccentBars: unknown[] = [];
+let tabCloseButtons: unknown[] = [];
+let tabDirty: number[] = [];
+let tabSavedLengths: number[] = [];
 let activeTabIdx = 0;
 
 // Editor content widgets
@@ -227,21 +234,46 @@ function updateActivityBar(): void {
   for (let i = 0; i < activityButtons.length; i++) {
     if (i === activeActivityIdx) {
       setBtnTint(activityButtons[i], themeColors.activityBarForeground);
+      if (i < activityIndicators.length) {
+        setBg(activityIndicators[i], '#ffffff');
+      }
     } else {
       setBtnTint(activityButtons[i], themeColors.activityBarInactiveForeground);
+      if (i < activityIndicators.length) {
+        setBg(activityIndicators[i], themeColors.activityBarBackground);
+      }
     }
   }
 }
 
 function updateFileTree(): void {
   if (!themeColors) return;
-  for (let i = 0; i < fileTreeButtons.length; i++) {
-    if (i === selectedFileIdx) {
-      setBg(fileTreeButtons[i], themeColors.listActiveSelectionBackground);
-      setBtnFg(fileTreeButtons[i], themeColors.listActiveSelectionForeground);
-    } else {
-      setBg(fileTreeButtons[i], themeColors.sideBarBackground);
-      setBtnFg(fileTreeButtons[i], themeColors.sideBarForeground);
+  for (let i = 0; i < fileEntryCount; i++) {
+    if (i < fileRowWidgets.length && fileRowWidgets[i]) {
+      if (i === selectedFileIdx) {
+        setBg(fileRowWidgets[i], themeColors.listActiveSelectionBackground);
+      } else {
+        setBg(fileRowWidgets[i], themeColors.sideBarBackground);
+      }
+    }
+  }
+}
+
+function updateExplorerSelection(): void {
+  if (!themeColors) return;
+  // Clear old selection
+  if (selectedFileIdx >= 0 && selectedFileIdx < fileRowWidgets.length && fileRowWidgets[selectedFileIdx]) {
+    setBg(fileRowWidgets[selectedFileIdx], themeColors.sideBarBackground);
+  }
+  // Find new selection
+  selectedFileIdx = -1;
+  for (let i = 0; i < fileEntryCount; i++) {
+    if (strEq(fileEntries[i].path, currentEditorFilePath)) {
+      selectedFileIdx = i;
+      if (i < fileRowWidgets.length && fileRowWidgets[i]) {
+        setBg(fileRowWidgets[i], themeColors.listActiveSelectionBackground);
+      }
+      return;
     }
   }
 }
@@ -295,15 +327,44 @@ function updateBreadcrumb(): void {
   let fileName = currentEditorFilePath.slice(lastSlash + 1);
 
   if (dirName.length > 0) {
+    // Folder icon in breadcrumb
+    const dirIcon = Button('', () => {});
+    buttonSetBordered(dirIcon, 0);
+    buttonSetImage(dirIcon, 'folder.fill');
+    buttonSetImagePosition(dirIcon, 1);
+    textSetFontSize(dirIcon, 9);
+    if (themeColors) setBtnTint(dirIcon, '#E8AB53');
+    widgetAddChild(breadcrumbContainer, dirIcon);
+
     const dirText = Text(dirName);
     textSetFontSize(dirText, 11);
     if (themeColors) setFg(dirText, themeColors.editorForeground);
     widgetAddChild(breadcrumbContainer, dirText);
-    const sep = Text(' > ');
-    textSetFontSize(sep, 11);
-    if (themeColors) setFg(sep, themeColors.editorForeground);
-    widgetAddChild(breadcrumbContainer, sep);
+
+    // Chevron separator
+    const sepIcon = Button('', () => {});
+    buttonSetBordered(sepIcon, 0);
+    buttonSetImage(sepIcon, 'chevron.right');
+    buttonSetImagePosition(sepIcon, 1);
+    textSetFontSize(sepIcon, 7);
+    if (themeColors) setBtnTint(sepIcon, themeColors.editorForeground);
+    widgetAddChild(breadcrumbContainer, sepIcon);
   }
+  // File icon in breadcrumb
+  const bcFileIcon = Button('', () => {});
+  buttonSetBordered(bcFileIcon, 0);
+  const bcIcon = getFileIcon(fileName);
+  buttonSetImage(bcFileIcon, bcIcon);
+  buttonSetImagePosition(bcFileIcon, 1);
+  textSetFontSize(bcFileIcon, 9);
+  const bcColor = getFileIconColor(fileName);
+  if (bcColor.length > 0) {
+    setBtnTint(bcFileIcon, bcColor);
+  } else if (themeColors) {
+    setBtnTint(bcFileIcon, themeColors.editorForeground);
+  }
+  widgetAddChild(breadcrumbContainer, bcFileIcon);
+
   const fileText = Text(fileName);
   textSetFontSize(fileText, 11);
   if (themeColors) setFg(fileText, themeColors.editorForeground);
@@ -331,6 +392,7 @@ function refreshSidebar(): void {
   selectedFileIdx = -1;
   fileEntries = [];
   fileEntryCount = 0;
+  fileRowWidgets = [];
 
   if (workspaceRoot.length < 1) {
     const hint = Text('Open a folder to start');
@@ -346,15 +408,121 @@ function refreshSidebar(): void {
     return;
   }
 
-  // Header
-  const header = Text('EXPLORER');
-  textSetFontSize(header, 11);
-  textSetFontWeight(header, 11, 0.7);
-  if (themeColors) setFg(header, themeColors.sideBarForeground);
-  widgetAddChild(sidebarContainer, header);
+  // --- 1. EXPLORER title row (22px, thin text, left-padded 4px) ---
+  const explorerLabel = Text('EXPLORER');
+  textSetFontSize(explorerLabel, 11);
+  textSetFontWeight(explorerLabel, 11, 0.4);
+  if (themeColors) setFg(explorerLabel, themeColors.sideBarTitleForeground);
+  const explorerRow = HStackWithInsets(0, 0, 4, 0, 4);
+  widgetSetHeight(explorerRow, 22);
+  widgetAddChild(explorerRow, explorerLabel);
+  widgetAddChild(explorerRow, Spacer());
+  widgetAddChild(sidebarContainer, explorerRow);
 
-  // Render file tree inline using renderTreeLevel
+  // --- 2. FOLDERS section header (22px, bold, translucent bg) ---
+  const foldersLabel = Text('FOLDERS');
+  textSetFontSize(foldersLabel, 11);
+  textSetFontWeight(foldersLabel, 11, 0.7);
+  if (themeColors) setFg(foldersLabel, themeColors.sideBarForeground);
+  const dotsBtn = Button('', () => {});
+  buttonSetBordered(dotsBtn, 0);
+  buttonSetImage(dotsBtn, 'ellipsis');
+  buttonSetImagePosition(dotsBtn, 1);
+  textSetFontSize(dotsBtn, 10);
+  if (themeColors) setBtnTint(dotsBtn, themeColors.sideBarForeground);
+  const foldersRow = HStackWithInsets(0, 0, 4, 0, 4);
+  widgetSetHeight(foldersRow, 22);
+  if (themeColors) setBg(foldersRow, themeColors.sideBarSectionHeaderBackground);
+  widgetAddChild(foldersRow, foldersLabel);
+  widgetAddChild(foldersRow, Spacer());
+  widgetAddChild(foldersRow, dotsBtn);
+  widgetAddChild(sidebarContainer, foldersRow);
+
+  // --- 3. Root folder row (22px, bold uppercase, chevron + action buttons) ---
+  const rootName = getFileName(workspaceRoot);
+  let rootDisplay = '';
+  for (let ci = 0; ci < rootName.length; ci++) {
+    const cc = rootName.charCodeAt(ci);
+    if (cc >= 97 && cc <= 122) {
+      rootDisplay += String.fromCharCode(cc - 32);
+    } else {
+      rootDisplay += rootName.charAt(ci);
+    }
+  }
+  const rootChevron = Text('\u02C5');
+  textSetFontSize(rootChevron, 9);
+  if (themeColors) setFg(rootChevron, themeColors.sideBarForeground);
+  const rootLabel = Text(rootDisplay);
+  textSetFontSize(rootLabel, 11);
+  textSetFontWeight(rootLabel, 11, 0.7);
+  if (themeColors) setFg(rootLabel, themeColors.sideBarForeground);
+
+  // New file button
+  const newFileBtn = Button('', () => { newFileAction(); });
+  buttonSetBordered(newFileBtn, 0);
+  buttonSetImage(newFileBtn, 'doc.badge.plus');
+  buttonSetImagePosition(newFileBtn, 1);
+  textSetFontSize(newFileBtn, 10);
+  if (themeColors) setBtnTint(newFileBtn, themeColors.sideBarForeground);
+
+  // New folder button
+  const newFolderBtn = Button('', () => {});
+  buttonSetBordered(newFolderBtn, 0);
+  buttonSetImage(newFolderBtn, 'folder.badge.plus');
+  buttonSetImagePosition(newFolderBtn, 1);
+  textSetFontSize(newFolderBtn, 10);
+  if (themeColors) setBtnTint(newFolderBtn, themeColors.sideBarForeground);
+
+  // Collapse all button
+  const collapseBtn = Button('', () => { collapseAllDirs(); });
+  buttonSetBordered(collapseBtn, 0);
+  buttonSetImage(collapseBtn, 'arrow.down.right.and.arrow.up.left');
+  buttonSetImagePosition(collapseBtn, 1);
+  textSetFontSize(collapseBtn, 10);
+  if (themeColors) setBtnTint(collapseBtn, themeColors.sideBarForeground);
+
+  const rootRow = HStackWithInsets(2, 0, 4, 0, 4);
+  widgetSetHeight(rootRow, 22);
+  widgetAddChild(rootRow, rootChevron);
+  widgetAddChild(rootRow, rootLabel);
+  widgetAddChild(rootRow, Spacer());
+  widgetAddChild(rootRow, newFileBtn);
+  widgetAddChild(rootRow, newFolderBtn);
+  widgetAddChild(rootRow, collapseBtn);
+  widgetAddChild(sidebarContainer, rootRow);
+
+  // --- 4. File tree ---
   renderTreeLevel(workspaceRoot, 0);
+
+  // --- 5. OUTLINE collapsed section ---
+  const outlineChevron = Text('\u25B7');
+  textSetFontSize(outlineChevron, 9);
+  if (themeColors) setFg(outlineChevron, themeColors.sideBarForeground);
+  const outlineLabel = Text('OUTLINE');
+  textSetFontSize(outlineLabel, 11);
+  textSetFontWeight(outlineLabel, 11, 0.7);
+  if (themeColors) setFg(outlineLabel, themeColors.sideBarForeground);
+  const outlineRow = HStackWithInsets(4, 0, 4, 0, 4);
+  widgetSetHeight(outlineRow, 22);
+  if (themeColors) setBg(outlineRow, themeColors.sideBarSectionHeaderBackground);
+  widgetAddChild(outlineRow, outlineChevron);
+  widgetAddChild(outlineRow, outlineLabel);
+  widgetAddChild(sidebarContainer, outlineRow);
+
+  // --- 6. TIMELINE collapsed section ---
+  const timelineChevron = Text('\u25B7');
+  textSetFontSize(timelineChevron, 9);
+  if (themeColors) setFg(timelineChevron, themeColors.sideBarForeground);
+  const timelineLabel = Text('TIMELINE');
+  textSetFontSize(timelineLabel, 11);
+  textSetFontWeight(timelineLabel, 11, 0.7);
+  if (themeColors) setFg(timelineLabel, themeColors.sideBarForeground);
+  const timelineRow = HStackWithInsets(4, 0, 4, 0, 4);
+  widgetSetHeight(timelineRow, 22);
+  if (themeColors) setBg(timelineRow, themeColors.sideBarSectionHeaderBackground);
+  widgetAddChild(timelineRow, timelineChevron);
+  widgetAddChild(timelineRow, timelineLabel);
+  widgetAddChild(sidebarContainer, timelineRow);
 
   widgetAddChild(sidebarContainer, Spacer());
 }
@@ -382,41 +550,80 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     }
   }
 
-  // Render directories first
+  // Render directories first — chevron + name only (no folder icon)
   for (let i = 0; i < dirCount; i++) {
     const name = dirNames[i];
     const full = join(dirPath, name);
     const expanded = isDirExpanded(full);
     const id = pathId(full);
-    let icon = 'folder.fill';
-    if (expanded) icon = 'folder';
 
-    const btn = Button(name, () => { onDirToggle(id); });
-    buttonSetBordered(btn, 0);
-    textSetFontSize(btn, 12);
-    buttonSetImage(btn, icon);
-    if (themeColors) {
-      setBtnFg(btn, themeColors.sideBarForeground);
-      setBtnTint(btn, '#E8AB53');
-    }
+    const row = HStack(2, []);
+    widgetSetHeight(row, 22);
 
-    if (depth > 0) {
-      const wrapper = HStack(0, []);
+    // Indent
+    const indentPx = depth * 20;
+    if (indentPx > 0) {
       const indent = Text('');
-      widgetSetWidth(indent, depth * 16);
-      widgetAddChild(wrapper, indent);
-      widgetAddChild(wrapper, btn);
-      widgetAddChild(sidebarContainer, wrapper);
-    } else {
-      widgetAddChild(sidebarContainer, btn);
+      widgetSetWidth(indent, indentPx);
+      widgetAddChild(row, indent);
     }
+
+    // Chevron (16px wide, 9px font)
+    const chevron = Button('', () => { onDirToggle(id); });
+    buttonSetBordered(chevron, 0);
+    if (expanded) {
+      buttonSetImage(chevron, 'chevron.down');
+    } else {
+      buttonSetImage(chevron, 'chevron.right');
+    }
+    buttonSetImagePosition(chevron, 1);
+    textSetFontSize(chevron, 9);
+    widgetSetWidth(chevron, 16);
+    if (themeColors) setBtnTint(chevron, themeColors.sideBarForeground);
+    widgetAddChild(row, chevron);
+
+    // Name button (13px, no icon)
+    const displayName = truncateName(name, 30);
+    const btn = Button(displayName, () => { onDirToggle(id); });
+    buttonSetBordered(btn, 0);
+    textSetFontSize(btn, 13);
+    if (themeColors) setBtnFg(btn, themeColors.sideBarForeground);
+    widgetAddChild(row, btn);
+
+    // Spacer absorbs extra width — keeps content left-aligned
+    widgetAddChild(row, Spacer());
+
+    // Git badge for directory
+    if (workspaceRoot.length > 0 && full.length > workspaceRoot.length + 1) {
+      const dirRelPath = full.slice(workspaceRoot.length + 1);
+      const dirGitStatus = getGitDirStatus(dirRelPath);
+      if (dirGitStatus > 0) {
+        let badgeLetter = 'M';
+        let badgeColor = '#E2C08D';
+        if (dirGitStatus === 2) { badgeLetter = 'U'; badgeColor = '#73C991'; }
+        if (dirGitStatus === 3) { badgeLetter = 'A'; badgeColor = '#73C991'; }
+        if (dirGitStatus === 4) { badgeLetter = 'D'; badgeColor = '#E57373'; }
+        const badge = Text(badgeLetter);
+        textSetFontSize(badge, 11);
+        textSetFontFamily(badge, 11, 'Menlo');
+        setFg(badge, badgeColor);
+        widgetAddChild(row, badge);
+      }
+    }
+
+    // Right padding
+    const rpad = Text('');
+    widgetSetWidth(rpad, 4);
+    widgetAddChild(row, rpad);
+
+    widgetAddChild(sidebarContainer, row);
 
     if (expanded) {
       renderTreeLevel(full, depth + 1);
     }
   }
 
-  // Render files
+  // Render files — icon + name + git badge
   for (let i = 0; i < fileCount; i++) {
     const name = fileNames[i];
     const full = join(dirPath, name);
@@ -424,26 +631,84 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     fileEntries[idx] = { name: name, path: full, depth: depth, isDir: false, label: name };
     fileEntryCount = fileEntryCount + 1;
 
-    const btn = Button(name, () => { onFileClick(idx); });
-    buttonSetBordered(btn, 0);
-    textSetFontSize(btn, 12);
-    buttonSetImage(btn, 'doc');
-    if (themeColors) {
-      setBtnFg(btn, themeColors.sideBarForeground);
-      setBtnTint(btn, themeColors.sideBarForeground);
-    }
-    fileTreeButtons.push(btn);
+    const row = HStack(2, []);
+    widgetSetHeight(row, 22);
 
-    if (depth > 0) {
-      const wrapper = HStack(0, []);
-      const indent = Text('');
-      widgetSetWidth(indent, depth * 16);
-      widgetAddChild(wrapper, indent);
-      widgetAddChild(wrapper, btn);
-      widgetAddChild(sidebarContainer, wrapper);
-    } else {
-      widgetAddChild(sidebarContainer, btn);
+    // Indent (depth*20 + 16 for chevron space)
+    const indentPx = depth * 20 + 16;
+    const indent = Text('');
+    widgetSetWidth(indent, indentPx);
+    widgetAddChild(row, indent);
+
+    // File icon (separate widget, image-only, 16px)
+    const fIcon = getFileIcon(name);
+    const iconBtn = Button('', () => { onFileClick(idx); });
+    buttonSetBordered(iconBtn, 0);
+    buttonSetImage(iconBtn, fIcon);
+    buttonSetImagePosition(iconBtn, 1);
+    textSetFontSize(iconBtn, 12);
+    widgetSetWidth(iconBtn, 16);
+    if (themeColors) {
+      const fColor = getFileIconColor(name);
+      if (fColor.length > 0) {
+        setBtnTint(iconBtn, fColor);
+      } else {
+        setBtnTint(iconBtn, themeColors.sideBarForeground);
+      }
     }
+    widgetAddChild(row, iconBtn);
+
+    // Determine git status and color
+    let fileColor = '';
+    let gitLetter = '';
+    let gitColor = '';
+    if (themeColors) {
+      fileColor = themeColors.sideBarForeground;
+    }
+    if (workspaceRoot.length > 0 && full.length > workspaceRoot.length + 1) {
+      const relPath = full.slice(workspaceRoot.length + 1);
+      const gStatus = getGitFileStatus(relPath);
+      if (gStatus === 1) { fileColor = '#E2C08D'; gitLetter = 'M'; gitColor = '#E2C08D'; }
+      if (gStatus === 2) { fileColor = '#73C991'; gitLetter = 'U'; gitColor = '#73C991'; }
+      if (gStatus === 3) { fileColor = '#73C991'; gitLetter = 'A'; gitColor = '#73C991'; }
+      if (gStatus === 4) { fileColor = '#E57373'; gitLetter = 'D'; gitColor = '#E57373'; }
+    }
+
+    // File name button (13px)
+    const displayName = truncateName(name, 30);
+    const nameBtn = Button(displayName, () => { onFileClick(idx); });
+    buttonSetBordered(nameBtn, 0);
+    textSetFontSize(nameBtn, 13);
+    if (fileColor.length > 0) setBtnFg(nameBtn, fileColor);
+    widgetAddChild(row, nameBtn);
+
+    // Spacer absorbs extra width — keeps content left-aligned
+    widgetAddChild(row, Spacer());
+
+    // Git badge
+    if (gitLetter.length > 0) {
+      const badge = Text(gitLetter);
+      textSetFontSize(badge, 11);
+      textSetFontFamily(badge, 11, 'Menlo');
+      setFg(badge, gitColor);
+      widgetAddChild(row, badge);
+    }
+
+    // Right padding
+    const rpad = Text('');
+    widgetSetWidth(rpad, 4);
+    widgetAddChild(row, rpad);
+
+    fileTreeButtons.push(nameBtn);
+    fileRowWidgets[idx] = row;
+
+    // Selection highlight
+    if (themeColors && currentEditorFilePath.length > 0 && strEq(full, currentEditorFilePath)) {
+      setBg(row, themeColors.listActiveSelectionBackground);
+      selectedFileIdx = idx;
+    }
+
+    widgetAddChild(sidebarContainer, row);
   }
 }
 
@@ -544,6 +809,37 @@ export function saveFileAction(): void {
   const content = editorInstance.getContent();
   writeFileSync(currentEditorFilePath, content);
   triggerDiagnostics();
+  // Clear dirty state for active tab
+  if (activeTabIdx >= 0 && activeTabIdx < tabDirty.length) {
+    tabDirty[activeTabIdx] = 0;
+    tabSavedLengths[activeTabIdx] = content.length;
+    if (activeTabIdx < tabCloseButtons.length) {
+      buttonSetImage(tabCloseButtons[activeTabIdx], 'xmark');
+    }
+  }
+}
+
+function pollDirtyState(): void {
+  if (editorReady < 1) return;
+  if (activeTabIdx < 0 || activeTabIdx >= tabDirty.length) return;
+  const content = editorInstance.getContent();
+  const savedLen = tabSavedLengths[activeTabIdx];
+  const wasDirty = tabDirty[activeTabIdx];
+  if (content.length !== savedLen) {
+    if (wasDirty < 1) {
+      tabDirty[activeTabIdx] = 1;
+      if (activeTabIdx < tabCloseButtons.length) {
+        buttonSetImage(tabCloseButtons[activeTabIdx], 'circle.fill');
+      }
+    }
+  } else {
+    if (wasDirty > 0) {
+      tabDirty[activeTabIdx] = 0;
+      if (activeTabIdx < tabCloseButtons.length) {
+        buttonSetImage(tabCloseButtons[activeTabIdx], 'xmark');
+      }
+    }
+  }
 }
 
 function rebuildTabBar(): void {
@@ -554,11 +850,22 @@ function rebuildTabBar(): void {
 function rebuildTabBarDirect(count: number, names: string[], paths: string[], container: unknown): void {
   widgetClearChildren(container);
   tabBarButtons = [];
+  tabAccentBars = [];
+  tabCloseButtons = [];
+  tabDirty = [];
+  tabSavedLengths = [];
   for (let i = 0; i < count; i++) {
     const idx = i;
     const path = paths[i];
     const name = names[i];
     const tabGroup = HStackWithInsets(4, 0, 10, 0, 6);
+    // File type icon
+    const tabIcon = Button('', () => { onTabClickDirect(idx, path); });
+    buttonSetBordered(tabIcon, 0);
+    const tIcon = getFileIcon(name);
+    buttonSetImage(tabIcon, tIcon);
+    buttonSetImagePosition(tabIcon, 1);
+    textSetFontSize(tabIcon, 11);
     const tabBtn = Button(name, () => { onTabClickDirect(idx, path); });
     buttonSetBordered(tabBtn, 0);
     textSetFontSize(tabBtn, 13);
@@ -567,25 +874,56 @@ function rebuildTabBarDirect(count: number, names: string[], paths: string[], co
     buttonSetImage(closeBtn, 'xmark');
     buttonSetImagePosition(closeBtn, 1);
     textSetFontSize(closeBtn, 9);
+    widgetAddChild(tabGroup, tabIcon);
     widgetAddChild(tabGroup, tabBtn);
     widgetAddChild(tabGroup, closeBtn);
+
+    // 2px accent bar at top of tab
+    const accent = HStack(0, []);
+    widgetSetHeight(accent, 2);
+    widgetSetHugging(accent, 750);
+
     if (themeColors) {
       if (i === activeTabIdx) {
         setBtnFg(tabBtn, themeColors.tabActiveForeground);
         setBg(tabGroup, themeColors.tabActiveBackground);
+        setBg(accent, themeColors.focusBorder);
       } else {
-        setBtnFg(tabBtn, themeColors.tabActiveForeground);
+        setBtnFg(tabBtn, themeColors.tabInactiveForeground);
         setBg(tabGroup, themeColors.tabInactiveBackground);
+        setBg(accent, themeColors.tabInactiveBackground);
       }
       setBtnFg(closeBtn, themeColors.tabActiveForeground);
+      // Color the file icon
+      const tColor = getFileIconColor(name);
+      if (tColor.length > 0) {
+        setBtnTint(tabIcon, tColor);
+      } else {
+        setBtnTint(tabIcon, themeColors.tabActiveForeground);
+      }
     }
+
+    // Wrap tab in VStack with accent bar on top
+    const tabWrapper = VStack(0, [accent, tabGroup]);
     const tabMenu = menuCreate();
     menuAddItem(tabMenu, 'Close', () => { onTabClose(idx); });
     menuAddItem(tabMenu, 'Close Others', () => { closeOtherTabs(idx); });
     menuAddItem(tabMenu, 'Close All', () => { closeAllTabs(); });
-    widgetSetContextMenu(tabGroup, tabMenu);
-    widgetAddChild(container, tabGroup);
+    widgetSetContextMenu(tabWrapper, tabMenu);
+    widgetAddChild(container, tabWrapper);
     tabBarButtons.push(tabGroup);
+    tabAccentBars.push(accent);
+    tabCloseButtons.push(closeBtn);
+    tabDirty.push(0);
+    // Initialize saved length: try to read the file length
+    let savedLen = 0;
+    try {
+      const fc = readFileSync(path);
+      savedLen = fc.length;
+    } catch (e) {
+      savedLen = 0;
+    }
+    tabSavedLengths.push(savedLen);
   }
 }
 
@@ -594,8 +932,10 @@ function applyTabColors(count: number): void {
   for (let i = 0; i < count; i++) {
     if (i === activeTabIdx) {
       setBg(tabBarButtons[i], themeColors.tabActiveBackground);
+      if (i < tabAccentBars.length) setBg(tabAccentBars[i], themeColors.focusBorder);
     } else {
       setBg(tabBarButtons[i], themeColors.tabInactiveBackground);
+      if (i < tabAccentBars.length) setBg(tabAccentBars[i], themeColors.tabInactiveBackground);
     }
   }
 }
@@ -610,12 +950,22 @@ function onFileOpenedCb2(filePath: string): void {
   openFileInEditor(filePath, name);
 }
 
+function safeReadFile(filePath: string): string {
+  let content = '';
+  try {
+    content = readFileSync(filePath);
+  } catch (e) {
+    return '';
+  }
+  return content;
+}
+
 function displayFileContent(filePath: string): void {
   currentEditorFilePath = filePath;
   updateBreadcrumb();
   updateStatusBarLanguage(filePath);
   if (editorReady < 1) return;
-  const content = readFileSync(filePath);
+  const content = safeReadFile(filePath);
   editorInstance.setContent(content);
   editorInstance.render();
 }
@@ -642,7 +992,7 @@ function updateStatusBarLanguage(filePath: string): void {
 function openFileInEditor(filePath: string, fileName: string): void {
   // Check if file is already open — switch to that tab
   for (let i = 0; i < openTabCount; i++) {
-    if (openTabs[i].length === filePath.length && openTabs[i] === filePath) {
+    if (strEq(openTabs[i], filePath)) {
       activeTabIdx = i;
       currentEditorFilePath = filePath;
       updateBreadcrumb();
@@ -650,7 +1000,7 @@ function openFileInEditor(filePath: string, fileName: string): void {
         applyTabColors(openTabCount);
       }
       if (editorReady > 0) {
-        const content = readFileSync(filePath);
+        const content = safeReadFile(filePath);
         editorInstance.setContent(content);
         editorInstance.render();
       }
@@ -682,7 +1032,7 @@ function openFileInEditor(filePath: string, fileName: string): void {
   }
 
   if (editorReady > 0) {
-    const content = readFileSync(filePath);
+    const content = safeReadFile(filePath);
     editorInstance.setContent(content);
     editorInstance.render();
   }
@@ -728,7 +1078,7 @@ function closeOtherTabsDeferred(): void {
     rebuildTabBarDirect(1, openTabNames, openTabs, tabBarContainer);
   }
   if (editorReady > 0) {
-    const content = readFileSync(keptPath);
+    const content = safeReadFile(keptPath);
     editorInstance.setContent(content);
     editorInstance.render();
   }
@@ -821,6 +1171,7 @@ function switchSidebarPanel(idx: number): void {
   }
   widgetClearChildren(sidebarContainer);
   fileTreeButtons = [];
+  fileRowWidgets = [];
   selectedFileIdx = -1;
   resetSearchPanelReady();
 
@@ -853,18 +1204,12 @@ function switchSidebarPanel(idx: number): void {
 // Directory expansion
 // ---------------------------------------------------------------------------
 
-let pendingDirToggleId: number = -1;
-
 function onDirToggle(id: number): void {
-  pendingDirToggleId = id;
-  setTimeout(() => { onDirToggleDeferred(); }, 0);
+  toggleExpById(id);
+  setTimeout(() => { deferredRefreshSidebar(); }, 0);
 }
 
-function onDirToggleDeferred(): void {
-  const id = pendingDirToggleId;
-  if (id < 0) return;
-  pendingDirToggleId = -1;
-  toggleExpById(id);
+function deferredRefreshSidebar(): void {
   refreshSidebar();
 }
 
@@ -903,6 +1248,14 @@ function toggleExpById(id: number): void {
   if (exp15 === -1) { exp15 = id; return; }
 }
 
+function collapseAllDirs(): void {
+  exp0 = -1; exp1 = -1; exp2 = -1; exp3 = -1;
+  exp4 = -1; exp5 = -1; exp6 = -1; exp7 = -1;
+  exp8 = -1; exp9 = -1; exp10 = -1; exp11 = -1;
+  exp12 = -1; exp13 = -1; exp14 = -1; exp15 = -1;
+  setTimeout(() => { refreshSidebar(); }, 0);
+}
+
 function onFileClick(idx: number): void {
   pendingFileClickIdx = idx;
   setTimeout(() => { onFileClickDeferred(); }, 0);
@@ -915,6 +1268,7 @@ function onFileClickDeferred(): void {
   if (idx >= fileEntryCount) return;
   const entry = fileEntries[idx];
   openFileInEditor(entry.path, entry.label);
+  updateExplorerSelection();
   if (compactShowingExplorer > 0) {
     hideExplorer();
   }
@@ -934,6 +1288,7 @@ function onTabClickDeferred2(): void {
   if (idx < openTabCount) {
     displayFileContent(openTabs[idx]);
   }
+  updateExplorerSelection();
 }
 
 function onTabClickDirect(idx: number, path: string): void {
@@ -944,10 +1299,11 @@ function onTabClickDirect(idx: number, path: string): void {
     applyTabColors(tabBarButtons.length);
   }
   if (editorReady > 0) {
-    const content = readFileSync(path);
+    const content = safeReadFile(path);
     editorInstance.setContent(content);
     editorInstance.render();
   }
+  updateExplorerSelection();
 }
 
 function onTabClose(idx: number): void {
@@ -986,7 +1342,7 @@ function onTabCloseDeferred(): void {
   if (editorReady > 0 && activeTabIdx >= 0) {
     currentEditorFilePath = newTabs[activeTabIdx];
     updateBreadcrumb();
-    const content = readFileSync(newTabs[activeTabIdx]);
+    const content = safeReadFile(newTabs[activeTabIdx]);
     editorInstance.setContent(content);
     editorInstance.render();
   }
@@ -998,6 +1354,7 @@ function onTabCloseDeferred(): void {
 
 function renderActivityBarDesktop(colors: ResolvedUIColors): unknown {
   activityButtons = [];
+  activityIndicators = [];
 
   // Icons: 0=Files, 1=Search, 2=Git, 3=Debug, 4=AI Chat
   const icons = ['doc.on.doc', 'magnifyingglass', 'arrow.triangle.branch', 'ladybug', 'sparkles'];
@@ -1010,14 +1367,27 @@ function renderActivityBarDesktop(colors: ResolvedUIColors): unknown {
     buttonSetImagePosition(btn, 1);
     setBtnTint(btn, colors.activityBarForeground);
     activityButtons.push(btn);
+
+    // 2px indicator bar on left side
+    const indicator = VStack(0, []);
+    widgetSetWidth(indicator, 2);
+    widgetSetHeight(indicator, 20);
+    if (i === activeActivityIdx) {
+      setBg(indicator, '#ffffff');
+    } else {
+      setBg(indicator, colors.activityBarBackground);
+    }
+    activityIndicators.push(indicator);
   }
 
   updateActivityBar();
 
-  const bar = VStackWithInsets(20, 12, 6, 12, 6);
+  const bar = VStackWithInsets(4, 0, 0, 0, 0);
   setBg(bar, colors.activityBarBackground);
   for (let i = 0; i < activityButtons.length; i++) {
-    widgetAddChild(bar, activityButtons[i]);
+    const row = HStack(0, [activityIndicators[i], activityButtons[i]]);
+    widgetSetHeight(row, 48);
+    widgetAddChild(bar, row);
   }
   widgetAddChild(bar, Spacer());
 
@@ -1062,7 +1432,7 @@ function renderActivityBarCompact(colors: ResolvedUIColors): unknown {
 // ---------------------------------------------------------------------------
 
 function renderSidebar(colors: ResolvedUIColors): unknown {
-  const inner = VStackWithInsets(1, 8, 8, 8, 8);
+  const inner = VStackWithInsets(0, 0, 0, 0, 0);
   setBg(inner, colors.sideBarBackground);
   sidebarContainer = inner;
   sidebarReady = 1;
@@ -1106,6 +1476,8 @@ function renderEditorArea(colors: ResolvedUIColors): unknown {
 
   // Poll cursor position for status bar (every ~250ms)
   setInterval(() => { pollCursorPosition(); }, 250);
+  // Poll dirty state every 500ms
+  setInterval(() => { pollDirtyState(); }, 500);
 
   // Breadcrumb bar
   breadcrumbContainer = HStackWithInsets(4, 4, 8, 4, 8);
@@ -1191,32 +1563,64 @@ function renderBottomToolbar(colors: ResolvedUIColors): unknown {
 // ---------------------------------------------------------------------------
 
 function renderStatusBar(colors: ResolvedUIColors): unknown {
-  const branch = Text(' main');
-  textSetFontSize(branch, 12);
+  // Branch icon + label
+  const branchBtn = Button('', () => {});
+  buttonSetBordered(branchBtn, 0);
+  buttonSetImage(branchBtn, 'arrow.triangle.branch');
+  buttonSetImagePosition(branchBtn, 1);
+  textSetFontSize(branchBtn, 10);
+  setBtnTint(branchBtn, colors.statusBarForeground);
+
+  const branch = Text('main');
+  textSetFontSize(branch, 11);
   setFg(branch, colors.statusBarForeground);
   statusBarBranchLabel = branch;
 
+  const branchRow = HStack(2, [branchBtn, branch]);
+
+  // Diagnostics: error icon + warning icon
   const diagLabel = Text('');
-  textSetFontSize(diagLabel, 12);
+  textSetFontSize(diagLabel, 11);
   setFg(diagLabel, colors.statusBarForeground);
   statusBarDiagLabel = diagLabel;
 
+  // Cursor position
   const cursorLabel = Text('Ln 1, Col 1');
-  textSetFontSize(cursorLabel, 12);
+  textSetFontSize(cursorLabel, 11);
   setFg(cursorLabel, colors.statusBarForeground);
   statusBarCursorLabel = cursorLabel;
 
+  // Indent size
+  const indentLabel = Text('Spaces: 2');
+  textSetFontSize(indentLabel, 11);
+  setFg(indentLabel, colors.statusBarForeground);
+
+  // Encoding
   const encodingLabel = Text('UTF-8');
-  textSetFontSize(encodingLabel, 12);
+  textSetFontSize(encodingLabel, 11);
   setFg(encodingLabel, colors.statusBarForeground);
   statusBarEncodingLabel = encodingLabel;
 
-  const lang = Text('TypeScript ');
-  textSetFontSize(lang, 12);
+  // Line endings
+  const eolLabel = Text('LF');
+  textSetFontSize(eolLabel, 11);
+  setFg(eolLabel, colors.statusBarForeground);
+
+  // Language
+  const lang = Text('TypeScript');
+  textSetFontSize(lang, 11);
   setFg(lang, colors.statusBarForeground);
   statusBarLangLabel = lang;
 
-  const bar = HStack(8, [branch, Spacer(), diagLabel, cursorLabel, encodingLabel, lang]);
+  const bar = HStackWithInsets(12, 0, 8, 0, 8);
+  widgetAddChild(bar, branchRow);
+  widgetAddChild(bar, Spacer());
+  widgetAddChild(bar, diagLabel);
+  widgetAddChild(bar, cursorLabel);
+  widgetAddChild(bar, indentLabel);
+  widgetAddChild(bar, eolLabel);
+  widgetAddChild(bar, encodingLabel);
+  widgetAddChild(bar, lang);
   setBg(bar, colors.statusBarBackground);
   statusBarWidget = bar;
 
@@ -1274,7 +1678,7 @@ function recolorUI(): void {
   if (statusBarLangLabel) setFg(statusBarLangLabel, c.statusBarForeground);
 
   // Tab bar
-  updateTabHighlights();
+  applyTabColors(openTabCount);
 
   // Re-render active sidebar panel with new colors
   switchSidebarPanel(activeActivityIdx);
@@ -1465,6 +1869,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   setBg(termPanel, themeColors.editorBackground);
   widgetSetHeight(termPanel, 200);
   widgetSetHugging(termPanel, 750);
+  setTerminalCloseCallback(toggleTerminalAction);
   renderTerminalPanel(termPanel, themeColors);
   if (!settings.terminalVisible) {
     widgetSetHidden(termPanel, 1);

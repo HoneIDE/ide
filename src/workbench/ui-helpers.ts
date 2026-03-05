@@ -104,6 +104,48 @@ export function detectLanguage(filePath: string): string {
   return 'plaintext';
 }
 
+/** Get the SF Symbol icon name for a file based on its extension. */
+export function getFileIcon(name: string): string {
+  if (name.endsWith('.ts') || name.endsWith('.tsx')) return 'swift';
+  if (name.endsWith('.js') || name.endsWith('.jsx')) return 'swift';
+  if (name.endsWith('.json')) return 'curlybraces';
+  if (name.endsWith('.rs')) return 'gearshape.2';
+  if (name.endsWith('.html') || name.endsWith('.htm')) return 'chevron.left.forwardslash.chevron.right';
+  if (name.endsWith('.css')) return 'paintbrush';
+  if (name.endsWith('.md')) return 'doc.plaintext';
+  if (name.endsWith('.py')) return 'chevron.left.forwardslash.chevron.right';
+  if (name.endsWith('.sh')) return 'terminal';
+  if (name.endsWith('.toml') || name.endsWith('.yaml') || name.endsWith('.yml')) return 'gearshape';
+  if (name.endsWith('.swift')) return 'swift';
+  if (name.endsWith('.c') || name.endsWith('.h') || name.endsWith('.cpp') || name.endsWith('.hpp')) return 'chevron.left.forwardslash.chevron.right';
+  return 'doc';
+}
+
+/** Get the color hex for a file icon based on its extension. */
+export function getFileIconColor(name: string): string {
+  if (name.endsWith('.ts') || name.endsWith('.tsx')) return '#3178C6';
+  if (name.endsWith('.js') || name.endsWith('.jsx')) return '#F7DF1E';
+  if (name.endsWith('.json')) return '#F7DF1E';
+  if (name.endsWith('.rs')) return '#CE422B';
+  if (name.endsWith('.html') || name.endsWith('.htm')) return '#E44D26';
+  if (name.endsWith('.css')) return '#1572B6';
+  if (name.endsWith('.md')) return '#519ABA';
+  if (name.endsWith('.py')) return '#3776AB';
+  if (name.endsWith('.sh')) return '#4EAA25';
+  if (name.endsWith('.toml') || name.endsWith('.yaml') || name.endsWith('.yml')) return '#6D8086';
+  if (name.endsWith('.swift')) return '#F05138';
+  if (name.endsWith('.c') || name.endsWith('.h') || name.endsWith('.cpp') || name.endsWith('.hpp')) return '#659AD2';
+  return '';
+}
+
+/** Truncate a name to maxLen characters, appending '...' if needed. */
+export function truncateName(name: string, maxLen: number): string {
+  if (name.length <= maxLen) return name;
+  let result = name.slice(0, maxLen - 3);
+  result += '...';
+  return result;
+}
+
 /** Check if a file name has a text extension we should search. */
 export function isTextFile(name: string): boolean {
   if (name.endsWith('.ts')) return true;

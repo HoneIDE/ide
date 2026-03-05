@@ -1,7 +1,7 @@
 /**
  * AI Chat panel — chat interface for AI assistant.
  *
- * Uses Anthropic Messages API via curl (synchronous).
+ * Uses Anthropic Messages API via Perry's native fetch (reqwest).
  * API key from ANTHROPIC_API_KEY env var or ~/.hone/settings.json.
  * All state is module-level (Perry closures capture by value).
  *
@@ -10,7 +10,7 @@
  * messages are serialized to a temp file and read back for display.
  */
 import {
-  VStack, HStack, Text, Button,
+  VStack, HStack, Text, Button, Spacer,
   TextField, ScrollView, scrollViewSetChild,
   textSetFontSize, textSetFontWeight, textSetFontFamily,
   buttonSetBordered,
@@ -21,6 +21,9 @@ import { execSync } from 'child_process';
 import { readFileSync, writeFileSync } from 'fs';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
+
+// Perry native fetch
+import fetch from 'node-fetch';
 
 // ---------------------------------------------------------------------------
 // Module-level state (must be declared BEFORE any function — Perry no-hoist)
@@ -43,6 +46,9 @@ let msgFilePath = '/tmp/hone-chat-msgs.txt';
 // API key — loaded at render time, not in callbacks
 let chatApiKey = '';
 let chatApiKeyLoaded: number = 0;
+
+// Pending send state
+let sendPending: number = 0;
 
 // ---------------------------------------------------------------------------
 // Pure helper functions (only use parameters, never read module-level vars)
@@ -296,39 +302,41 @@ function loadApiKey(): void {
 }
 
 // ---------------------------------------------------------------------------
-// UI handlers — all module-level reads/writes at depth 1 (Perry constraint)
+// API call via Perry native fetch
 // ---------------------------------------------------------------------------
 
-function onChatInput(text: string): void {
-  chatInputText = text;
-}
-
-/**
- * Send message and call API — ALL INLINE at depth 1.
- */
-function onSend(): void {
-  if (chatInputText.length < 1) return;
-
-  // Add user message to file
-  appendMessage(1, chatInputText);
-  chatInputText = '';
-  if (chatInput) textfieldSetString(chatInput, '');
-  updateMessages();
-
-  // Check API key
-  const apiKey = chatApiKey;
-  if (apiKey.length < 5) {
-    appendMessage(0, 'No API key found. Set ANTHROPIC_API_KEY or add "anthropicApiKey" to ~/.hone/settings.json');
-    updateMessages();
-    return;
-  }
-
+async function doFetchSend(): Promise<void> {
   // Build request body from file (avoids reading module-level arrays)
   let fileContent = '';
   try { fileContent = readFileSync(msgFilePath); } catch (e) {}
   const body = buildRequestBody(fileContent);
 
-  // Write body to temp file
+  const apiKey = chatApiKey;
+  if (apiKey.length < 5) {
+    appendMessage(0, 'No API key found. Set ANTHROPIC_API_KEY or add "anthropicApiKey" to ~/.hone/settings.json');
+    updateMessages();
+    sendPending = 0;
+    return;
+  }
+
+  // Use Perry native fetch (reqwest) — await compiles to busy-wait loop
+  // Falls back to curl if fetch throws
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: body,
+    });
+    const response = await (resp as any).text() as unknown as string;
+    handleApiResponse(response);
+  } catch (e) {
+    // Fallback to curl
+    doFetchSendCurl(body, apiKey);
+  }
+  sendPending = 0;
+}
+
+function doFetchSendCurl(body: string, apiKey: string): void {
   try {
     writeFileSync('/tmp/hone-chat-body.json', body);
   } catch (e) {
@@ -337,7 +345,6 @@ function onSend(): void {
     return;
   }
 
-  // Write curl script
   let script = '#!/bin/sh\n';
   script += 'curl -s -m 30 -X POST https://api.anthropic.com/v1/messages';
   script += ' -H "Content-Type: application/json"';
@@ -354,7 +361,6 @@ function onSend(): void {
     return;
   }
 
-  // Execute curl
   try {
     execSync('sh /tmp/hone-chat-curl.sh > /tmp/hone-chat-response.json 2>/dev/null');
   } catch (e) {
@@ -363,7 +369,6 @@ function onSend(): void {
     return;
   }
 
-  // Read response
   let response = '';
   try {
     response = readFileSync('/tmp/hone-chat-response.json');
@@ -373,6 +378,10 @@ function onSend(): void {
     return;
   }
 
+  handleApiResponse(response);
+}
+
+function handleApiResponse(response: string): void {
   if (response.length < 2) {
     appendMessage(0, 'Error: Empty response from API');
     updateMessages();
@@ -395,6 +404,32 @@ function onSend(): void {
   }
 
   updateMessages();
+}
+
+// ---------------------------------------------------------------------------
+// UI handlers — all module-level reads/writes at depth 1 (Perry constraint)
+// ---------------------------------------------------------------------------
+
+function onChatInput(text: string): void {
+  chatInputText = text;
+}
+
+/**
+ * Send message and call API — ALL INLINE at depth 1.
+ */
+function onSend(): void {
+  if (chatInputText.length < 1) return;
+  if (sendPending > 0) return;
+
+  // Add user message to file
+  appendMessage(1, chatInputText);
+  chatInputText = '';
+  if (chatInput) textfieldSetString(chatInput, '');
+  updateMessages();
+
+  sendPending = 1;
+  // Defer the API call to next tick so UI updates first
+  setTimeout(() => { doFetchSend(); }, 0);
 }
 
 function onClear(): void {
@@ -491,6 +526,14 @@ function updateMessages(): void {
       lineIdx = lineIdx + 1;
       lineStart = i + 1;
     }
+  }
+
+  // Show loading indicator if send is pending
+  if (sendPending > 0) {
+    const loading = Text('Thinking...');
+    textSetFontSize(loading, 12);
+    if (panelColors) setFg(loading, panelColors.sideBarForeground);
+    widgetAddChild(chatMessagesContainer, loading);
   }
 }
 

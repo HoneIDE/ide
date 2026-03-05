@@ -71,6 +71,76 @@ export function getGitBranch(): string {
   return gitBranch;
 }
 
+/** Get git status for a relative file path. Returns: 0=clean, 1=modified, 2=untracked, 3=staged, 4=deleted. */
+export function getGitFileStatus(relPath: string): number {
+  // Check staged
+  for (let i = 0; i < gitStagedCount; i++) {
+    if (gitStagedPaths[i].length === relPath.length && gitStagedPaths[i] === relPath) {
+      const s = gitStagedStatuses[i];
+      if (s.charCodeAt(0) === 100) return 4; // deleted
+      return 3; // staged
+    }
+  }
+  // Check modified
+  for (let i = 0; i < gitModifiedCount; i++) {
+    if (gitModifiedPaths[i].length === relPath.length && gitModifiedPaths[i] === relPath) {
+      const s = gitModifiedStatuses[i];
+      if (s.charCodeAt(0) === 100) return 4; // deleted
+      return 1; // modified
+    }
+  }
+  // Check untracked
+  for (let i = 0; i < gitUntrackedCount; i++) {
+    if (gitUntrackedPaths[i].length === relPath.length && gitUntrackedPaths[i] === relPath) {
+      return 2; // untracked
+    }
+  }
+  return 0; // clean
+}
+
+/** Get aggregated git status for a directory (relative path). Returns: 0=clean, 1=modified, 2=untracked, 3=staged, 4=deleted. */
+export function getGitDirStatus(dirRelPath: string): number {
+  const prefixLen = dirRelPath.length + 1; // +1 for '/'
+  // Check staged
+  for (let i = 0; i < gitStagedCount; i++) {
+    const p = gitStagedPaths[i];
+    if (p.length > prefixLen) {
+      let match = 1;
+      for (let c = 0; c < dirRelPath.length; c++) {
+        if (p.charCodeAt(c) !== dirRelPath.charCodeAt(c)) { match = 0; break; }
+      }
+      if (match > 0 && p.charCodeAt(dirRelPath.length) === 47) return 3;
+    }
+  }
+  // Check modified
+  for (let i = 0; i < gitModifiedCount; i++) {
+    const p = gitModifiedPaths[i];
+    if (p.length > prefixLen) {
+      let match = 1;
+      for (let c = 0; c < dirRelPath.length; c++) {
+        if (p.charCodeAt(c) !== dirRelPath.charCodeAt(c)) { match = 0; break; }
+      }
+      if (match > 0 && p.charCodeAt(dirRelPath.length) === 47) return 1;
+    }
+  }
+  // Check untracked
+  for (let i = 0; i < gitUntrackedCount; i++) {
+    const p = gitUntrackedPaths[i];
+    if (p.length > prefixLen) {
+      let match = 1;
+      for (let c = 0; c < dirRelPath.length; c++) {
+        if (p.charCodeAt(c) !== dirRelPath.charCodeAt(c)) { match = 0; break; }
+      }
+      if (match > 0 && p.charCodeAt(dirRelPath.length) === 47) return 2;
+    }
+  }
+  return 0;
+}
+
+export function getGitChangedCount(): number {
+  return gitStagedCount + gitModifiedCount + gitUntrackedCount;
+}
+
 export function resetGitPanelReady(): void {
   gitPanelReady = 0;
 }

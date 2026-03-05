@@ -108,6 +108,10 @@ export interface ResolvedUIColors {
   // Badges
   badgeBackground: string;
   badgeForeground: string;
+
+  // Sidebar section headers
+  sideBarSectionHeaderBackground: string;
+  sideBarTitleForeground: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +157,8 @@ const DARK_DEFAULTS: ResolvedUIColors = {
   focusBorder: '#007fd4',
   badgeBackground: '#4d4d4d',
   badgeForeground: '#ffffff',
+  sideBarSectionHeaderBackground: '#80808033',
+  sideBarTitleForeground: '#bbbbbb',
 };
 
 const LIGHT_DEFAULTS: ResolvedUIColors = {
@@ -194,6 +200,8 @@ const LIGHT_DEFAULTS: ResolvedUIColors = {
   focusBorder: '#0090f1',
   badgeBackground: '#c4c4c4',
   badgeForeground: '#333333',
+  sideBarSectionHeaderBackground: '#dce0e8',
+  sideBarTitleForeground: '#4c4f69',
 };
 
 // ---------------------------------------------------------------------------
@@ -307,6 +315,8 @@ function resolveUIColors(
     focusBorder: colors['focusBorder'] ?? defaults.focusBorder,
     badgeBackground: colors['badge.background'] ?? defaults.badgeBackground,
     badgeForeground: colors['badge.foreground'] ?? defaults.badgeForeground,
+    sideBarSectionHeaderBackground: colors['sideBarSectionHeader.background'] ?? defaults.sideBarSectionHeaderBackground,
+    sideBarTitleForeground: colors['sideBar.titleForeground'] ?? defaults.sideBarTitleForeground,
   };
 }
 
