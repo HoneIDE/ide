@@ -53,8 +53,8 @@ import { renderSettingsPanel } from './views/settings-ui/settings-panel';
 import { setWelcomeActions, createWelcomeContent } from './views/welcome/welcome-tab';
 import { initNotifications, showNotification } from './views/notifications/notifications';
 import { renderPRReviewPanel } from './views/pr-review/pr-review-panel';
-import { setLspWorkspaceRoot, initLspBridge } from './views/lsp/lsp-bridge';
-import { setDiagnosticsFileOpener, renderDiagnosticsPanel, updateDiagnostics } from './views/lsp/diagnostics-panel';
+import { setLspWorkspaceRoot, initLspBridge, triggerDiagnostics, getCompletions, setDiagnosticsStatusUpdater } from './views/lsp/lsp-bridge';
+import { setDiagnosticsFileOpener } from './views/lsp/diagnostics-panel';
 import { createAutocompletePopup, setAutocompleteAcceptHandler } from './views/lsp/autocomplete-popup';
 
 // Compile-time platform ID injected by Perry codegen:
@@ -191,6 +191,9 @@ let notifOverlay: unknown = null;
 // Terminal bottom panel
 let terminalArea: unknown = null;
 let terminalVisible: number = 0;
+
+// Status bar diagnostics label
+let statusBarDiagLabel: unknown = null;
 
 // ---------------------------------------------------------------------------
 // Named update functions (read module-level refs at call time)
@@ -460,6 +463,7 @@ export function saveFileAction(): void {
   if (editorReady < 1) return;
   const content = editorInstance.getContent();
   writeFileSync(currentEditorFilePath, content);
+  triggerDiagnostics();
 }
 
 function rebuildTabBar(): void {
@@ -636,9 +640,20 @@ function updateStatusBarBranchLabel(branch: string): void {
   }
 }
 
+function updateStatusBarDiagnostics(errors: number, warnings: number): void {
+  if (statusBarDiagLabel) {
+    if (errors > 0 || warnings > 0) {
+      textSetString(statusBarDiagLabel, errors + ' errors, ' + warnings + ' warnings');
+    } else {
+      textSetString(statusBarDiagLabel, '');
+    }
+  }
+}
+
 /** Called by autocomplete popup when a completion is accepted. */
 function onAutocompleteAccept(text: string): void {
-  // Future: insert text at cursor position in editor
+  // Editor text insertion is handled via the native event system (ts_mode)
+  // Autocomplete accept will be wired when the editor exposes insertText API
 }
 
 // ---------------------------------------------------------------------------
@@ -1026,11 +1041,16 @@ function renderStatusBar(colors: ResolvedUIColors): unknown {
   setFg(branch, colors.statusBarForeground);
   statusBarBranchLabel = branch;
 
+  const diagLabel = Text('');
+  textSetFontSize(diagLabel, 12);
+  setFg(diagLabel, colors.statusBarForeground);
+  statusBarDiagLabel = diagLabel;
+
   const lang = Text('TypeScript ');
   textSetFontSize(lang, 12);
   setFg(lang, colors.statusBarForeground);
 
-  const bar = HStack(8, [branch, Spacer(), lang]);
+  const bar = HStack(8, [branch, Spacer(), diagLabel, lang]);
   setBg(bar, colors.statusBarBackground);
 
   // Initialize git state for status bar
@@ -1079,6 +1099,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   initLspBridge();
   setDiagnosticsFileOpener(openFileFromSearchPanel);
   setAutocompleteAcceptHandler(onAutocompleteAccept);
+  setDiagnosticsStatusUpdater(updateStatusBarDiagnostics);
 
   if (layoutMode === 'compact') {
     const editorArea = renderEditorArea(themeColors);

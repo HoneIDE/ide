@@ -1,5 +1,6 @@
 /**
  * Diagnostics panel — Problems panel showing LSP diagnostics.
+ * Uses parallel arrays (Perry-friendly — no object property access needed).
  */
 import {
   VStack, HStack, Text, Button, Spacer,
@@ -40,7 +41,29 @@ export function renderDiagnosticsPanel(container: unknown, colors: ResolvedUICol
   widgetAddChild(container, Spacer());
 }
 
-export function updateDiagnostics(diagnostics: { file: string; line: number; message: string; severity: string }[]): void {
+// Parallel arrays for diagnostic data
+let _dFiles: string[] = [];
+let _dLines: number[] = [];
+let _dMessages: string[] = [];
+let _dSeverities: string[] = [];
+let _dCount: number = 0;
+
+export function updateDiagnostics(
+  files: string[],
+  lines: number[],
+  messages: string[],
+  severities: string[],
+  count: number
+): void {
+  _dFiles = files;
+  _dLines = lines;
+  _dMessages = messages;
+  _dSeverities = severities;
+  _dCount = count;
+  refreshDiagnosticsUI();
+}
+
+function refreshDiagnosticsUI(): void {
   if (diagReady < 1 || !diagContainer) return;
   widgetClearChildren(diagContainer);
 
@@ -50,7 +73,7 @@ export function updateDiagnostics(diagnostics: { file: string; line: number; mes
   if (diagColors) setFg(title, diagColors.sideBarForeground);
   widgetAddChild(diagContainer, title);
 
-  if (diagnostics.length < 1) {
+  if (_dCount < 1) {
     const hint = Text('No problems detected');
     textSetFontSize(hint, 12);
     if (diagColors) setFg(hint, diagColors.sideBarForeground);
@@ -58,22 +81,36 @@ export function updateDiagnostics(diagnostics: { file: string; line: number; mes
     return;
   }
 
-  for (let i = 0; i < diagnostics.length; i++) {
-    const d = diagnostics[i];
-    const fname = getFileName(d.file);
-    let severityColor = '#CCCCCC';
-    if (d.severity === 'error') severityColor = '#E57373';
-    if (d.severity === 'warning') severityColor = '#E2C08D';
-    if (d.severity === 'info') severityColor = '#73C991';
+  for (let i = 0; i < _dCount; i++) {
+    const sev = _dSeverities[i];
+    const file = _dFiles[i];
+    const msg = _dMessages[i];
 
-    const severityLabel = Text(d.severity.charAt(0).toUpperCase());
+    // Determine severity color using charCodeAt (Perry-reliable)
+    let severityColor = '#CCCCCC';
+    let severityChar = '?';
+    if (sev.charCodeAt(0) === 101) { // 'e' for error
+      severityColor = '#E57373';
+      severityChar = 'E';
+    }
+    if (sev.charCodeAt(0) === 119) { // 'w' for warning
+      severityColor = '#E2C08D';
+      severityChar = 'W';
+    }
+    if (sev.charCodeAt(0) === 105) { // 'i' for info
+      severityColor = '#73C991';
+      severityChar = 'I';
+    }
+
+    const severityLabel = Text(severityChar);
     textSetFontSize(severityLabel, 11);
     textSetFontFamily(severityLabel, 11, 'Menlo');
     setFg(severityLabel, severityColor);
 
-    const filePath = d.file;
-    const msgBtn = Button(d.message, () => {
-      _fileOpener(filePath, fname);
+    const fname = getFileName(file);
+    const filePath = file;
+    const msgBtn = Button(msg, () => {
+      openDiagFile(filePath, fname);
     });
     buttonSetBordered(msgBtn, 0);
     textSetFontSize(msgBtn, 11);
@@ -84,4 +121,8 @@ export function updateDiagnostics(diagnostics: { file: string; line: number; mes
   }
 
   widgetAddChild(diagContainer, Spacer());
+}
+
+function openDiagFile(path: string, name: string): void {
+  _fileOpener(path, name);
 }
