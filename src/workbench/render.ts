@@ -202,6 +202,13 @@ let statusBarLangLabel: unknown = null;
 let lastStatusCursorLine: number = -1;
 let lastStatusCursorCol: number = -1;
 
+// Deferred button actions (Perry button callbacks can't do structural UI mutations —
+// widgetClearChildren/widgetAddChild inside a button callback causes RefCell panic)
+let pendingActivityIdx: number = -1;
+let pendingFileClickIdx: number = -1;
+let pendingTabCloseIdx: number = -1;
+let pendingTabClickIdx: number = -1;
+
 // ---------------------------------------------------------------------------
 // Named update functions (read module-level refs at call time)
 // ---------------------------------------------------------------------------
@@ -668,6 +675,10 @@ function openFileInEditor(filePath: string, fileName: string): void {
 }
 
 function closeAllTabs(): void {
+  setTimeout(() => { closeAllTabsDeferred(); }, 0);
+}
+
+function closeAllTabsDeferred(): void {
   openTabs = [];
   openTabNames = [];
   openTabCount = 0;
@@ -679,8 +690,18 @@ function closeAllTabs(): void {
   }
 }
 
+let pendingCloseOthersIdx: number = -1;
+
 function closeOtherTabs(keepIdx: number): void {
-  if (keepIdx < 0 || keepIdx >= openTabCount) return;
+  pendingCloseOthersIdx = keepIdx;
+  setTimeout(() => { closeOtherTabsDeferred(); }, 0);
+}
+
+function closeOtherTabsDeferred(): void {
+  const keepIdx = pendingCloseOthersIdx;
+  if (keepIdx < 0) return;
+  pendingCloseOthersIdx = -1;
+  if (keepIdx >= openTabCount) return;
   const keptPath = openTabs[keepIdx];
   const keptName = openTabNames[keepIdx];
   openTabs = [keptPath];
@@ -754,6 +775,15 @@ function onAutocompleteAccept(text: string): void {
 // ---------------------------------------------------------------------------
 
 function onActivityClick(idx: number): void {
+  // Defer UI mutations to next tick to avoid RefCell reentrancy in Perry button callbacks
+  pendingActivityIdx = idx;
+  setTimeout(() => { onActivityClickDeferred(); }, 0);
+}
+
+function onActivityClickDeferred(): void {
+  const idx = pendingActivityIdx;
+  if (idx < 0) return;
+  pendingActivityIdx = -1;
   // AI Chat (idx=5) toggles the right panel instead of the sidebar
   if (idx === 5) {
     toggleRightPanel();
@@ -810,7 +840,17 @@ function switchSidebarPanel(idx: number): void {
 // Directory expansion
 // ---------------------------------------------------------------------------
 
+let pendingDirToggleId: number = -1;
+
 function onDirToggle(id: number): void {
+  pendingDirToggleId = id;
+  setTimeout(() => { onDirToggleDeferred(); }, 0);
+}
+
+function onDirToggleDeferred(): void {
+  const id = pendingDirToggleId;
+  if (id < 0) return;
+  pendingDirToggleId = -1;
   toggleExpById(id);
   refreshSidebar();
 }
@@ -851,6 +891,14 @@ function toggleExpById(id: number): void {
 }
 
 function onFileClick(idx: number): void {
+  pendingFileClickIdx = idx;
+  setTimeout(() => { onFileClickDeferred(); }, 0);
+}
+
+function onFileClickDeferred(): void {
+  const idx = pendingFileClickIdx;
+  if (idx < 0) return;
+  pendingFileClickIdx = -1;
   if (idx >= fileEntryCount) return;
   const entry = fileEntries[idx];
   openFileInEditor(entry.path, entry.label);
@@ -860,6 +908,14 @@ function onFileClick(idx: number): void {
 }
 
 function onTabClick(idx: number): void {
+  pendingTabClickIdx = idx;
+  setTimeout(() => { onTabClickDeferred2(); }, 0);
+}
+
+function onTabClickDeferred2(): void {
+  const idx = pendingTabClickIdx;
+  if (idx < 0) return;
+  pendingTabClickIdx = -1;
   activeTabIdx = idx;
   updateEditorTabs();
   if (idx < openTabCount) {
@@ -882,6 +938,14 @@ function onTabClickDirect(idx: number, path: string): void {
 }
 
 function onTabClose(idx: number): void {
+  pendingTabCloseIdx = idx;
+  setTimeout(() => { onTabCloseDeferred(); }, 0);
+}
+
+function onTabCloseDeferred(): void {
+  const idx = pendingTabCloseIdx;
+  if (idx < 0) return;
+  pendingTabCloseIdx = -1;
   if (openTabCount < 2) return;
   const newTabs: string[] = [];
   const newNames: string[] = [];
@@ -898,10 +962,8 @@ function onTabClose(idx: number): void {
   openTabCount = newCount;
 
   if (activeTabIdx === idx) {
-    // Closing the active tab — switch to prev or stay at same position
     if (activeTabIdx >= newCount) activeTabIdx = newCount - 1;
   } else if (activeTabIdx > idx) {
-    // Closing a tab before the active one — shift index down
     activeTabIdx = activeTabIdx - 1;
   }
 
