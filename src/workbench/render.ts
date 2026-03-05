@@ -21,7 +21,7 @@ import {
   buttonSetImagePosition, buttonSetContentTintColor,
   widgetSetBackgroundColor, widgetAddChild, widgetAddChildAt, widgetClearChildren,
   widgetSetWidth, widgetSetHeight, widgetSetHugging, widgetSetHidden, widgetRemoveChild,
-  widgetSetContextMenu, menuCreate, menuAddItem,
+  widgetSetContextMenu, menuCreate, menuAddItem, stackSetDetachesHidden, widgetMatchParentHeight,
   embedNSView,
   openFolderDialog, openFileDialog,
 } from 'perry/ui';
@@ -1098,8 +1098,11 @@ function renderEditorArea(colors: ResolvedUIColors): unknown {
   breadcrumbReady = 1;
   updateBreadcrumb();
 
+  widgetSetHugging(editorWidget, 1); // editor stretches to fill available space
+
   const editorPane = VStack(0, [tabBarContainer, breadcrumbContainer, editorWidget]);
   setBg(editorPane, colors.editorBackground);
+  widgetSetHugging(editorPane, 1); // editor pane stretches in mainRow
 
   return editorPane;
 }
@@ -1355,6 +1358,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   const leftContent = VStack(0, [mainRow, termPanel, statusBar]);
   setBg(leftContent, themeColors.editorBackground);
   widgetSetHugging(leftContent, 1); // stretch to fill
+  stackSetDetachesHidden(leftContent, 1); // hidden terminal doesn't take up space
 
   // Right panel for AI Chat (Cursor-style) — outside mainRow to avoid
   // layout conflicts with the embedded editor NSView
@@ -1378,5 +1382,15 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   // Outer shell: left content + right panel
   const shell = HStack(0, [leftContent, rightBorderDiv, rightPanel]);
   setBg(shell, themeColors.editorBackground);
+  stackSetDetachesHidden(shell, 1); // hidden right panel doesn't take up space
+
+  // Pin children to fill parent height (HStack default CenterY alignment
+  // only centers children instead of stretching them vertically)
+  widgetMatchParentHeight(leftContent);
+  widgetMatchParentHeight(mainRow);
+  widgetMatchParentHeight(activityBar);
+  widgetMatchParentHeight(sidebar);
+  widgetMatchParentHeight(editorArea);
+
   return shell;
 }
