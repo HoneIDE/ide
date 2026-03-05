@@ -192,8 +192,15 @@ let notifOverlay: unknown = null;
 let terminalArea: unknown = null;
 let terminalVisible: number = 0;
 
-// Status bar diagnostics label
+// Status bar labels
 let statusBarDiagLabel: unknown = null;
+let statusBarCursorLabel: unknown = null;
+let statusBarEncodingLabel: unknown = null;
+let statusBarLangLabel: unknown = null;
+
+// Cursor position polling state
+let lastStatusCursorLine: number = -1;
+let lastStatusCursorCol: number = -1;
 
 // ---------------------------------------------------------------------------
 // Named update functions (read module-level refs at call time)
@@ -232,6 +239,24 @@ function updateEditorTabs(): void {
       setBg(tabBarButtons[i], themeColors.tabInactiveBackground);
     }
   }
+}
+
+/** Poll cursor position and update status bar label. Called via setInterval. */
+function pollCursorPosition(): void {
+  if (editorReady < 1) return;
+  if (!statusBarCursorLabel) return;
+  const vm = editorInstance.viewModel;
+  const cursors = vm.cursors;
+  if (cursors.length < 1) return;
+  const c = cursors[0];
+  const line = c.line;
+  const col = c.column;
+  if (line === lastStatusCursorLine && col === lastStatusCursorCol) return;
+  lastStatusCursorLine = line;
+  lastStatusCursorCol = col;
+  // Display as 1-based
+  const lnStr = 'Ln ' + (line + 1) + ', Col ' + (col + 1);
+  textSetString(statusBarCursorLabel, lnStr);
 }
 
 function updateBreadcrumb(): void {
@@ -533,10 +558,30 @@ function onFileOpenedCb2(filePath: string): void {
 function displayFileContent(filePath: string): void {
   currentEditorFilePath = filePath;
   updateBreadcrumb();
+  updateStatusBarLanguage(filePath);
   if (editorReady < 1) return;
   const content = readFileSync(filePath);
   editorInstance.setContent(content);
   editorInstance.render();
+}
+
+function updateStatusBarLanguage(filePath: string): void {
+  if (!statusBarLangLabel) return;
+  const lang = detectLanguage(filePath);
+  // Capitalize first letter for display
+  let display = lang;
+  if (lang.length === 10 && lang.charCodeAt(0) === 116) display = 'TypeScript';
+  else if (lang.length === 10 && lang.charCodeAt(0) === 106) display = 'JavaScript';
+  else if (lang.length === 6 && lang.charCodeAt(0) === 112) display = 'Python';
+  else if (lang.length === 4 && lang.charCodeAt(0) === 114) display = 'Rust';
+  else if (lang.length === 4 && lang.charCodeAt(0) === 104) display = 'HTML';
+  else if (lang.length === 3 && lang.charCodeAt(0) === 99 && lang.charCodeAt(1) === 115) display = 'CSS';
+  else if (lang.length === 4 && lang.charCodeAt(0) === 106) display = 'JSON';
+  else if (lang.length === 8 && lang.charCodeAt(0) === 109) display = 'Markdown';
+  else if (lang.length === 1 && lang.charCodeAt(0) === 99) display = 'C';
+  else if (lang.length === 3 && lang.charCodeAt(0) === 99) display = 'C++';
+  else display = 'Plain Text';
+  textSetString(statusBarLangLabel, display + ' ');
 }
 
 function openFileInEditor(filePath: string, fileName: string): void {
@@ -948,6 +993,9 @@ function renderEditorArea(colors: ResolvedUIColors): unknown {
 
   displayFileContent(openTabs[0]);
 
+  // Poll cursor position for status bar (every ~250ms)
+  setInterval(() => { pollCursorPosition(); }, 250);
+
   // Breadcrumb bar
   breadcrumbContainer = HStackWithInsets(4, 4, 8, 4, 8);
   setBg(breadcrumbContainer, colors.editorBackground);
@@ -1038,11 +1086,22 @@ function renderStatusBar(colors: ResolvedUIColors): unknown {
   setFg(diagLabel, colors.statusBarForeground);
   statusBarDiagLabel = diagLabel;
 
+  const cursorLabel = Text('Ln 1, Col 1');
+  textSetFontSize(cursorLabel, 12);
+  setFg(cursorLabel, colors.statusBarForeground);
+  statusBarCursorLabel = cursorLabel;
+
+  const encodingLabel = Text('UTF-8');
+  textSetFontSize(encodingLabel, 12);
+  setFg(encodingLabel, colors.statusBarForeground);
+  statusBarEncodingLabel = encodingLabel;
+
   const lang = Text('TypeScript ');
   textSetFontSize(lang, 12);
   setFg(lang, colors.statusBarForeground);
+  statusBarLangLabel = lang;
 
-  const bar = HStack(8, [branch, Spacer(), diagLabel, lang]);
+  const bar = HStack(8, [branch, Spacer(), diagLabel, cursorLabel, encodingLabel, lang]);
   setBg(bar, colors.statusBarBackground);
 
   // Initialize git state for status bar
