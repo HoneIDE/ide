@@ -23,9 +23,10 @@ import {
 import { registerBuiltinCommands } from './commands';
 import { getDefaultKeybindings, type Keybinding } from './keybindings';
 import { loadTheme, setActiveTheme, type ThemeData } from './workbench/theme/theme-loader';
-import { HONE_DARK } from './workbench/theme/builtin-themes';
+import { HONE_DARK, HONE_LIGHT } from './workbench/theme/builtin-themes';
 import { renderWorkbench } from './workbench/render';
 import { setupNativeMenuBar } from './workbench/native-menu';
+import { getWorkbenchSettings, initSettings } from './workbench/settings';
 
 // ---------------------------------------------------------------------------
 // App state
@@ -53,9 +54,20 @@ export function getAppState(): AppState | null {
 // Perry app entry point
 // ---------------------------------------------------------------------------
 
-// Load the default theme (embedded — no filesystem reads)
+// Load persisted settings from disk
+initSettings();
+
+// Load both built-in themes (embedded — no filesystem reads)
 loadTheme(HONE_DARK);
-setActiveTheme('Hone Dark');
+loadTheme(HONE_LIGHT);
+
+// Apply persisted theme preference
+const _savedSettings = getWorkbenchSettings();
+let _themeName = 'Hone Dark';
+if (_savedSettings.colorTheme.length > 5 && _savedSettings.colorTheme.charCodeAt(5) === 76) {
+  _themeName = 'Hone Light';
+}
+setActiveTheme(_themeName);
 
 // Initialize core systems
 const ctx = getPlatformContext();

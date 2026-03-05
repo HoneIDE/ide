@@ -26,9 +26,9 @@ import {
   openFolderDialog, openFileDialog,
 } from 'perry/ui';
 import { Editor } from '@honeide/editor/perry';
-import { getActiveTheme, type ResolvedUIColors } from './theme/theme-loader';
+import { getActiveTheme, setActiveTheme, type ResolvedUIColors } from './theme/theme-loader';
 import type { LayoutMode } from '../platform';
-import { getWorkbenchSettings } from './settings';
+import { getWorkbenchSettings, updateSettings, onSettingsChange } from './settings';
 import { readFileSync, readdirSync, isDirectory, writeFileSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
@@ -46,7 +46,7 @@ import {
   resetGitPanelReady, refreshGitState, updateStatusBarBranch,
 } from './views/git/git-panel';
 import { renderDebugPanel } from './views/debug/debug-panel';
-import { renderExtensionsPanel } from './views/extensions/extensions-panel';
+// Extensions panel hidden for now — no runtime extension system yet
 import { renderChatPanel } from './views/ai-chat/chat-panel';
 import { renderTerminalPanel, setTerminalCwd } from './views/terminal/terminal-panel';
 import { renderSettingsPanel } from './views/settings-ui/settings-panel';
@@ -202,6 +202,15 @@ let statusBarLangLabel: unknown = null;
 let lastStatusCursorLine: number = -1;
 let lastStatusCursorCol: number = -1;
 
+// Shell-level widget refs for live theme recoloring
+let shellWidget: unknown = null;
+let leftContentWidget: unknown = null;
+let activityBarWidget: unknown = null;
+let statusBarWidget: unknown = null;
+let editorPaneWidget: unknown = null;
+let termPanelWidget: unknown = null;
+let termBorderWidget: unknown = null;
+
 // Deferred button actions (Perry button callbacks can't do structural UI mutations —
 // widgetClearChildren/widgetAddChild inside a button callback causes RefCell panic)
 let pendingActivityIdx: number = -1;
@@ -307,9 +316,11 @@ export function toggleTerminalAction(): void {
   if (terminalVisible > 0) {
     terminalVisible = 0;
     widgetSetHidden(terminalArea, 1);
+    updateSettings({ terminalVisible: false });
   } else {
     terminalVisible = 1;
     widgetSetHidden(terminalArea, 0);
+    updateSettings({ terminalVisible: true });
   }
 }
 
@@ -444,6 +455,7 @@ function onFolderOpened(folderPath: string): void {
   setLspWorkspaceRoot(folderPath);
   initLspBridge();
   refreshSidebar();
+  updateSettings({ lastOpenFolder: folderPath });
 }
 
 export function openFolderAction(): void {
@@ -461,10 +473,12 @@ export function toggleSidebarAction(): void {
     sidebarVisible = 0;
     widgetSetHidden(sidebarWidget, 1);
     widgetSetHidden(sidebarBorderWidget, 1);
+    updateSettings({ sidebarVisible: false });
   } else {
     sidebarVisible = 1;
     widgetSetHidden(sidebarWidget, 0);
     widgetSetHidden(sidebarBorderWidget, 0);
+    updateSettings({ sidebarVisible: true });
   }
 }
 
@@ -784,14 +798,18 @@ function onActivityClickDeferred(): void {
   const idx = pendingActivityIdx;
   if (idx < 0) return;
   pendingActivityIdx = -1;
-  // AI Chat (idx=5) toggles the right panel instead of the sidebar
-  if (idx === 5) {
+  // AI Chat (idx=4) toggles the right panel instead of the sidebar
+  if (idx === 4) {
     toggleRightPanel();
     return;
   }
   activeActivityIdx = idx;
   updateActivityBar();
   switchSidebarPanel(idx);
+  // Persist active panel (only for sidebar panels, not settings gear)
+  if (idx >= 0 && idx <= 3) {
+    updateSettings({ activePanelIndex: idx });
+  }
 }
 
 function switchSidebarPanel(idx: number): void {
@@ -823,12 +841,7 @@ function switchSidebarPanel(idx: number): void {
     return;
   }
 
-  if (idx === 4) {
-    renderExtensionsPanel(sidebarContainer, themeColors as ResolvedUIColors);
-    return;
-  }
-
-  // idx===5 (AI Chat) handled by toggleRightPanel, not here
+  // idx===4 (AI Chat) handled by toggleRightPanel, not here
 
   if (idx === 6) {
     renderSettingsPanel(sidebarContainer, themeColors as ResolvedUIColors);
@@ -986,9 +999,10 @@ function onTabCloseDeferred(): void {
 function renderActivityBarDesktop(colors: ResolvedUIColors): unknown {
   activityButtons = [];
 
-  const icons = ['doc.on.doc', 'magnifyingglass', 'arrow.triangle.branch', 'ladybug', 'puzzlepiece.extension', 'sparkles'];
+  // Icons: 0=Files, 1=Search, 2=Git, 3=Debug, 4=AI Chat
+  const icons = ['doc.on.doc', 'magnifyingglass', 'arrow.triangle.branch', 'ladybug', 'sparkles'];
 
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 5; i++) {
     const idx = i;
     const btn = Button('', () => { onActivityClick(idx); });
     buttonSetBordered(btn, 0);
@@ -1015,6 +1029,7 @@ function renderActivityBarDesktop(colors: ResolvedUIColors): unknown {
   setBtnTint(settingsBtn, colors.activityBarInactiveForeground);
   widgetAddChild(bar, settingsBtn);
 
+  activityBarWidget = bar;
   return bar;
 }
 
@@ -1103,6 +1118,7 @@ function renderEditorArea(colors: ResolvedUIColors): unknown {
   const editorPane = VStack(0, [tabBarContainer, breadcrumbContainer, editorWidget]);
   setBg(editorPane, colors.editorBackground);
   widgetSetHugging(editorPane, 1); // editor pane stretches in mainRow
+  editorPaneWidget = editorPane;
 
   return editorPane;
 }
@@ -1202,12 +1218,100 @@ function renderStatusBar(colors: ResolvedUIColors): unknown {
 
   const bar = HStack(8, [branch, Spacer(), diagLabel, cursorLabel, encodingLabel, lang]);
   setBg(bar, colors.statusBarBackground);
+  statusBarWidget = bar;
 
   // Initialize git state for status bar
   refreshGitState();
   updateStatusBarBranch();
 
   return bar;
+}
+
+// ---------------------------------------------------------------------------
+// Live theme recoloring
+// ---------------------------------------------------------------------------
+
+/** Re-apply theme colors to all stored widget refs. Called after theme switch. */
+function recolorUI(): void {
+  if (!themeColors) return;
+  const c = themeColors;
+
+  // Shell containers
+  if (shellWidget) setBg(shellWidget, c.editorBackground);
+  if (leftContentWidget) setBg(leftContentWidget, c.editorBackground);
+  if (activityBarWidget) setBg(activityBarWidget, c.activityBarBackground);
+  if (sidebarContainer) setBg(sidebarContainer, c.sideBarBackground);
+  if (editorPaneWidget) setBg(editorPaneWidget, c.editorBackground);
+  if (statusBarWidget) setBg(statusBarWidget, c.statusBarBackground);
+  if (tabBarContainer) setBg(tabBarContainer, c.tabInactiveBackground);
+  if (breadcrumbContainer) setBg(breadcrumbContainer, c.editorBackground);
+
+  // Terminal area
+  if (termPanelWidget) setBg(termPanelWidget, c.editorBackground);
+  if (termBorderWidget) setBg(termBorderWidget, c.panelBorder);
+
+  // Borders
+  if (sidebarBorderWidget) setBg(sidebarBorderWidget, c.panelBorder);
+  if (rightPanelBorder) setBg(rightPanelBorder, c.panelBorder);
+
+  // Right panel (AI Chat)
+  if (rightPanelWidget) setBg(rightPanelWidget, c.sideBarBackground);
+
+  // Activity bar icon colors
+  for (let i = 0; i < activityButtons.length; i++) {
+    if (i === activeActivityIdx) {
+      setBtnTint(activityButtons[i], c.activityBarForeground);
+    } else {
+      setBtnTint(activityButtons[i], c.activityBarInactiveForeground);
+    }
+  }
+
+  // Status bar labels
+  if (statusBarBranchLabel) setFg(statusBarBranchLabel, c.statusBarForeground);
+  if (statusBarDiagLabel) setFg(statusBarDiagLabel, c.statusBarForeground);
+  if (statusBarCursorLabel) setFg(statusBarCursorLabel, c.statusBarForeground);
+  if (statusBarEncodingLabel) setFg(statusBarEncodingLabel, c.statusBarForeground);
+  if (statusBarLangLabel) setFg(statusBarLangLabel, c.statusBarForeground);
+
+  // Tab bar
+  updateTabHighlights();
+
+  // Re-render active sidebar panel with new colors
+  switchSidebarPanel(activeActivityIdx);
+}
+
+/** Open the Settings panel in the sidebar. */
+export function openSettingsAction(): void {
+  // Show sidebar if hidden
+  if (sidebarToggleReady > 0 && sidebarVisible < 1) {
+    sidebarVisible = 1;
+    if (sidebarWidget) widgetSetHidden(sidebarWidget, 0);
+    if (sidebarBorderWidget) widgetSetHidden(sidebarBorderWidget, 0);
+    updateSettings({ sidebarVisible: true });
+  }
+  // Switch to settings (idx 6)
+  onActivityClick(6);
+}
+
+// Listen for settings changes — detect theme toggle and apply live
+let _lastThemeName = '';
+
+function onSettingsChanged(): void {
+  const s = getWorkbenchSettings();
+  const newTheme = s.colorTheme;
+  if (newTheme.length < 1) return;
+  // Check if theme changed
+  if (_lastThemeName.length > 0) {
+    if (_lastThemeName.charCodeAt(5) === newTheme.charCodeAt(5)) return; // same theme
+  }
+  _lastThemeName = newTheme;
+
+  // Switch the active theme
+  const loaded = setActiveTheme(newTheme);
+  if (loaded) {
+    themeColors = loaded.uiColors;
+    recolorUI();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1222,10 +1326,20 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
 
   themeColors = theme.uiColors;
 
-  // Set default workspace root to cwd if not already set
+  // Restore last opened folder, or fall back to cwd
+  const _initSettings = getWorkbenchSettings();
+  if (_initSettings.lastOpenFolder.length > 0) {
+    workspaceRoot = _initSettings.lastOpenFolder;
+  }
   if (workspaceRoot.length < 1) {
     try {
-      workspaceRoot = execSync('pwd', { encoding: 'utf-8', timeout: 2000 }).trim();
+      const cwd = execSync('pwd');
+      // Trim trailing newline
+      if (cwd.length > 0 && cwd.charCodeAt(cwd.length - 1) === 10) {
+        workspaceRoot = cwd.slice(0, cwd.length - 1);
+      } else {
+        workspaceRoot = cwd;
+      }
     } catch (e: any) {
       workspaceRoot = '';
     }
@@ -1321,6 +1435,20 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   sidebarBorderWidget = sidebarBorder;
   sidebarToggleReady = 1;
 
+  // Apply persisted sidebar visibility
+  if (!settings.sidebarVisible) {
+    sidebarVisible = 0;
+    widgetSetHidden(sidebar, 1);
+    widgetSetHidden(sidebarBorder, 1);
+  }
+
+  // Apply persisted active panel
+  if (settings.activePanelIndex > 0 && settings.activePanelIndex <= 3) {
+    activeActivityIdx = settings.activePanelIndex;
+    updateActivityBar();
+    switchSidebarPanel(settings.activePanelIndex);
+  }
+
   // Perry string === can be unreliable — use charCodeAt
   const isRight = sidebarLocation.length > 0 && sidebarLocation.charCodeAt(0) === 114; // 'r'
 
@@ -1332,14 +1460,19 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   widgetSetHugging(mainRow, 1);
   widgetSetHugging(statusBar, 750);
 
-  // Terminal bottom panel (hidden by default, toggle via Cmd+J)
+  // Terminal bottom panel (hidden by default unless persisted, toggle via Cmd+J)
   const termPanel = VStackWithInsets(0, 4, 0, 0, 0);
   setBg(termPanel, themeColors.editorBackground);
   widgetSetHeight(termPanel, 200);
   widgetSetHugging(termPanel, 750);
   renderTerminalPanel(termPanel, themeColors);
-  widgetSetHidden(termPanel, 1);
+  if (settings.terminalVisible) {
+    terminalVisible = 1;
+  } else {
+    widgetSetHidden(termPanel, 1);
+  }
   terminalArea = termPanel;
+  termPanelWidget = termPanel;
 
   // Terminal border
   const termBorder = VStack(0, []);
@@ -1347,6 +1480,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   widgetSetWidth(termBorder, 1);
   widgetSetHugging(termBorder, 1000);
   widgetSetHidden(termBorder, 1);
+  termBorderWidget = termBorder;
 
   // Notification overlay container (positioned at top-right)
   notifOverlay = VStack(4, []);
@@ -1359,6 +1493,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   setBg(leftContent, themeColors.editorBackground);
   widgetSetHugging(leftContent, 1); // stretch to fill
   stackSetDetachesHidden(leftContent, 1); // hidden terminal doesn't take up space
+  leftContentWidget = leftContent;
 
   // Right panel for AI Chat (Cursor-style) — outside mainRow to avoid
   // layout conflicts with the embedded editor NSView
@@ -1383,6 +1518,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   const shell = HStack(0, [leftContent, rightBorderDiv, rightPanel]);
   setBg(shell, themeColors.editorBackground);
   stackSetDetachesHidden(shell, 1); // hidden right panel doesn't take up space
+  shellWidget = shell;
 
   // Pin children to fill parent height (HStack default CenterY alignment
   // only centers children instead of stretching them vertically)
@@ -1391,6 +1527,10 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   widgetMatchParentHeight(activityBar);
   widgetMatchParentHeight(sidebar);
   widgetMatchParentHeight(editorArea);
+
+  // Register settings change listener for live theme switching
+  _lastThemeName = settings.colorTheme;
+  onSettingsChange(() => { onSettingsChanged(); });
 
   return shell;
 }

@@ -9,7 +9,7 @@ import {
   menuCreate, menuAddItem, menuAddSeparator,
   menuBarCreate, menuBarAddMenu, menuBarAttach,
 } from 'perry/ui';
-import { openFolderAction, openFileAction, toggleSidebarAction, closeEditorAction, saveFileAction, toggleTerminalAction, newFileAction, findAction } from './render';
+import { openFolderAction, openFileAction, toggleSidebarAction, closeEditorAction, saveFileAction, toggleTerminalAction, newFileAction, findAction, openSettingsAction } from './render';
 
 // Module-level function refs for callbacks (Perry closures can't call methods
 // on captured variables — must use module-level functions)
@@ -36,6 +36,10 @@ function onSaveAs(): void {
 
 function onCloseEditor(): void {
   closeEditorAction();
+}
+
+function onOpenSettings(): void {
+  openSettingsAction();
 }
 
 function onUndo(): void {
@@ -131,6 +135,8 @@ export function setupNativeMenuBar(): void {
   menuAddSeparator(fileMenu);
   menuAddItem(fileMenu, 'Save', () => { onSave(); }, 's');
   menuAddItem(fileMenu, 'Save As...', () => { onSaveAs(); }, 'S');
+  menuAddSeparator(fileMenu);
+  menuAddItem(fileMenu, 'Settings...', () => { onOpenSettings(); }, ',');
   menuAddSeparator(fileMenu);
   menuAddItem(fileMenu, 'Close Editor', () => { onCloseEditor(); });
 
