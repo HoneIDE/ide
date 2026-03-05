@@ -479,8 +479,42 @@ function toggleRightPanel(): void {
 }
 
 export function closeEditorAction(): void {
+  setTimeout(() => { closeEditorDeferred(); }, 0);
+}
+
+function closeEditorDeferred(): void {
   if (openTabCount < 1) return;
   onTabClose(activeTabIdx);
+}
+
+export function newFileAction(): void {
+  // Defer to next tick to avoid RefCell reentrancy in Perry menu callbacks
+  setTimeout(() => { newFileDeferred(); }, 0);
+}
+
+function newFileDeferred(): void {
+  const path = '/tmp/hone-untitled';
+  const name = 'Untitled';
+  try {
+    writeFileSync(path, '\n');
+  } catch (e: any) {
+    // ignore write errors
+  }
+  openFileInEditor(path, name);
+}
+
+export function findAction(): void {
+  // Defer to next tick to avoid RefCell reentrancy in Perry menu callbacks
+  setTimeout(() => { findDeferred(); }, 0);
+}
+
+function findDeferred(): void {
+  if (sidebarToggleReady > 0 && sidebarVisible < 1) {
+    sidebarVisible = 1;
+    widgetSetHidden(sidebarWidget, 0);
+    widgetSetHidden(sidebarBorderWidget, 0);
+  }
+  switchSidebarPanel(1);
 }
 
 export function saveFileAction(): void {

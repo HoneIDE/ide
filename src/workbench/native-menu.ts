@@ -9,13 +9,13 @@ import {
   menuCreate, menuAddItem, menuAddSeparator,
   menuBarCreate, menuBarAddMenu, menuBarAttach,
 } from 'perry/ui';
-import { openFolderAction, openFileAction, toggleSidebarAction, closeEditorAction, saveFileAction, toggleTerminalAction } from './render';
+import { openFolderAction, openFileAction, toggleSidebarAction, closeEditorAction, saveFileAction, toggleTerminalAction, newFileAction, findAction } from './render';
 
 // Module-level function refs for callbacks (Perry closures can't call methods
 // on captured variables — must use module-level functions)
 
 function onNewFile(): void {
-  // Placeholder — future: create new untitled file
+  newFileAction();
 }
 
 function onOpenFile(): void {
@@ -59,7 +59,7 @@ function onPaste(): void {
 }
 
 function onFind(): void {
-  // Placeholder — future: find panel
+  findAction();
 }
 
 function onReplace(): void {
