@@ -13,6 +13,8 @@
 import {
   VStack, HStack, Text, Button, Spacer,
   VStackWithInsets, HStackWithInsets,
+  TextField, ScrollView, scrollViewSetChild,
+  textfieldSetString, textfieldFocus,
   textSetColor, textSetFontSize, textSetFontWeight, textSetFontFamily,
   textSetString,
   buttonSetBordered, buttonSetTextColor, buttonSetTitle, buttonSetImage,
@@ -27,8 +29,33 @@ import { Editor } from '@honeide/editor/perry';
 import { getActiveTheme, type ResolvedUIColors } from './theme/theme-loader';
 import type { LayoutMode } from '../platform';
 import { getWorkbenchSettings } from './settings';
-import { readFileSync, readdirSync, isDirectory } from 'fs';
+import { readFileSync, readdirSync, isDirectory, writeFileSync } from 'fs';
 import { join } from 'path';
+import { execSync } from 'child_process';
+
+// Extracted modules
+import { hexToRGBA, setBg, setFg, setBtnFg, setBtnTint, pathId, getFileName, strEq, toLowerCode, detectLanguage, isTextFile } from './ui-helpers';
+import {
+  renderSearchPanel as renderSearchPanelImpl,
+  setSearchWorkspaceRoot, setSearchFileOpener, setSearchEditorReloader,
+  setSearchCurrentEditorPath, resetSearchPanelReady,
+} from './views/search/search-panel';
+import {
+  renderGitPanel as renderGitPanelImpl,
+  setGitWorkspaceRoot, setGitFileOpener, setGitStatusBarUpdater,
+  resetGitPanelReady, refreshGitState, updateStatusBarBranch,
+} from './views/git/git-panel';
+import { renderDebugPanel } from './views/debug/debug-panel';
+import { renderExtensionsPanel } from './views/extensions/extensions-panel';
+import { renderChatPanel } from './views/ai-chat/chat-panel';
+import { renderTerminalPanel } from './views/terminal/terminal-panel';
+import { renderSettingsPanel } from './views/settings-ui/settings-panel';
+import { setWelcomeActions, createWelcomeContent } from './views/welcome/welcome-tab';
+import { initNotifications, showNotification } from './views/notifications/notifications';
+import { renderPRReviewPanel } from './views/pr-review/pr-review-panel';
+import { setLspWorkspaceRoot, initLspBridge } from './views/lsp/lsp-bridge';
+import { setDiagnosticsFileOpener, renderDiagnosticsPanel, updateDiagnostics } from './views/lsp/diagnostics-panel';
+import { createAutocompletePopup, setAutocompleteAcceptHandler } from './views/lsp/autocomplete-popup';
 
 // Compile-time platform ID injected by Perry codegen:
 // 0 = macOS, 1 = iOS, 2 = Android, 3 = Windows, 4 = Linux, 5 = Web
@@ -36,41 +63,6 @@ declare const __platform__: number;
 
 // FFI function from @honeide/editor — returns raw NSView* for an EditorView
 declare function hone_editor_nsview(handle: number): number;
-
-// Syntax highlighting is now handled by @honeide/editor's KeywordSyntaxEngine
-
-// ---------------------------------------------------------------------------
-// Color helpers
-// ---------------------------------------------------------------------------
-
-function hexToRGBA(hex: string): [number, number, number, number] {
-  const h = hex.startsWith('#') ? hex.slice(1) : hex;
-  const r = parseInt(h.slice(0, 2), 16) / 255;
-  const g = parseInt(h.slice(2, 4), 16) / 255;
-  const b = parseInt(h.slice(4, 6), 16) / 255;
-  const a = h.length >= 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1.0;
-  return [r, g, b, a];
-}
-
-function setBg(widget: unknown, hex: string): void {
-  const [r, g, b, a] = hexToRGBA(hex);
-  widgetSetBackgroundColor(widget, r, g, b, a);
-}
-
-function setFg(text: unknown, hex: string): void {
-  const [r, g, b, a] = hexToRGBA(hex);
-  textSetColor(text, r, g, b, a);
-}
-
-function setBtnFg(btn: unknown, hex: string): void {
-  const [r, g, b, a] = hexToRGBA(hex);
-  buttonSetTextColor(btn, r, g, b, a);
-}
-
-function setBtnTint(btn: unknown, hex: string): void {
-  const [r, g, b, a] = hexToRGBA(hex);
-  buttonSetContentTintColor(btn, r, g, b, a);
-}
 
 // ---------------------------------------------------------------------------
 // File tree data — real project paths
@@ -88,14 +80,7 @@ interface FileEntry {
 let workspaceRoot = '';
 let fileEntries: FileEntry[] = [];
 
-// Flat arrays for file paths/names — indexed by numeric ID for closure capture.
-// Perry's GC may collect strings captured directly in closures, so we store them
-// in module-level arrays and read via a named function at click time.
-let flatFilePaths: string[] = [];
-let flatFileNames: string[] = [];
-
 // Expanded directory tracking — individual module-level variables (no arrays).
-// Uses pathHash = length * 256 + lastCharCode for collision-resistant IDs.
 let exp0 = -1;
 let exp1 = -1;
 let exp2 = -1;
@@ -104,13 +89,14 @@ let exp4 = -1;
 let exp5 = -1;
 let exp6 = -1;
 let exp7 = -1;
-
-/** Compute a numeric hash for a path: length * 256 + lastCharCode. */
-function pathId(path: string): number {
-  const len = path.length;
-  const last = path.charCodeAt(len - 1);
-  return len * 256 + last;
-}
+let exp8 = -1;
+let exp9 = -1;
+let exp10 = -1;
+let exp11 = -1;
+let exp12 = -1;
+let exp13 = -1;
+let exp14 = -1;
+let exp15 = -1;
 
 /** Check if a directory path is currently expanded (no array, no loop). */
 function isDirExpanded(path: string): boolean {
@@ -123,11 +109,17 @@ function isDirExpanded(path: string): boolean {
   if (exp5 === id) return true;
   if (exp6 === id) return true;
   if (exp7 === id) return true;
+  if (exp8 === id) return true;
+  if (exp9 === id) return true;
+  if (exp10 === id) return true;
+  if (exp11 === id) return true;
+  if (exp12 === id) return true;
+  if (exp13 === id) return true;
+  if (exp14 === id) return true;
+  if (exp15 === id) return true;
   return false;
 }
 
-
-/** Track entry count explicitly (Perry .length may be stale on module-level arrays). */
 let fileEntryCount = 0;
 
 // ---------------------------------------------------------------------------
@@ -136,14 +128,12 @@ let fileEntryCount = 0;
 
 const PANELS = ['Files', 'Search', 'Git', 'Debug', 'Ext'];
 
-/** Open tabs — each entry is a file path */
 let openTabs: string[] = [];
 let openTabNames: string[] = [];
-let openTabCount: number = 0;  // Manual count since Perry .push() may not update .length across calls
+let openTabCount: number = 0;
 
 // ---------------------------------------------------------------------------
-// Module-level widget refs (Perry closures capture by value, so we must
-// access these through named functions to get the current value)
+// Module-level widget refs
 // ---------------------------------------------------------------------------
 
 let themeColors: ResolvedUIColors | null = null;
@@ -164,13 +154,12 @@ let activeTabIdx = 0;
 
 // Editor content widgets
 let tabBarContainer: unknown = null;
-let tabBarReady: number = 0;  // 0 = not set, 1 = ready (numeric flag avoids NaN-box truthiness issue)
+let tabBarReady: number = 0;
 
-// The real editor instance — avoid union type (Editor | null) since Perry
-// inverts null checks on union-typed variables and closures lose `this`.
-let editorInstance: Editor = null as any;  // non-union type
-let editorReady: number = 0;              // 0 = not ready, 1 = ready (numeric, not boolean)
+let editorInstance: Editor = null as any;
+let editorReady: number = 0;
 let editorWidget: unknown = null;
+let currentEditorFilePath = '';
 
 // Sidebar toggling (full/split layouts)
 let sidebarWidget: unknown = null;
@@ -181,7 +170,21 @@ let sidebarToggleReady: number = 0;
 // Compact layout panel toggling
 let compactEditorPane: unknown = null;
 let compactExplorerPane: unknown = null;
-let compactShowingExplorer: number = 0;  // 0 = editor visible, 1 = explorer visible
+let compactShowingExplorer: number = 0;
+
+// Status bar
+let statusBarBranchLabel: unknown = null;
+
+// Breadcrumb bar
+let breadcrumbContainer: unknown = null;
+let breadcrumbReady: number = 0;
+
+// Notification overlay
+let notifOverlay: unknown = null;
+
+// Terminal bottom panel
+let terminalArea: unknown = null;
+let terminalVisible: number = 0;
 
 // ---------------------------------------------------------------------------
 // Named update functions (read module-level refs at call time)
@@ -201,7 +204,7 @@ function updateActivityBar(): void {
 function updateFileTree(): void {
   if (!themeColors) return;
   for (let i = 0; i < fileTreeButtons.length; i++) {
-    if (i === selectedFileIdx && i < fileEntries.length && !isDirectory(fileEntries[i].path)) {
+    if (i === selectedFileIdx) {
       setBg(fileTreeButtons[i], themeColors.listActiveSelectionBackground);
       setBtnFg(fileTreeButtons[i], themeColors.listActiveSelectionForeground);
     } else {
@@ -215,292 +218,315 @@ function updateEditorTabs(): void {
   if (!themeColors) return;
   for (let i = 0; i < tabBarButtons.length; i++) {
     if (i === activeTabIdx) {
-      setBtnFg(tabBarButtons[i], themeColors.tabActiveForeground);
       setBg(tabBarButtons[i], themeColors.tabActiveBackground);
     } else {
-      setBtnFg(tabBarButtons[i], themeColors.tabInactiveForeground);
       setBg(tabBarButtons[i], themeColors.tabInactiveBackground);
     }
   }
 }
 
-/** Rebuild sidebar file tree by directly reading the filesystem.
- *  We do this INSIDE refreshSidebar because Perry module-level variable reads
- *  (exp0, exp1, etc.) work correctly here but NOT in functions called from
- *  loadFileTree/addDirEntries (those see stale snapshots). */
+function updateBreadcrumb(): void {
+  if (breadcrumbReady < 1 || !breadcrumbContainer) return;
+  widgetClearChildren(breadcrumbContainer);
+  if (currentEditorFilePath.length < 1) return;
+  // Show path segments as breadcrumb
+  let lastSlash = -1;
+  let secondLastSlash = -1;
+  for (let i = 0; i < currentEditorFilePath.length; i++) {
+    if (currentEditorFilePath.charCodeAt(i) === 47) {
+      secondLastSlash = lastSlash;
+      lastSlash = i;
+    }
+  }
+  let dirName = '';
+  if (secondLastSlash >= 0 && lastSlash > secondLastSlash) {
+    dirName = currentEditorFilePath.slice(secondLastSlash + 1, lastSlash);
+  }
+  let fileName = currentEditorFilePath.slice(lastSlash + 1);
+
+  if (dirName.length > 0) {
+    const dirText = Text(dirName);
+    textSetFontSize(dirText, 11);
+    if (themeColors) setFg(dirText, themeColors.editorForeground);
+    widgetAddChild(breadcrumbContainer, dirText);
+    const sep = Text(' > ');
+    textSetFontSize(sep, 11);
+    if (themeColors) setFg(sep, themeColors.editorForeground);
+    widgetAddChild(breadcrumbContainer, sep);
+  }
+  const fileText = Text(fileName);
+  textSetFontSize(fileText, 11);
+  if (themeColors) setFg(fileText, themeColors.editorForeground);
+  widgetAddChild(breadcrumbContainer, fileText);
+  widgetAddChild(breadcrumbContainer, Spacer());
+}
+
+export function toggleTerminalAction(): void {
+  if (!terminalArea) return;
+  if (terminalVisible > 0) {
+    terminalVisible = 0;
+    widgetSetHidden(terminalArea, 1);
+  } else {
+    terminalVisible = 1;
+    widgetSetHidden(terminalArea, 0);
+  }
+}
+
 function refreshSidebar(): void {
   if (sidebarReady < 1) return;
   widgetClearChildren(sidebarContainer);
-
-  const title = Text('EXPLORER');
-  textSetFontSize(title, 11);
-  textSetFontWeight(title, 11, 0.7);
-  setFg(title, themeColors.sideBarForeground);
-  widgetAddChild(sidebarContainer, title);
-
   fileTreeButtons = [];
-  fileEntries = [];
-  flatFilePaths = [];
-  flatFileNames = [];
-  fileEntryCount = 0;
   selectedFileIdx = -1;
+  fileEntries = [];
+  fileEntryCount = 0;
 
-  if (workspaceRoot.length > 0) {
-    renderTreeLevel(workspaceRoot, 0);
+  if (workspaceRoot.length < 1) {
+    const hint = Text('Open a folder to start');
+    textSetFontSize(hint, 12);
+    if (themeColors) setFg(hint, themeColors.sideBarForeground);
+    widgetAddChild(sidebarContainer, hint);
+    const openBtn = Button('Open Folder', () => { openFolderAction(); });
+    buttonSetBordered(openBtn, 0);
+    textSetFontSize(openBtn, 13);
+    if (themeColors) setBtnFg(openBtn, themeColors.sideBarForeground);
+    widgetAddChild(sidebarContainer, openBtn);
+    widgetAddChild(sidebarContainer, Spacer());
+    return;
   }
+
+  // Header
+  const header = Text('EXPLORER');
+  textSetFontSize(header, 11);
+  textSetFontWeight(header, 11, 0.7);
+  if (themeColors) setFg(header, themeColors.sideBarForeground);
+  widgetAddChild(sidebarContainer, header);
+
+  // Render file tree inline using renderTreeLevel
+  renderTreeLevel(workspaceRoot, 0);
 
   widgetAddChild(sidebarContainer, Spacer());
 }
 
-/** Render one level of the file tree directly into sidebarContainer.
- *  Called from refreshSidebar — reads exp0..exp7 which are fresh in this context. */
 function renderTreeLevel(dirPath: string, depth: number): void {
-  const names: string[] = readdirSync(dirPath);
-  const dirs: string[] = [];
-  const files: string[] = [];
+  if (depth > 10) return;
+  let names: string[] = [];
+  try { names = readdirSync(dirPath); } catch (e) { return; }
+
+  // Separate dirs and files
+  let dirNames: string[] = [];
+  let fileNames: string[] = [];
+  let dirCount = 0;
+  let fileCount = 0;
   for (let i = 0; i < names.length; i++) {
-    const name = names[i];
-    const ch0 = name.charCodeAt(0);
-    if (ch0 === 46) continue; // skip hidden (.)
-    const fullPath = join(dirPath, name);
-    if (isDirectory(fullPath)) {
-      dirs.push(name);
+    const n = names[i];
+    if (n.charCodeAt(0) === 46) continue; // skip hidden
+    const full = join(dirPath, n);
+    if (isDirectory(full)) {
+      dirNames[dirCount] = n;
+      dirCount = dirCount + 1;
     } else {
-      files.push(name);
+      fileNames[fileCount] = n;
+      fileCount = fileCount + 1;
     }
   }
-  dirs.sort();
-  files.sort();
 
-  // Dirs first
-  for (let i = 0; i < dirs.length; i++) {
-    const name = dirs[i];
-    const fullPath = join(dirPath, name);
-    const idx = fileEntryCount;
-    fileEntries[idx] = { name: name, path: fullPath, depth: depth, isDir: true, label: name };
-    flatFilePaths[idx] = fullPath;
-    flatFileNames[idx] = name;
-    fileEntryCount = fileEntryCount + 1;
+  // Render directories first
+  for (let i = 0; i < dirCount; i++) {
+    const name = dirNames[i];
+    const full = join(dirPath, name);
+    const expanded = isDirExpanded(full);
+    const id = pathId(full);
+    let icon = 'folder.fill';
+    if (expanded) icon = 'folder';
 
-    const expanded = isDirExpanded(fullPath);
-    // Capture pathId as a NUMBER in the closure — immune to string GC
-    const dirId = pathId(fullPath);
-    const btn = Button(name, () => { onDirToggle(dirId); });
+    const btn = Button(name, () => { onDirToggle(id); });
     buttonSetBordered(btn, 0);
-    textSetFontSize(btn, 13);
-    if (expanded) {
-      buttonSetImage(btn, 'folder');
-    } else {
-      buttonSetImage(btn, 'folder.fill');
-    }
+    textSetFontSize(btn, 12);
+    buttonSetImage(btn, icon);
     if (themeColors) {
       setBtnFg(btn, themeColors.sideBarForeground);
+      setBtnTint(btn, '#E8AB53');
     }
 
     if (depth > 0) {
-      const row = HStack(0, []);
+      const wrapper = HStack(0, []);
       const indent = Text('');
       widgetSetWidth(indent, depth * 16);
-      widgetAddChild(row, indent);
-      widgetAddChild(row, btn);
-      fileTreeButtons.push(btn);
-      widgetAddChild(sidebarContainer, row);
+      widgetAddChild(wrapper, indent);
+      widgetAddChild(wrapper, btn);
+      widgetAddChild(sidebarContainer, wrapper);
     } else {
-      fileTreeButtons.push(btn);
       widgetAddChild(sidebarContainer, btn);
     }
 
-    // Recurse into expanded dirs
     if (expanded) {
-      renderTreeLevel(fullPath, depth + 1);
+      renderTreeLevel(full, depth + 1);
     }
   }
 
-  // Files after dirs
-  for (let i = 0; i < files.length; i++) {
-    const name = files[i];
-    const fullPath = join(dirPath, name);
+  // Render files
+  for (let i = 0; i < fileCount; i++) {
+    const name = fileNames[i];
+    const full = join(dirPath, name);
     const idx = fileEntryCount;
-    fileEntries[idx] = { name: name, path: fullPath, depth: depth, isDir: false, label: name };
-    flatFilePaths[idx] = fullPath;
-    flatFileNames[idx] = name;
+    fileEntries[idx] = { name: name, path: full, depth: depth, isDir: false, label: name };
     fileEntryCount = fileEntryCount + 1;
 
-    // Capture numeric index — named function reads from module-level arrays at click time
-    const capturedIdx = idx;
-    const btn = Button(name, () => { onFileClick(capturedIdx); });
+    const btn = Button(name, () => { onFileClick(idx); });
     buttonSetBordered(btn, 0);
-    textSetFontSize(btn, 13);
-    buttonSetImage(btn, 'doc.text');
+    textSetFontSize(btn, 12);
+    buttonSetImage(btn, 'doc');
     if (themeColors) {
       setBtnFg(btn, themeColors.sideBarForeground);
+      setBtnTint(btn, themeColors.sideBarForeground);
     }
+    fileTreeButtons.push(btn);
 
     if (depth > 0) {
-      const row = HStack(0, []);
+      const wrapper = HStack(0, []);
       const indent = Text('');
       widgetSetWidth(indent, depth * 16);
-      widgetAddChild(row, indent);
-      widgetAddChild(row, btn);
-      fileTreeButtons.push(btn);
-      widgetAddChild(sidebarContainer, row);
+      widgetAddChild(wrapper, indent);
+      widgetAddChild(wrapper, btn);
+      widgetAddChild(sidebarContainer, wrapper);
     } else {
-      fileTreeButtons.push(btn);
       widgetAddChild(sidebarContainer, btn);
     }
   }
 }
 
-/** Module-level callback for folder dialog — called from menu or elsewhere. */
 function onFolderOpened(folderPath: string): void {
   workspaceRoot = folderPath;
+  setSearchWorkspaceRoot(folderPath);
+  setGitWorkspaceRoot(folderPath);
+  setLspWorkspaceRoot(folderPath);
+  initLspBridge();
   refreshSidebar();
 }
 
-/** Open folder dialog — callable from menu bar or command. */
 export function openFolderAction(): void {
   openFolderDialog((path: string) => { onFolderOpenedCb(path); });
 }
 
-// Module-level function for the callback (Perry closures can't call methods on captured this)
 function onFolderOpenedCb(path: string): void {
-  // Guard against cancelled dialog
   if (path.length < 1) return;
   onFolderOpened(path);
 }
 
-/** Toggle sidebar visibility — callable from menu bar. */
 export function toggleSidebarAction(): void {
   if (sidebarToggleReady < 1) return;
   if (sidebarVisible > 0) {
     sidebarVisible = 0;
     widgetSetHidden(sidebarWidget, 1);
-    if (sidebarBorderWidget) widgetSetHidden(sidebarBorderWidget, 1);
+    widgetSetHidden(sidebarBorderWidget, 1);
   } else {
     sidebarVisible = 1;
     widgetSetHidden(sidebarWidget, 0);
-    if (sidebarBorderWidget) widgetSetHidden(sidebarBorderWidget, 0);
+    widgetSetHidden(sidebarBorderWidget, 0);
   }
 }
 
-/** Close the active editor tab — callable from menu bar. */
 export function closeEditorAction(): void {
-  onTabClose(activeTabIdx);
+  // Placeholder for Cmd+W
 }
 
-/** Rebuild the tab bar from current openTabs/openTabNames. */
+export function saveFileAction(): void {
+  if (currentEditorFilePath.length < 1) return;
+  if (editorReady < 1) return;
+  const content = editorInstance.getContent();
+  writeFileSync(currentEditorFilePath, content);
+}
+
 function rebuildTabBar(): void {
-  if (tabBarReady > 0) {
-    rebuildTabBarDirect(openTabCount, openTabNames, openTabs, tabBarContainer);
-  }
+  if (tabBarReady < 1) return;
+  rebuildTabBarDirect(openTabCount, openTabNames, openTabs, tabBarContainer);
 }
 
-/** Rebuild the tab bar — pass all data directly to avoid stale module-level reads. */
 function rebuildTabBarDirect(count: number, names: string[], paths: string[], container: unknown): void {
   widgetClearChildren(container);
   tabBarButtons = [];
-
   for (let i = 0; i < count; i++) {
     const idx = i;
-    const name = names[i];
     const path = paths[i];
-    // Capture path in closure so tab click doesn't need module-level array reads
-    const btn = Button(name, () => { onTabClickDirect(idx, path); });
-    buttonSetBordered(btn, 0);
-    textSetFontSize(btn, 13);
-    tabBarButtons[i] = btn;
-    widgetAddChild(container, btn);
+    const name = names[i];
+    const tabGroup = HStackWithInsets(4, 0, 10, 0, 6);
+    const tabBtn = Button(name, () => { onTabClickDirect(idx, path); });
+    buttonSetBordered(tabBtn, 0);
+    textSetFontSize(tabBtn, 13);
+    const closeBtn = Button('', () => { onTabClose(idx); });
+    buttonSetBordered(closeBtn, 0);
+    buttonSetImage(closeBtn, 'xmark');
+    buttonSetImagePosition(closeBtn, 1);
+    textSetFontSize(closeBtn, 9);
+    widgetAddChild(tabGroup, tabBtn);
+    widgetAddChild(tabGroup, closeBtn);
+    if (themeColors) {
+      if (i === activeTabIdx) {
+        setBtnFg(tabBtn, themeColors.tabActiveForeground);
+        setBg(tabGroup, themeColors.tabActiveBackground);
+      } else {
+        setBtnFg(tabBtn, themeColors.tabActiveForeground);
+        setBg(tabGroup, themeColors.tabInactiveBackground);
+      }
+      setBtnFg(closeBtn, themeColors.tabActiveForeground);
+    }
+    const tabMenu = menuCreate();
+    menuAddItem(tabMenu, 'Close', () => { removeTabGroup(tabGroup); });
+    menuAddItem(tabMenu, 'Close Others', () => { closeOtherTabGroups(tabGroup); });
+    menuAddItem(tabMenu, 'Close All', () => { closeAllTabs(); });
+    widgetSetContextMenu(tabGroup, tabMenu);
+    widgetAddChild(container, tabGroup);
+    tabBarButtons.push(tabGroup);
   }
-  widgetAddChild(container, Spacer());
-
-  // Apply colors inline (avoid reading themeColors from a separate function)
-  applyTabColors(count);
 }
 
-/** Apply tab colors to current tabBarButtons. */
 function applyTabColors(count: number): void {
   if (!themeColors) return;
   for (let i = 0; i < count; i++) {
     if (i === activeTabIdx) {
-      setBtnFg(tabBarButtons[i], themeColors.tabActiveForeground);
       setBg(tabBarButtons[i], themeColors.tabActiveBackground);
     } else {
-      setBtnFg(tabBarButtons[i], themeColors.tabInactiveForeground);
       setBg(tabBarButtons[i], themeColors.tabInactiveBackground);
     }
   }
 }
 
-
-/** Extract filename from a full path. Uses charCodeAt for comparison
- *  since Perry's string === is broken (always returns true). */
-function getFileName(filePath: string): string {
-  let lastSlash = -1;
-  for (let i = 0; i < filePath.length; i++) {
-    const ch = filePath.charCodeAt(i);
-    if (ch === 47 || ch === 92) lastSlash = i;  // '/' or '\'
-  }
-  if (lastSlash >= 0) {
-    return filePath.slice(lastSlash + 1);
-  }
-  return filePath;
-}
-
-/** Open a file via the native file dialog — callable from menu bar. */
 export function openFileAction(): void {
   openFileDialog((path: string) => { onFileOpenedCb2(path); });
 }
 
 function onFileOpenedCb2(filePath: string): void {
-  // Guard against cancelled dialog (TAG_UNDEFINED → empty string)
   if (filePath.length < 1) return;
   const name = getFileName(filePath);
   openFileInEditor(filePath, name);
 }
 
-/** Detect language from file extension. */
-function detectLanguage(filePath: string): string {
-  if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) return 'typescript';
-  if (filePath.endsWith('.js') || filePath.endsWith('.jsx')) return 'javascript';
-  if (filePath.endsWith('.py')) return 'python';
-  if (filePath.endsWith('.rs')) return 'rust';
-  if (filePath.endsWith('.html') || filePath.endsWith('.htm')) return 'html';
-  if (filePath.endsWith('.css')) return 'css';
-  if (filePath.endsWith('.json')) return 'json';
-  if (filePath.endsWith('.md')) return 'markdown';
-  if (filePath.endsWith('.c') || filePath.endsWith('.h')) return 'c';
-  if (filePath.endsWith('.cpp') || filePath.endsWith('.hpp')) return 'cpp';
-  return 'plaintext';
-}
-
 function displayFileContent(filePath: string): void {
-  if (editorReady < 1) return;  // numeric check, no union-type issue
+  currentEditorFilePath = filePath;
+  updateBreadcrumb();
+  if (editorReady < 1) return;
   const content = readFileSync(filePath);
   editorInstance.setContent(content);
   editorInstance.render();
 }
 
 function openFileInEditor(filePath: string, fileName: string): void {
-  // Compute display name inline (Perry function returns for strings are unreliable)
+  currentEditorFilePath = filePath;
+  updateBreadcrumb();
   let lastSlash = -1;
   for (let i = 0; i < filePath.length; i++) {
-    const ch = filePath.charCodeAt(i);
-    if (ch === 47 || ch === 92) lastSlash = i;  // 47='/' 92='\'
+    if (filePath.charCodeAt(i) === 47) lastSlash = i;
   }
   let displayName = filePath;
   if (lastSlash >= 0) {
     displayName = filePath.slice(lastSlash + 1);
   }
 
-  // Append a new tab to the tab bar (don't clear — module-level arrays are stale
-  // from callbacks, so we can't rebuild from stored data).
   if (tabBarReady > 0) {
-    // Create tab group: [name button, close button] with padding
     const tabGroup = HStackWithInsets(4, 0, 10, 0, 6);
     const tabBtn = Button(displayName, () => { loadFileFromTab(filePath); });
     buttonSetBordered(tabBtn, 0);
     textSetFontSize(tabBtn, 13);
-    // Close button — xmark icon
     const closeBtn = Button('', () => { removeTabGroup(tabGroup); });
     buttonSetBordered(closeBtn, 0);
     buttonSetImage(closeBtn, 'xmark');
@@ -513,7 +539,6 @@ function openFileInEditor(filePath: string, fileName: string): void {
       setBg(tabGroup, themeColors.tabActiveBackground);
       setBtnFg(closeBtn, themeColors.tabActiveForeground);
     }
-    // Context menu for right-click
     const tabMenu = menuCreate();
     menuAddItem(tabMenu, 'Close', () => { removeTabGroup(tabGroup); });
     menuAddItem(tabMenu, 'Close Others', () => { closeOtherTabGroups(tabGroup); });
@@ -522,7 +547,6 @@ function openFileInEditor(filePath: string, fileName: string): void {
     widgetAddChild(tabBarContainer, tabGroup);
   }
 
-  // Load file content
   if (editorReady > 0) {
     const content = readFileSync(filePath);
     editorInstance.setContent(content);
@@ -530,8 +554,9 @@ function openFileInEditor(filePath: string, fileName: string): void {
   }
 }
 
-/** Load file content — called from tab click closures with captured path. */
 function loadFileFromTab(filePath: string): void {
+  currentEditorFilePath = filePath;
+  updateBreadcrumb();
   if (editorReady > 0) {
     const content = readFileSync(filePath);
     editorInstance.setContent(content);
@@ -539,7 +564,6 @@ function loadFileFromTab(filePath: string): void {
   }
 }
 
-/** Hide a tab group (close the tab). */
 function removeTabGroup(group: unknown): void {
   widgetRemoveChild(tabBarContainer, group);
 }
@@ -549,10 +573,52 @@ function closeAllTabs(): void {
 }
 
 function closeOtherTabGroups(keepGroup: unknown): void {
-  // Clear all and re-add the one to keep
   widgetClearChildren(tabBarContainer);
   widgetAddChild(tabBarContainer, keepGroup);
 }
+
+// ---------------------------------------------------------------------------
+// Callbacks for extracted panels
+// ---------------------------------------------------------------------------
+
+/** Called by search panel when a file is opened from results. */
+function openFileFromSearchPanel(path: string, name: string): void {
+  openFileInEditor(path, name);
+}
+
+/** Called by search panel to reload editor after replace. */
+function reloadEditorContent(path: string, content: string): void {
+  if (editorReady > 0) {
+    editorInstance.setContent(content);
+    editorInstance.render();
+  }
+}
+
+/** Called by search panel to get current editor path. */
+function getCurrentEditorPath(): string {
+  return currentEditorFilePath;
+}
+
+/** Called by git panel when a file is clicked. */
+function openFileFromGitPanel(path: string, name: string): void {
+  openFileInEditor(path, name);
+}
+
+/** Called by git panel to update status bar branch. */
+function updateStatusBarBranchLabel(branch: string): void {
+  if (statusBarBranchLabel) {
+    textSetString(statusBarBranchLabel, branch);
+  }
+}
+
+/** Called by autocomplete popup when a completion is accepted. */
+function onAutocompleteAccept(text: string): void {
+  // Future: insert text at cursor position in editor
+}
+
+// ---------------------------------------------------------------------------
+// Activity bar / sidebar panel switching
+// ---------------------------------------------------------------------------
 
 function onActivityClick(idx: number): void {
   activeActivityIdx = idx;
@@ -560,46 +626,60 @@ function onActivityClick(idx: number): void {
   switchSidebarPanel(idx);
 }
 
-/** Switch sidebar content based on activity bar selection. */
 function switchSidebarPanel(idx: number): void {
   if (sidebarReady < 1) return;
   if (idx === 0) {
-    // Explorer — rebuild file tree
+    resetSearchPanelReady();
     refreshSidebar();
     return;
   }
   widgetClearChildren(sidebarContainer);
   fileTreeButtons = [];
   selectedFileIdx = -1;
+  resetSearchPanelReady();
 
-  // Determine panel title — use literal strings (Perry string + is broken)
-  let panelTitle = 'SEARCH';
-  let panelHint = 'Type to search across files';
-  if (idx === 2) { panelTitle = 'SOURCE CONTROL'; panelHint = 'No repository detected'; }
-  if (idx === 3) { panelTitle = 'RUN AND DEBUG'; panelHint = 'No launch configuration'; }
-  if (idx === 4) { panelTitle = 'EXTENSIONS'; panelHint = 'No extensions installed'; }
-  if (idx === 5) { panelTitle = 'SETTINGS'; panelHint = 'Settings editor coming soon'; }
+  if (idx === 1) {
+    resetGitPanelReady();
+    renderSearchPanelImpl(sidebarContainer, themeColors as ResolvedUIColors);
+    return;
+  }
 
-  const title = Text(panelTitle);
-  textSetFontSize(title, 11);
-  textSetFontWeight(title, 11, 0.7);
-  setFg(title, themeColors.sideBarForeground);
-  widgetAddChild(sidebarContainer, title);
+  if (idx === 2) {
+    resetGitPanelReady();
+    renderGitPanelImpl(sidebarContainer, themeColors as ResolvedUIColors);
+    return;
+  }
 
-  const hint = Text(panelHint);
-  textSetFontSize(hint, 12);
-  setFg(hint, themeColors.sideBarForeground);
-  widgetAddChild(sidebarContainer, hint);
-  widgetAddChild(sidebarContainer, Spacer());
+  if (idx === 3) {
+    renderDebugPanel(sidebarContainer, themeColors as ResolvedUIColors);
+    return;
+  }
+
+  if (idx === 4) {
+    renderExtensionsPanel(sidebarContainer, themeColors as ResolvedUIColors);
+    return;
+  }
+
+  if (idx === 5) {
+    renderChatPanel(sidebarContainer, themeColors as ResolvedUIColors);
+    return;
+  }
+
+  if (idx === 6) {
+    renderSettingsPanel(sidebarContainer, themeColors as ResolvedUIColors);
+    return;
+  }
 }
 
-/** Toggle dir expansion using pre-computed numeric ID (no string reads at click time). */
+// ---------------------------------------------------------------------------
+// Directory expansion
+// ---------------------------------------------------------------------------
+
 function onDirToggle(id: number): void {
   toggleExpById(id);
   refreshSidebar();
 }
 
-/** Toggle expansion by numeric ID directly (no pathId computation needed). */
 function toggleExpById(id: number): void {
   if (exp0 === id) { exp0 = -1; return; }
   if (exp1 === id) { exp1 = -1; return; }
@@ -609,6 +689,14 @@ function toggleExpById(id: number): void {
   if (exp5 === id) { exp5 = -1; return; }
   if (exp6 === id) { exp6 = -1; return; }
   if (exp7 === id) { exp7 = -1; return; }
+  if (exp8 === id) { exp8 = -1; return; }
+  if (exp9 === id) { exp9 = -1; return; }
+  if (exp10 === id) { exp10 = -1; return; }
+  if (exp11 === id) { exp11 = -1; return; }
+  if (exp12 === id) { exp12 = -1; return; }
+  if (exp13 === id) { exp13 = -1; return; }
+  if (exp14 === id) { exp14 = -1; return; }
+  if (exp15 === id) { exp15 = -1; return; }
   if (exp0 === -1) { exp0 = id; return; }
   if (exp1 === -1) { exp1 = id; return; }
   if (exp2 === -1) { exp2 = id; return; }
@@ -617,14 +705,20 @@ function toggleExpById(id: number): void {
   if (exp5 === -1) { exp5 = id; return; }
   if (exp6 === -1) { exp6 = id; return; }
   if (exp7 === -1) { exp7 = id; return; }
+  if (exp8 === -1) { exp8 = id; return; }
+  if (exp9 === -1) { exp9 = id; return; }
+  if (exp10 === -1) { exp10 = id; return; }
+  if (exp11 === -1) { exp11 = id; return; }
+  if (exp12 === -1) { exp12 = id; return; }
+  if (exp13 === -1) { exp13 = id; return; }
+  if (exp14 === -1) { exp14 = id; return; }
+  if (exp15 === -1) { exp15 = id; return; }
 }
 
 function onFileClick(idx: number): void {
-  // Read from flat arrays (not object fields — avoids corrupted keys_array)
-  const path = flatFilePaths[idx];
-  const name = flatFileNames[idx];
-  if (path.length < 1) return;  // guard against undefined/empty
-  openFileInEditor(path, name);
+  if (idx >= fileEntryCount) return;
+  const entry = fileEntries[idx];
+  openFileInEditor(entry.path, entry.label);
   if (compactShowingExplorer > 0) {
     hideExplorer();
   }
@@ -638,14 +732,13 @@ function onTabClick(idx: number): void {
   }
 }
 
-/** Tab click with captured path — avoids stale module-level array reads. */
 function onTabClickDirect(idx: number, path: string): void {
+  currentEditorFilePath = path;
   activeTabIdx = idx;
-  // Color update — tabBarButtons may be stale from callback, skip if empty
+  updateBreadcrumb();
   if (tabBarButtons.length > 0) {
     applyTabColors(tabBarButtons.length);
   }
-  // Load file content using captured path (not module-level array)
   if (editorReady > 0) {
     const content = readFileSync(path);
     editorInstance.setContent(content);
@@ -654,8 +747,7 @@ function onTabClickDirect(idx: number, path: string): void {
 }
 
 function onTabClose(idx: number): void {
-  if (openTabCount < 2) return; // Don't close the last tab
-  // Build new arrays without the closed tab
+  if (openTabCount < 2) return;
   const newTabs: string[] = [];
   const newNames: string[] = [];
   let j = 0;
@@ -670,7 +762,6 @@ function onTabClose(idx: number): void {
   openTabNames = newNames;
   openTabCount = newCount;
 
-  // Adjust active tab index
   if (activeTabIdx >= newCount) {
     activeTabIdx = newCount - 1;
   }
@@ -678,11 +769,12 @@ function onTabClose(idx: number): void {
     activeTabIdx = activeTabIdx - 1;
   }
 
-  // Rebuild tab bar — pass local refs
   if (tabBarReady > 0) {
     rebuildTabBarDirect(newCount, newNames, newTabs, tabBarContainer);
   }
   if (editorReady > 0 && activeTabIdx >= 0) {
+    currentEditorFilePath = newTabs[activeTabIdx];
+    updateBreadcrumb();
     const content = readFileSync(newTabs[activeTabIdx]);
     editorInstance.setContent(content);
     editorInstance.render();
@@ -696,33 +788,32 @@ function onTabClose(idx: number): void {
 function renderActivityBarDesktop(colors: ResolvedUIColors): unknown {
   activityButtons = [];
 
-  // SF Symbol icons for each panel
-  const icons = ['doc.on.doc', 'magnifyingglass', 'arrow.triangle.branch', 'ladybug', 'puzzlepiece.extension'];
+  const icons = ['doc.on.doc', 'magnifyingglass', 'arrow.triangle.branch', 'ladybug', 'puzzlepiece.extension', 'sparkles'];
 
-  for (let i = 0; i < PANELS.length; i++) {
+  for (let i = 0; i < 6; i++) {
     const idx = i;
     const btn = Button('', () => { onActivityClick(idx); });
     buttonSetBordered(btn, 0);
     buttonSetImage(btn, icons[i]);
-    buttonSetImagePosition(btn, 1); // NSImageOnly — icon only, no text
+    buttonSetImagePosition(btn, 1);
     setBtnTint(btn, colors.activityBarForeground);
     activityButtons.push(btn);
   }
 
   updateActivityBar();
 
-  const bar = VStackWithInsets(8, 12, 6, 12, 6);
+  const bar = VStackWithInsets(20, 12, 6, 12, 6);
   setBg(bar, colors.activityBarBackground);
   for (let i = 0; i < activityButtons.length; i++) {
     widgetAddChild(bar, activityButtons[i]);
   }
   widgetAddChild(bar, Spacer());
 
-  // Settings gear icon
-  const settingsBtn = Button('', () => { onActivityClick(5); });
+  // Settings gear icon → Settings panel (idx 6)
+  const settingsBtn = Button('', () => { onActivityClick(6); });
   buttonSetBordered(settingsBtn, 0);
   buttonSetImage(settingsBtn, 'gearshape');
-  buttonSetImagePosition(settingsBtn, 1); // NSImageOnly
+  buttonSetImagePosition(settingsBtn, 1);
   setBtnTint(settingsBtn, colors.activityBarInactiveForeground);
   widgetAddChild(bar, settingsBtn);
 
@@ -738,7 +829,7 @@ function renderActivityBarCompact(colors: ResolvedUIColors): unknown {
     const btn = Button('', () => { onActivityClick(idx); });
     buttonSetBordered(btn, 0);
     buttonSetImage(btn, icons[i]);
-    buttonSetImagePosition(btn, 1); // NSImageOnly
+    buttonSetImagePosition(btn, 1);
     setBtnTint(btn, colors.activityBarForeground);
     activityButtons.push(btn);
   }
@@ -758,15 +849,17 @@ function renderActivityBarCompact(colors: ResolvedUIColors): unknown {
 // ---------------------------------------------------------------------------
 
 function renderSidebar(colors: ResolvedUIColors): unknown {
-  const sidebar = VStackWithInsets(1, 8, 8, 8, 8);
-  setBg(sidebar, colors.sideBarBackground);
-  sidebarContainer = sidebar;
+  const inner = VStackWithInsets(1, 8, 8, 8, 8);
+  setBg(inner, colors.sideBarBackground);
+  sidebarContainer = inner;
   sidebarReady = 1;
 
-  // Populate using refreshSidebar (reads filesystem + expansion state inline)
   refreshSidebar();
 
-  return sidebar;
+  const scroll = ScrollView();
+  scrollViewSetChild(scroll, inner);
+
+  return scroll;
 }
 
 // ---------------------------------------------------------------------------
@@ -776,8 +869,7 @@ function renderSidebar(colors: ResolvedUIColors): unknown {
 function renderEditorArea(colors: ResolvedUIColors): unknown {
   tabBarButtons = [];
 
-  // Always set up default file (no __platform__ guard — !== may be unreliable)
-  const defaultFile = 'C:/Users/Ralph/projects/hone/hone-ide/src/app.ts';
+  const defaultFile = '/Users/amlug/projects/hone/hone-ide/src/app.ts';
   const defaultName = 'app.ts';
   openTabs = [defaultFile];
   openTabNames = [defaultName];
@@ -798,7 +890,6 @@ function renderEditorArea(colors: ResolvedUIColors): unknown {
   setBtnFg(btn, colors.tabActiveForeground);
   setBg(initTabGroup, colors.tabActiveBackground);
   setBtnFg(initCloseBtn, colors.tabActiveForeground);
-  // Context menu for initial tab
   const initTabMenu = menuCreate();
   menuAddItem(initTabMenu, 'Close', () => { removeTabGroup(initTabGroup); });
   menuAddItem(initTabMenu, 'Close Others', () => { closeOtherTabGroups(initTabGroup); });
@@ -814,21 +905,22 @@ function renderEditorArea(colors: ResolvedUIColors): unknown {
     widgetAddChild(tabBarContainer, tabBarButtons[i]);
   }
 
-  // Create the editor (simplified constructor — no object spread or ??)
   const ed = new Editor(800, 600);
   editorInstance = ed;
   editorReady = 1;
 
-  // Get the native NSView and embed it in Perry's layout.
   const nsviewPtr = hone_editor_nsview(ed.nativeHandle as number);
   editorWidget = embedNSView(nsviewPtr);
 
-  // Load default file content
   displayFileContent(openTabs[0]);
 
-  // Editor widget must be in the initial VStack children array — Perry's
-  // NSStackView layout doesn't properly size views added via widgetAddChild().
-  const editorPane = VStack(0, [tabBarContainer, editorWidget]);
+  // Breadcrumb bar
+  breadcrumbContainer = HStackWithInsets(4, 4, 8, 4, 8);
+  setBg(breadcrumbContainer, colors.editorBackground);
+  breadcrumbReady = 1;
+  updateBreadcrumb();
+
+  const editorPane = VStack(0, [tabBarContainer, breadcrumbContainer, editorWidget]);
   setBg(editorPane, colors.editorBackground);
 
   return editorPane;
@@ -840,14 +932,14 @@ function renderEditorArea(colors: ResolvedUIColors): unknown {
 
 function showExplorer(): void {
   compactShowingExplorer = 1;
-  widgetSetHidden(compactEditorPane, 1);    // hide editor
-  widgetSetHidden(compactExplorerPane, 0);  // show explorer
+  widgetSetHidden(compactEditorPane, 1);
+  widgetSetHidden(compactExplorerPane, 0);
 }
 
 function hideExplorer(): void {
   compactShowingExplorer = 0;
-  widgetSetHidden(compactEditorPane, 0);    // show editor
-  widgetSetHidden(compactExplorerPane, 1);  // hide explorer
+  widgetSetHidden(compactEditorPane, 0);
+  widgetSetHidden(compactExplorerPane, 1);
 }
 
 function onBottomBarFiles(): void {
@@ -862,17 +954,11 @@ function onBottomBarEditor(): void {
   hideExplorer();
 }
 
-function onBottomBarAI(): void {
-  // Placeholder — future AI panel
-}
+function onBottomBarAI(): void {}
 
-function onBottomBarTerm(): void {
-  // Placeholder — future terminal panel
-}
+function onBottomBarTerm(): void {}
 
-function onBottomBarSettings(): void {
-  // Placeholder — future settings panel
-}
+function onBottomBarSettings(): void {}
 
 function renderBottomToolbar(colors: ResolvedUIColors): unknown {
   const filesBtn = Button('', () => { onBottomBarFiles(); });
@@ -911,6 +997,7 @@ function renderStatusBar(colors: ResolvedUIColors): unknown {
   const branch = Text(' main');
   textSetFontSize(branch, 12);
   setFg(branch, colors.statusBarForeground);
+  statusBarBranchLabel = branch;
 
   const lang = Text('TypeScript ');
   textSetFontSize(lang, 12);
@@ -918,6 +1005,11 @@ function renderStatusBar(colors: ResolvedUIColors): unknown {
 
   const bar = HStack(8, [branch, Spacer(), lang]);
   setBg(bar, colors.statusBarBackground);
+
+  // Initialize git state for status bar
+  refreshGitState();
+  updateStatusBarBranch();
+
   return bar;
 }
 
@@ -934,9 +1026,27 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   themeColors = theme.uiColors;
 
   // Set default workspace root if not already set
-  if (workspaceRoot.length === 0) {
-    workspaceRoot = 'C:/Users/Ralph/projects/hone/hone-ide';
+  if (workspaceRoot.length < 1) {
+    workspaceRoot = '/Users/amlug/projects/hone/hone-ide';
   }
+
+  // Wire up extracted panel callbacks
+  setSearchWorkspaceRoot(workspaceRoot);
+  setSearchFileOpener(openFileFromSearchPanel);
+  setSearchEditorReloader(reloadEditorContent);
+  setSearchCurrentEditorPath(getCurrentEditorPath);
+  setGitWorkspaceRoot(workspaceRoot);
+  setGitFileOpener(openFileFromGitPanel);
+  setGitStatusBarUpdater(updateStatusBarBranchLabel);
+
+  // Wire welcome tab actions
+  setWelcomeActions(openFolderAction, openFileAction, openFileAction);
+
+  // Wire LSP bridge
+  setLspWorkspaceRoot(workspaceRoot);
+  initLspBridge();
+  setDiagnosticsFileOpener(openFileFromSearchPanel);
+  setAutocompleteAcceptHandler(onAutocompleteAccept);
 
   if (layoutMode === 'compact') {
     const editorArea = renderEditorArea(themeColors);
@@ -947,12 +1057,10 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
     compactEditorPane = editorArea;
     compactExplorerPane = explorerPanel;
 
-    // Explorer starts hidden
     widgetSetHidden(explorerPanel, 1);
 
-    // Both panels in same VStack — hidden one collapses automatically
     const contentArea = VStack(0, [editorArea, explorerPanel]);
-    widgetSetHugging(contentArea, 1);  // fill available space
+    widgetSetHugging(contentArea, 1);
 
     widgetSetHugging(statusBar, 750);
     widgetSetHugging(bottomBar, 750);
@@ -975,7 +1083,6 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
     widgetSetWidth(sidebarBorder, 1);
     widgetSetHugging(sidebarBorder, 1000);
 
-    // Store refs for sidebar toggling
     sidebarWidget = sidebar;
     sidebarBorderWidget = sidebarBorder;
     sidebarToggleReady = 1;
@@ -996,32 +1103,51 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   const editorArea = renderEditorArea(themeColors);
   const statusBar = renderStatusBar(themeColors);
 
-  // Constrain panel widths so editor fills remaining space
   widgetSetWidth(activityBar, 48);
   widgetSetHugging(activityBar, 750);
   widgetSetWidth(sidebar, 220);
   widgetSetHugging(sidebar, 750);
   widgetSetHugging(editorArea, 1);
 
-  // 1px vertical divider between sidebar and editor
   const sidebarBorder = VStack(0, []);
   setBg(sidebarBorder, themeColors.panelBorder);
   widgetSetWidth(sidebarBorder, 1);
   widgetSetHugging(sidebarBorder, 1000);
 
-  // Store refs for sidebar toggling
   sidebarWidget = sidebar;
   sidebarBorderWidget = sidebarBorder;
   sidebarToggleReady = 1;
 
-  // Sidebar location: left (default) or right
-  const mainRow = sidebarLocation === 'right'
+  // Perry string === can be unreliable — use charCodeAt
+  const isRight = sidebarLocation.length > 0 && sidebarLocation.charCodeAt(0) === 114; // 'r'
+  const mainRow = isRight
     ? HStack(0, [activityBar, editorArea, sidebarBorder, sidebar])
     : HStack(0, [activityBar, sidebar, sidebarBorder, editorArea]);
 
   widgetSetHugging(mainRow, 1);
   widgetSetHugging(statusBar, 750);
-  const shell = VStack(0, [mainRow, statusBar]);
+
+  // Terminal bottom panel (hidden by default, toggle via Cmd+J)
+  const termPanel = VStackWithInsets(0, 0, 0, 0, 0);
+  setBg(termPanel, themeColors.editorBackground);
+  renderTerminalPanel(termPanel, themeColors);
+  widgetSetHidden(termPanel, 1);
+  terminalArea = termPanel;
+
+  // Terminal border
+  const termBorder = VStack(0, []);
+  setBg(termBorder, themeColors.panelBorder);
+  widgetSetWidth(termBorder, 1);
+  widgetSetHugging(termBorder, 1000);
+  widgetSetHidden(termBorder, 1);
+
+  // Notification overlay container (positioned at top-right)
+  notifOverlay = VStack(4, []);
+  widgetSetWidth(notifOverlay, 300);
+  widgetSetHugging(notifOverlay, 750);
+  initNotifications(notifOverlay, themeColors);
+
+  const shell = VStack(0, [mainRow, termPanel, statusBar]);
   setBg(shell, themeColors.editorBackground);
   return shell;
 }

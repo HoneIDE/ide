@@ -174,12 +174,28 @@ osascript -e 'tell application "System Events" to tell process "hone-ide" to get
 
 ## Slice plan
 
-See `../INTEGRATED_PLAN.md` for the full roadmap. Each slice adds views under `src/workbench/views/`:
-- Slice 0: Shell + theme ✅ (`render.ts`, `theme/`)
-- Slice 2: Settings runtime ✅ (`settings.ts`)
-- Windows port: Layout + editor ✅ (all UI features working)
-- Slice 3: Editor integration 🔜 (`views/editor/`)
-- Slice 4: Git 🔜 (`views/git/`)
-- Slice 5: Search 🔜 (`views/search/`)
-- Slice 10: AI Chat 🔜 (`views/ai-chat/`)
-- Slice 12: AI Agent 🔜 (`views/ai-agent/`)
+See `../INTEGRATED_PLAN.md` for the full roadmap (audited 2026-03-04).
+
+**Done:**
+- Slice 0: Shell + theme ✅ (`render.ts`, `theme/`, `layout/`)
+- Slice 1: File explorer ✅ (`views/explorer/`, `views/quick-open/`)
+- Slice 2: Settings runtime ✅ (`settings.ts`) — UI views still needed
+- Slice 3: Editor integration ✅ (embedded via Perry FFI, tabs, syntax highlighting)
+- Slice 4: Git panel ✅ inline in `render.ts` (stage/unstage/discard/commit/branch)
+- Slice 5: Search panel ✅ inline in `render.ts` (recursive search, replace)
+- Windows port ✅ (all UI features working)
+
+**Next up (IDE views needed for done core modules):**
+- Slice 9: AI Inline ghost text wiring → `EditorViewModel.ghostText`
+- Slice 10: AI Chat → `views/ai-chat/`
+- Slice 11: Terminal embedding → `views/terminal/`
+- Slice 2: Settings/Welcome/Notifications UI → `views/settings-ui/`, `views/welcome/`
+- Slice 6: LSP views → autocomplete popup, hover, diagnostics
+- Slice 7: Debug views → `views/debug/`
+- Slice 12: AI Agent → `views/ai-agent/`, `views/diff-view/`
+- Slice 13: PR Review → `views/pr-review/`
+- Slice 14: Extensions → `views/extensions/`
+
+**Refactoring needed:**
+- Extract git views from `render.ts` into `views/git/` (separate files)
+- Extract search views from `render.ts` into `views/search/` (separate files)

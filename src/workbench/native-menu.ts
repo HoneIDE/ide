@@ -1,89 +1,182 @@
 /**
- * Native menu bar setup — wires perry/ui menu functions to the app menu data.
+ * Native menu bar — builds macOS menu bar using Perry menu APIs.
+ *
+ * Uses literal strings throughout (Perry template literals with ${} are broken,
+ * and string + operator doesn't work).
  */
 
-import { buildDesktopMenuBar } from '../menu';
-import type { MenuItem } from '../menu';
-import { getPlatformContext } from '../platform';
 import {
-  menuCreate, menuAddItem, menuAddSeparator, menuAddSubmenu,
+  menuCreate, menuAddItem, menuAddSeparator,
   menuBarCreate, menuBarAddMenu, menuBarAttach,
 } from 'perry/ui';
-import {
-  openFolderAction, openFileAction, toggleSidebarAction, closeEditorAction,
-} from './render';
+import { openFolderAction, openFileAction, toggleSidebarAction, closeEditorAction, saveFileAction, toggleTerminalAction } from './render';
 
-// ---------------------------------------------------------------------------
-// Command dispatch
-// ---------------------------------------------------------------------------
+// Module-level function refs for callbacks (Perry closures can't call methods
+// on captured variables — must use module-level functions)
 
-function dispatchCommand(command: string): void {
-  // Perry string === is unreliable — use charCodeAt checks
-  if (command.length === 13 && command.charCodeAt(0) === 102) {
-    // file.openFile
-    openFileAction();
-  } else if (command.length === 15 && command.charCodeAt(5) === 111) {
-    // file.openFolder
-    openFolderAction();
-  } else if (command.length === 18 && command.charCodeAt(5) === 116) {
-    // view.toggleSidebar
-    toggleSidebarAction();
-  } else if (command.length === 37 && command.charCodeAt(0) === 119) {
-    // workbench.action.closeActiveEditor
-    closeEditorAction();
-  }
+function onNewFile(): void {
+  // Placeholder — future: create new untitled file
 }
 
-// ---------------------------------------------------------------------------
-// Build native menus from menu data
-// ---------------------------------------------------------------------------
-
-/** Check if type field starts with 's' (separator) — charCode 115 */
-function isSeparator(mi: MenuItem): boolean {
-  return mi.type.charCodeAt(0) === 115;
+function onOpenFile(): void {
+  openFileAction();
 }
 
-/** Check if type field starts with 'su' (submenu) — length 7 */
-function isSubmenu(mi: MenuItem): boolean {
-  return mi.type.length === 7;
+function onOpenFolder(): void {
+  openFolderAction();
 }
 
-function buildNativeMenu(items: MenuItem[]): unknown {
-  const menu = menuCreate();
-  const len = items.length;
-  for (let i = 0; i < len; i = i + 1) {
-    const mi = items[i];
-    if (isSeparator(mi)) {
-      menuAddSeparator(menu);
-    } else if (isSubmenu(mi) && mi.submenu) {
-      const sub = buildNativeMenu(mi.submenu);
-      menuAddSubmenu(menu, mi.label, sub);
-    } else {
-      const cmd = mi.command;
-      if (mi.shortcut) {
-        menuAddItem(menu, mi.label, () => { dispatchCommand(cmd); }, mi.shortcut);
-      } else {
-        menuAddItem(menu, mi.label, () => { dispatchCommand(cmd); });
-      }
-    }
-  }
-  return menu;
+function onSave(): void {
+  saveFileAction();
 }
 
-// ---------------------------------------------------------------------------
-// Public entry point
-// ---------------------------------------------------------------------------
+function onSaveAs(): void {
+  // Placeholder — future: save as dialog
+}
 
+function onCloseEditor(): void {
+  closeEditorAction();
+}
+
+function onUndo(): void {
+  // Placeholder — handled by NSTextField/editor natively
+}
+
+function onRedo(): void {
+  // Placeholder — handled by NSTextField/editor natively
+}
+
+function onCut(): void {
+  // Placeholder — handled natively
+}
+
+function onCopy(): void {
+  // Placeholder — handled natively
+}
+
+function onPaste(): void {
+  // Placeholder — handled natively
+}
+
+function onFind(): void {
+  // Placeholder — future: find panel
+}
+
+function onReplace(): void {
+  // Placeholder — future: replace panel
+}
+
+function onSelectAll(): void {
+  // Placeholder — handled natively
+}
+
+function onToggleSidebar(): void {
+  toggleSidebarAction();
+}
+
+function onToggleBottomPanel(): void {
+  toggleTerminalAction();
+}
+
+function onToggleTerminal(): void {
+  toggleTerminalAction();
+}
+
+function onZoomIn(): void {
+  // Placeholder
+}
+
+function onZoomOut(): void {
+  // Placeholder
+}
+
+function onResetZoom(): void {
+  // Placeholder
+}
+
+function onGoToFile(): void {
+  // Placeholder — future: quick open
+}
+
+function onGoToLine(): void {
+  // Placeholder — future: go to line
+}
+
+function onGoToSymbol(): void {
+  // Placeholder — future: go to symbol
+}
+
+function onWelcome(): void {
+  // Placeholder
+}
+
+function onDocs(): void {
+  // Placeholder
+}
+
+function onAbout(): void {
+  // Placeholder
+}
+
+/**
+ * Build and attach the native macOS menu bar.
+ * Call this before App() in app.ts.
+ */
 export function setupNativeMenuBar(): void {
-  const ctx = getPlatformContext();
-  const menuBar = buildDesktopMenuBar(ctx.platform);
+  // ---- File menu ----
+  const fileMenu = menuCreate();
+  menuAddItem(fileMenu, 'New File', () => { onNewFile(); }, 'n');
+  menuAddItem(fileMenu, 'Open File...', () => { onOpenFile(); }, 'o');
+  menuAddItem(fileMenu, 'Open Folder...', () => { onOpenFolder(); });
+  menuAddSeparator(fileMenu);
+  menuAddItem(fileMenu, 'Save', () => { onSave(); }, 's');
+  menuAddItem(fileMenu, 'Save As...', () => { onSaveAs(); }, 'S');
+  menuAddSeparator(fileMenu);
+  menuAddItem(fileMenu, 'Close Editor', () => { onCloseEditor(); });
+
+  // ---- Edit menu ----
+  const editMenu = menuCreate();
+  menuAddItem(editMenu, 'Undo', () => { onUndo(); }, 'z');
+  menuAddItem(editMenu, 'Redo', () => { onRedo(); }, 'Z');
+  menuAddSeparator(editMenu);
+  menuAddItem(editMenu, 'Cut', () => { onCut(); }, 'x');
+  menuAddItem(editMenu, 'Copy', () => { onCopy(); }, 'c');
+  menuAddItem(editMenu, 'Paste', () => { onPaste(); }, 'v');
+  menuAddSeparator(editMenu);
+  menuAddItem(editMenu, 'Find', () => { onFind(); }, 'f');
+  menuAddItem(editMenu, 'Replace', () => { onReplace(); }, 'h');
+  menuAddSeparator(editMenu);
+  menuAddItem(editMenu, 'Select All', () => { onSelectAll(); }, 'a');
+
+  // ---- View menu ----
+  const viewMenu = menuCreate();
+  menuAddItem(viewMenu, 'Toggle Sidebar', () => { onToggleSidebar(); }, 'b');
+  menuAddItem(viewMenu, 'Toggle Bottom Panel', () => { onToggleBottomPanel(); }, 'j');
+  menuAddItem(viewMenu, 'Toggle Terminal', () => { onToggleTerminal(); });
+  menuAddSeparator(viewMenu);
+  menuAddItem(viewMenu, 'Zoom In', () => { onZoomIn(); });
+  menuAddItem(viewMenu, 'Zoom Out', () => { onZoomOut(); });
+  menuAddItem(viewMenu, 'Reset Zoom', () => { onResetZoom(); });
+
+  // ---- Go menu ----
+  const goMenu = menuCreate();
+  menuAddItem(goMenu, 'Go to File...', () => { onGoToFile(); }, 'p');
+  menuAddItem(goMenu, 'Go to Line...', () => { onGoToLine(); }, 'g');
+  menuAddItem(goMenu, 'Go to Symbol...', () => { onGoToSymbol(); });
+
+  // ---- Help menu ----
+  const helpMenu = menuCreate();
+  menuAddItem(helpMenu, 'Welcome', () => { onWelcome(); });
+  menuAddItem(helpMenu, 'Documentation', () => { onDocs(); });
+  menuAddSeparator(helpMenu);
+  menuAddItem(helpMenu, 'About Hone', () => { onAbout(); });
+
+  // ---- Assemble menu bar ----
   const bar = menuBarCreate();
-  const menus = menuBar.menus;
-  const menuCount = menus.length;
-  for (let i = 0; i < menuCount; i = i + 1) {
-    const m = menus[i];
-    const nativeMenu = buildNativeMenu(m.items);
-    menuBarAddMenu(bar, m.label, nativeMenu);
-  }
+  menuBarAddMenu(bar, 'File', fileMenu);
+  menuBarAddMenu(bar, 'Edit', editMenu);
+  menuBarAddMenu(bar, 'View', viewMenu);
+  menuBarAddMenu(bar, 'Go', goMenu);
+  menuBarAddMenu(bar, 'Help', helpMenu);
   menuBarAttach(bar);
 }
