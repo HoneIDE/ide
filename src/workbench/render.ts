@@ -53,8 +53,8 @@ import { renderSettingsPanel } from './views/settings-ui/settings-panel';
 import { setWelcomeActions, createWelcomeContent } from './views/welcome/welcome-tab';
 import { initNotifications, showNotification } from './views/notifications/notifications';
 import { renderPRReviewPanel } from './views/pr-review/pr-review-panel';
-import { setLspWorkspaceRoot, initLspBridge, triggerDiagnostics, getCompletions, setDiagnosticsStatusUpdater } from './views/lsp/lsp-bridge';
-import { setDiagnosticsFileOpener } from './views/lsp/diagnostics-panel';
+import { setLspWorkspaceRoot, initLspBridge } from './views/lsp/lsp-bridge';
+import { setDiagnosticsFileOpener, renderDiagnosticsPanel, updateDiagnostics } from './views/lsp/diagnostics-panel';
 import { createAutocompletePopup, setAutocompleteAcceptHandler } from './views/lsp/autocomplete-popup';
 
 // Compile-time platform ID injected by Perry codegen:
@@ -191,9 +191,6 @@ let notifOverlay: unknown = null;
 // Terminal bottom panel
 let terminalArea: unknown = null;
 let terminalVisible: number = 0;
-
-// Status bar diagnostics label
-let statusBarDiagLabel: unknown = null;
 
 // ---------------------------------------------------------------------------
 // Named update functions (read module-level refs at call time)
@@ -463,7 +460,6 @@ export function saveFileAction(): void {
   if (editorReady < 1) return;
   const content = editorInstance.getContent();
   writeFileSync(currentEditorFilePath, content);
-  triggerDiagnostics();
 }
 
 function rebuildTabBar(): void {
@@ -500,8 +496,8 @@ function rebuildTabBarDirect(count: number, names: string[], paths: string[], co
       setBtnFg(closeBtn, themeColors.tabActiveForeground);
     }
     const tabMenu = menuCreate();
-    menuAddItem(tabMenu, 'Close', () => { removeTabGroup(tabGroup); });
-    menuAddItem(tabMenu, 'Close Others', () => { closeOtherTabGroups(tabGroup); });
+    menuAddItem(tabMenu, 'Close', () => { onTabClose(idx); });
+    menuAddItem(tabMenu, 'Close Others', () => { closeOtherTabs(idx); });
     menuAddItem(tabMenu, 'Close All', () => { closeAllTabs(); });
     widgetSetContextMenu(tabGroup, tabMenu);
     widgetAddChild(container, tabGroup);
@@ -540,8 +536,25 @@ function displayFileContent(filePath: string): void {
 }
 
 function openFileInEditor(filePath: string, fileName: string): void {
-  currentEditorFilePath = filePath;
-  updateBreadcrumb();
+  // Check if file is already open — switch to that tab
+  for (let i = 0; i < openTabCount; i++) {
+    if (openTabs[i].length === filePath.length && openTabs[i] === filePath) {
+      activeTabIdx = i;
+      currentEditorFilePath = filePath;
+      updateBreadcrumb();
+      if (tabBarReady > 0) {
+        applyTabColors(openTabCount);
+      }
+      if (editorReady > 0) {
+        const content = readFileSync(filePath);
+        editorInstance.setContent(content);
+        editorInstance.render();
+      }
+      return;
+    }
+  }
+
+  // Extract display name
   let lastSlash = -1;
   for (let i = 0; i < filePath.length; i++) {
     if (filePath.charCodeAt(i) === 47) lastSlash = i;
@@ -551,59 +564,56 @@ function openFileInEditor(filePath: string, fileName: string): void {
     displayName = filePath.slice(lastSlash + 1);
   }
 
-  if (tabBarReady > 0) {
-    const tabGroup = HStackWithInsets(4, 0, 10, 0, 6);
-    const tabBtn = Button(displayName, () => { loadFileFromTab(filePath); });
-    buttonSetBordered(tabBtn, 0);
-    textSetFontSize(tabBtn, 13);
-    const closeBtn = Button('', () => { removeTabGroup(tabGroup); });
-    buttonSetBordered(closeBtn, 0);
-    buttonSetImage(closeBtn, 'xmark');
-    buttonSetImagePosition(closeBtn, 1);
-    textSetFontSize(closeBtn, 9);
-    widgetAddChild(tabGroup, tabBtn);
-    widgetAddChild(tabGroup, closeBtn);
-    if (themeColors) {
-      setBtnFg(tabBtn, themeColors.tabActiveForeground);
-      setBg(tabGroup, themeColors.tabActiveBackground);
-      setBtnFg(closeBtn, themeColors.tabActiveForeground);
-    }
-    const tabMenu = menuCreate();
-    menuAddItem(tabMenu, 'Close', () => { removeTabGroup(tabGroup); });
-    menuAddItem(tabMenu, 'Close Others', () => { closeOtherTabGroups(tabGroup); });
-    menuAddItem(tabMenu, 'Close All', () => { closeAllTabs(); });
-    widgetSetContextMenu(tabGroup, tabMenu);
-    widgetAddChild(tabBarContainer, tabGroup);
-  }
-
-  if (editorReady > 0) {
-    const content = readFileSync(filePath);
-    editorInstance.setContent(content);
-    editorInstance.render();
-  }
-}
-
-function loadFileFromTab(filePath: string): void {
+  // Add to tracking arrays
+  openTabs[openTabCount] = filePath;
+  openTabNames[openTabCount] = displayName;
+  openTabCount = openTabCount + 1;
+  activeTabIdx = openTabCount - 1;
   currentEditorFilePath = filePath;
   updateBreadcrumb();
+
+  // Rebuild tab bar from arrays (keeps widgets and arrays in sync)
+  if (tabBarReady > 0) {
+    rebuildTabBarDirect(openTabCount, openTabNames, openTabs, tabBarContainer);
+  }
+
   if (editorReady > 0) {
     const content = readFileSync(filePath);
     editorInstance.setContent(content);
     editorInstance.render();
   }
-}
-
-function removeTabGroup(group: unknown): void {
-  widgetRemoveChild(tabBarContainer, group);
 }
 
 function closeAllTabs(): void {
-  widgetClearChildren(tabBarContainer);
+  openTabs = [];
+  openTabNames = [];
+  openTabCount = 0;
+  activeTabIdx = 0;
+  currentEditorFilePath = '';
+  updateBreadcrumb();
+  if (tabBarReady > 0) {
+    widgetClearChildren(tabBarContainer);
+  }
 }
 
-function closeOtherTabGroups(keepGroup: unknown): void {
-  widgetClearChildren(tabBarContainer);
-  widgetAddChild(tabBarContainer, keepGroup);
+function closeOtherTabs(keepIdx: number): void {
+  if (keepIdx < 0 || keepIdx >= openTabCount) return;
+  const keptPath = openTabs[keepIdx];
+  const keptName = openTabNames[keepIdx];
+  openTabs = [keptPath];
+  openTabNames = [keptName];
+  openTabCount = 1;
+  activeTabIdx = 0;
+  currentEditorFilePath = keptPath;
+  updateBreadcrumb();
+  if (tabBarReady > 0) {
+    rebuildTabBarDirect(1, openTabNames, openTabs, tabBarContainer);
+  }
+  if (editorReady > 0) {
+    const content = readFileSync(keptPath);
+    editorInstance.setContent(content);
+    editorInstance.render();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -640,20 +650,9 @@ function updateStatusBarBranchLabel(branch: string): void {
   }
 }
 
-function updateStatusBarDiagnostics(errors: number, warnings: number): void {
-  if (statusBarDiagLabel) {
-    if (errors > 0 || warnings > 0) {
-      textSetString(statusBarDiagLabel, errors + ' errors, ' + warnings + ' warnings');
-    } else {
-      textSetString(statusBarDiagLabel, '');
-    }
-  }
-}
-
 /** Called by autocomplete popup when a completion is accepted. */
 function onAutocompleteAccept(text: string): void {
-  // Editor text insertion is handled via the native event system (ts_mode)
-  // Autocomplete accept will be wired when the editor exposes insertText API
+  // Future: insert text at cursor position in editor
 }
 
 // ---------------------------------------------------------------------------
@@ -804,10 +803,11 @@ function onTabClose(idx: number): void {
   openTabNames = newNames;
   openTabCount = newCount;
 
-  if (activeTabIdx >= newCount) {
-    activeTabIdx = newCount - 1;
-  }
-  if (activeTabIdx > idx) {
+  if (activeTabIdx === idx) {
+    // Closing the active tab — switch to prev or stay at same position
+    if (activeTabIdx >= newCount) activeTabIdx = newCount - 1;
+  } else if (activeTabIdx > idx) {
+    // Closing a tab before the active one — shift index down
     activeTabIdx = activeTabIdx - 1;
   }
 
@@ -916,36 +916,13 @@ function renderEditorArea(colors: ResolvedUIColors): unknown {
   openTabs = [defaultFile];
   openTabNames = [defaultName];
   openTabCount = 1;
-
-  const defaultPath = defaultFile;
-  const initTabGroup = HStackWithInsets(4, 0, 10, 0, 6);
-  const btn = Button('app.ts', () => { loadFileFromTab(defaultPath); });
-  buttonSetBordered(btn, 0);
-  textSetFontSize(btn, 13);
-  const initCloseBtn = Button('', () => { removeTabGroup(initTabGroup); });
-  buttonSetBordered(initCloseBtn, 0);
-  buttonSetImage(initCloseBtn, 'xmark');
-  buttonSetImagePosition(initCloseBtn, 1);
-  textSetFontSize(initCloseBtn, 9);
-  widgetAddChild(initTabGroup, btn);
-  widgetAddChild(initTabGroup, initCloseBtn);
-  setBtnFg(btn, colors.tabActiveForeground);
-  setBg(initTabGroup, colors.tabActiveBackground);
-  setBtnFg(initCloseBtn, colors.tabActiveForeground);
-  const initTabMenu = menuCreate();
-  menuAddItem(initTabMenu, 'Close', () => { removeTabGroup(initTabGroup); });
-  menuAddItem(initTabMenu, 'Close Others', () => { closeOtherTabGroups(initTabGroup); });
-  menuAddItem(initTabMenu, 'Close All', () => { closeAllTabs(); });
-  widgetSetContextMenu(initTabGroup, initTabMenu);
-  tabBarButtons = [initTabGroup];
+  activeTabIdx = 0;
 
   const tbc = HStack(0, []);
   tabBarContainer = tbc;
   tabBarReady = 1;
   setBg(tabBarContainer, colors.tabInactiveBackground);
-  for (let i = 0; i < tabBarButtons.length; i++) {
-    widgetAddChild(tabBarContainer, tabBarButtons[i]);
-  }
+  rebuildTabBarDirect(openTabCount, openTabNames, openTabs, tabBarContainer);
 
   const ed = new Editor(800, 600);
   editorInstance = ed;
@@ -1041,16 +1018,11 @@ function renderStatusBar(colors: ResolvedUIColors): unknown {
   setFg(branch, colors.statusBarForeground);
   statusBarBranchLabel = branch;
 
-  const diagLabel = Text('');
-  textSetFontSize(diagLabel, 12);
-  setFg(diagLabel, colors.statusBarForeground);
-  statusBarDiagLabel = diagLabel;
-
   const lang = Text('TypeScript ');
   textSetFontSize(lang, 12);
   setFg(lang, colors.statusBarForeground);
 
-  const bar = HStack(8, [branch, Spacer(), diagLabel, lang]);
+  const bar = HStack(8, [branch, Spacer(), lang]);
   setBg(bar, colors.statusBarBackground);
 
   // Initialize git state for status bar
@@ -1099,7 +1071,6 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   initLspBridge();
   setDiagnosticsFileOpener(openFileFromSearchPanel);
   setAutocompleteAcceptHandler(onAutocompleteAccept);
-  setDiagnosticsStatusUpdater(updateStatusBarDiagnostics);
 
   if (layoutMode === 'compact') {
     const editorArea = renderEditorArea(themeColors);
