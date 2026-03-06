@@ -87,7 +87,7 @@ export default {
   },
 
   dev: {
-    defaultTarget: 'macos',
+    defaultTarget: 'linux',
     hotReload: true,
   },
 };
