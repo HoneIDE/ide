@@ -100,7 +100,9 @@ function updateTabStyles(): void {
     if (i === activeHeaderTab) {
       setBtnFg(headerTabBtns[i], panelColors.editorForeground);
     } else {
-      setBtnFg(headerTabBtns[i], panelColors.sideBarForeground + '80');
+      let dimColor = panelColors.sideBarForeground;
+      dimColor += '80';
+      setBtnFg(headerTabBtns[i], dimColor);
     }
   }
 }
@@ -124,18 +126,19 @@ function refreshProblemsView(): void {
   const severities = getDiagSeverities();
 
   for (let i = 0; i < count; i++) {
+    if (i >= severities.length) break;
     const sev = severities[i];
     let severityColor = '#CCCCCC';
     let severityChar = '?';
-    if (sev.charCodeAt(0) === 101) { // 'e' for error
+    if (sev.length < 1) {
+      severityChar = '?';
+    } else if (sev.charCodeAt(0) === 101) { // 'e' for error
       severityColor = '#E57373';
       severityChar = 'E';
-    }
-    if (sev.charCodeAt(0) === 119) { // 'w' for warning
+    } else if (sev.charCodeAt(0) === 119) { // 'w' for warning
       severityColor = '#E2C08D';
       severityChar = 'W';
-    }
-    if (sev.charCodeAt(0) === 105) { // 'i' for info
+    } else if (sev.charCodeAt(0) === 105) { // 'i' for info
       severityColor = '#73C991';
       severityChar = 'I';
     }
@@ -229,7 +232,9 @@ function buildTerminalHeader(colors: any): unknown {
     if (i === activeHeaderTab) {
       setBtnFg(btn, colors.editorForeground);
     } else {
-      setBtnFg(btn, colors.sideBarForeground + '80');
+      let dimColor = colors.sideBarForeground;
+      dimColor += '80';
+      setBtnFg(btn, dimColor);
     }
     headerTabBtns[i] = btn;
     widgetAddChild(row, btn);
