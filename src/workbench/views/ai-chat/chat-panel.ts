@@ -65,8 +65,6 @@ let streamPollTimer: number = 0;
 let streamAccumulated = '';
 let streamingMsgBlock: unknown = null;
 
-// File-based stream accumulator (avoids Perry module-level string += corruption)
-let streamAccFile = '/tmp/hone-stream-acc.txt';
 
 // Thinking indicator
 let thinkingTimer: number = 0;
@@ -199,10 +197,8 @@ function buildRequestBody(fileContent: string, systemPrompt: string, includeStre
     body += ',"stream":true';
   }
 
-  // System prompt — assign jsonEscape result to local first (Perry += bug: Call results treated as numbers)
-  const escapedSystem: string = jsonEscape(systemPrompt);
   body += ',"system":"';
-  body += escapedSystem;
+  body += jsonEscape(systemPrompt);
   body += '"';
 
   // Tools
@@ -249,20 +245,17 @@ function buildRequestBody(fileContent: string, systemPrompt: string, includeStre
           if (pipePos1 > 0 && pipePos2 > 0) {
             const toolId = decoded.slice(0, pipePos1);
             const toolResult = decoded.slice(pipePos2 + 1);
-            const escapedToolId: string = jsonEscape(toolId);
-            const escapedToolResult: string = jsonEscape(toolResult);
             body += '{"role":"user","content":[{"type":"tool_result","tool_use_id":"';
-            body += escapedToolId;
+            body += jsonEscape(toolId);
             body += '","content":"';
-            body += escapedToolResult;
+            body += jsonEscape(toolResult);
             body += '"}]}';
           }
         } else {
-          const escapedContent: string = jsonEscape(decoded);
           body += '{"role":"';
           body += currentRole;
           body += '","content":"';
-          body += escapedContent;
+          body += jsonEscape(decoded);
           body += '"}';
         }
       }
@@ -291,7 +284,6 @@ function startStream(requestBody: string): void {
   headersJson += '","anthropic-version":"2023-06-01"}';
 
   streamAccumulated = '';
-  try { writeFileSync(streamAccFile, ''); } catch (e) {}
   streamActive = 1;
 
   streamHandle = streamStart(
@@ -417,12 +409,7 @@ function processCurrentLine(): void {
   if (inlineCheckDone() > 0) return;
   inlineExtractText();
   if (sseExtractedText.length > 0) {
-    // Avoid module-level string += (Perry codegen corruption).
-    // Append to temp file instead.
-    let prev = '';
-    try { prev = readFileSync(streamAccFile); } catch (e) {}
-    const combined = prev + sseExtractedText;
-    try { writeFileSync(streamAccFile, combined); } catch (e) {}
+    streamAccumulated += sseExtractedText;
   }
 }
 
@@ -450,14 +437,10 @@ function finishStream(): void {
   streamHandle = 0;
   stopThinking();
 
-  // Read accumulated text from file (avoids module-level string += corruption)
-  let finalText = '';
-  try { finalText = readFileSync(streamAccFile); } catch (e) {}
-  if (finalText.length > 0) {
-    appendMessage(0, finalText);
+  if (streamAccumulated.length > 0) {
+    appendMessage(0, streamAccumulated);
   }
   streamAccumulated = '';
-  try { writeFileSync(streamAccFile, ''); } catch (e) {}
   streamingMsgBlock = null;
   streamDisplayLabel = null;
 
@@ -506,12 +489,7 @@ function stopThinking(): void {
 // ---------------------------------------------------------------------------
 
 function onAgentTextDelta(text: string): void {
-  // Append via file to avoid module-level string += corruption
-  let prev = '';
-  try { prev = readFileSync(streamAccFile); } catch (e) {}
-  const combined = prev + text;
-  try { writeFileSync(streamAccFile, combined); } catch (e) {}
-  streamAccumulated = combined;
+  streamAccumulated += text;
   updateStreamingDisplay();
 }
 
@@ -650,11 +628,8 @@ function continueAgentLoop(): void {
   const iterCount = getAgentIterationCount();
 
   // Append assistant message (with tool use) and tool result to conversation
-  // Read accumulated text from file
-  let accText = '';
-  try { accText = readFileSync(streamAccFile); } catch (e) {}
-  if (accText.length > 0) {
-    appendMessage(0, accText);
+  if (streamAccumulated.length > 0) {
+    appendMessage(0, streamAccumulated);
   }
 
   // Append tool result as special 'T' message type
@@ -667,7 +642,6 @@ function continueAgentLoop(): void {
 
   // Clear streaming state
   streamAccumulated = '';
-  try { writeFileSync(streamAccFile, ''); } catch (e) {}
   streamingMsgBlock = null;
 
   // Close old stream
