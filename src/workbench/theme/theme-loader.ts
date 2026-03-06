@@ -62,6 +62,8 @@ export interface ResolvedUIColors {
   // Sidebar
   sideBarBackground: string;
   sideBarForeground: string;
+  sideBarSectionHeaderBackground: string;
+  sideBarTitleForeground: string;
 
   // Title bar
   titleBarBackground: string;
@@ -114,7 +116,7 @@ export interface ResolvedUIColors {
 // Default colors per theme type
 // ---------------------------------------------------------------------------
 
-const DARK_DEFAULTS: ResolvedUIColors = {
+export const DARK_DEFAULTS: ResolvedUIColors = {
   editorBackground: '#1e1e1e',
   editorForeground: '#d4d4d4',
   editorSelectionBackground: '#264f78',
@@ -127,6 +129,8 @@ const DARK_DEFAULTS: ResolvedUIColors = {
   activityBarInactiveForeground: '#888888',
   sideBarBackground: '#252526',
   sideBarForeground: '#cccccc',
+  sideBarSectionHeaderBackground: '#80808033',
+  sideBarTitleForeground: '#bbbbbb',
   titleBarBackground: '#3c3c3c',
   titleBarForeground: '#cccccc',
   tabActiveBackground: '#1e1e1e',
@@ -168,6 +172,8 @@ const LIGHT_DEFAULTS: ResolvedUIColors = {
   activityBarInactiveForeground: '#888888',
   sideBarBackground: '#f3f3f3',
   sideBarForeground: '#616161',
+  sideBarSectionHeaderBackground: '#80808033',
+  sideBarTitleForeground: '#616161',
   titleBarBackground: '#dddddd',
   titleBarForeground: '#333333',
   tabActiveBackground: '#ffffff',
@@ -215,7 +221,7 @@ export function loadTheme(data: ThemeData): LoadedTheme {
     : DARK_DEFAULTS;
 
   const uiColors = resolveUIColors(data.colors, defaults);
-  const loaded: LoadedTheme = { data, uiColors };
+  const loaded: LoadedTheme = { data: data, uiColors: uiColors };
 
   _loadedThemes.set(data.name, loaded);
   return loaded;
@@ -224,13 +230,15 @@ export function loadTheme(data: ThemeData): LoadedTheme {
 /**
  * Set the active theme by name. The theme must have been loaded first.
  */
-export function setActiveTheme(name: string): LoadedTheme | null {
+export function setActiveTheme(name: string): boolean {
   const theme = _loadedThemes.get(name);
-  if (!theme) return null;
+  if (!theme) return false;
 
   _activeTheme = theme;
-  for (const fn of _listeners) fn(theme);
-  return theme;
+  // Perry: for...of on Set doesn't work, convert to array first
+  const fns = Array.from(_listeners);
+  for (let i = 0; i < fns.length; i++) { fns[i](theme); }
+  return true;
 }
 
 export function getActiveTheme(): LoadedTheme | null {
@@ -281,6 +289,8 @@ function resolveUIColors(
     activityBarInactiveForeground: colors['activityBar.inactiveForeground'] ?? defaults.activityBarInactiveForeground,
     sideBarBackground: colors['sideBar.background'] ?? defaults.sideBarBackground,
     sideBarForeground: colors['sideBar.foreground'] ?? defaults.sideBarForeground,
+    sideBarSectionHeaderBackground: colors['sideBarSectionHeader.background'] ?? defaults.sideBarSectionHeaderBackground,
+    sideBarTitleForeground: colors['sideBarTitle.foreground'] ?? defaults.sideBarTitleForeground,
     titleBarBackground: colors['titleBar.activeBackground'] ?? defaults.titleBarBackground,
     titleBarForeground: colors['titleBar.activeForeground'] ?? defaults.titleBarForeground,
     tabActiveBackground: colors['tab.activeBackground'] ?? defaults.tabActiveBackground,
@@ -315,7 +325,8 @@ function resolveUIColors(
  * Returns undefined if the key is not set.
  */
 export function getThemeColor(key: string): string | undefined {
-  return _activeTheme?.data.colors[key];
+  if (!_activeTheme) return undefined;
+  return _activeTheme.data.colors[key];
 }
 
 /**

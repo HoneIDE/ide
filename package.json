@@ -12,11 +12,8 @@
   "keywords": ["ide", "editor", "ai", "perry", "native", "cross-platform"],
   "license": "MIT",
   "dependencies": {
-    "@honeide/api": "file:../hone-api",
-    "@honeide/core": "file:../hone-core",
-    "@honeide/editor": "file:../hone-editor",
-    "@honeide/terminal": "file:../hone-terminal",
-    "@honeide/themes": "file:../hone-themes"
+    "@honeide/core": "file:../core",
+    "@honeide/terminal": "file:../terminal"
   },
   "devDependencies": {
     "@types/bun": "latest",
