@@ -277,35 +277,35 @@ function refreshSidebar(): void {
   // --- 4. File tree ---
   renderTreeLevel(sidebarWorkspaceRoot, 0);
 
-  // --- 5. OUTLINE collapsed section ---
-  const outlineChevron = Text('\u25B7');
-  textSetFontSize(outlineChevron, 9);
-  if (panelColors) setFg(outlineChevron, panelColors.sideBarForeground);
-  const outlineLabel = Text('OUTLINE');
-  textSetFontSize(outlineLabel, 11);
-  textSetFontWeight(outlineLabel, 11, 0.7);
-  if (panelColors) setFg(outlineLabel, panelColors.sideBarForeground);
-  const outlineRow = HStackWithInsets(4, 0, 4, 0, 4);
-  widgetSetHeight(outlineRow, 22);
-  if (panelColors) setBg(outlineRow, panelColors.sideBarSectionHeaderBackground);
-  widgetAddChild(outlineRow, outlineChevron);
-  widgetAddChild(outlineRow, outlineLabel);
-  widgetAddChild(sidebarContainer, outlineRow);
+  // // --- 5. OUTLINE collapsed section ---
+  // const outlineChevron = Text('\u25B7');
+  // textSetFontSize(outlineChevron, 9);
+  // if (panelColors) setFg(outlineChevron, panelColors.sideBarForeground);
+  // const outlineLabel = Text('OUTLINE');
+  // textSetFontSize(outlineLabel, 11);
+  // textSetFontWeight(outlineLabel, 11, 0.7);
+  // if (panelColors) setFg(outlineLabel, panelColors.sideBarForeground);
+  // const outlineRow = HStackWithInsets(4, 0, 4, 0, 4);
+  // widgetSetHeight(outlineRow, 22);
+  // if (panelColors) setBg(outlineRow, panelColors.sideBarSectionHeaderBackground);
+  // widgetAddChild(outlineRow, outlineChevron);
+  // widgetAddChild(outlineRow, outlineLabel);
+  // widgetAddChild(sidebarContainer, outlineRow);
 
-  // --- 6. TIMELINE collapsed section ---
-  const timelineChevron = Text('\u25B7');
-  textSetFontSize(timelineChevron, 9);
-  if (panelColors) setFg(timelineChevron, panelColors.sideBarForeground);
-  const timelineLabel = Text('TIMELINE');
-  textSetFontSize(timelineLabel, 11);
-  textSetFontWeight(timelineLabel, 11, 0.7);
-  if (panelColors) setFg(timelineLabel, panelColors.sideBarForeground);
-  const timelineRow = HStackWithInsets(4, 0, 4, 0, 4);
-  widgetSetHeight(timelineRow, 22);
-  if (panelColors) setBg(timelineRow, panelColors.sideBarSectionHeaderBackground);
-  widgetAddChild(timelineRow, timelineChevron);
-  widgetAddChild(timelineRow, timelineLabel);
-  widgetAddChild(sidebarContainer, timelineRow);
+  // // --- 6. TIMELINE collapsed section ---
+  // const timelineChevron = Text('\u25B7');
+  // textSetFontSize(timelineChevron, 9);
+  // if (panelColors) setFg(timelineChevron, panelColors.sideBarForeground);
+  // const timelineLabel = Text('TIMELINE');
+  // textSetFontSize(timelineLabel, 11);
+  // textSetFontWeight(timelineLabel, 11, 0.7);
+  // if (panelColors) setFg(timelineLabel, panelColors.sideBarForeground);
+  // const timelineRow = HStackWithInsets(4, 0, 4, 0, 4);
+  // widgetSetHeight(timelineRow, 22);
+  // if (panelColors) setBg(timelineRow, panelColors.sideBarSectionHeaderBackground);
+  // widgetAddChild(timelineRow, timelineChevron);
+  // widgetAddChild(timelineRow, timelineLabel);
+  // widgetAddChild(sidebarContainer, timelineRow);
 
   widgetAddChild(sidebarContainer, Spacer());
 }
