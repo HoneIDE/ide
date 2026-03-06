@@ -75,19 +75,46 @@ export function getTabCount(): number {
   return openTabCount;
 }
 
+export function getOpenTabCount(): number {
+  return openTabCount;
+}
+
+export function getOpenTabPath(idx: number): string {
+  if (idx >= 0 && idx < openTabCount) {
+    return openTabs[idx];
+  }
+  return '';
+}
+
+export function setActiveTabByIndex(idx: number): void {
+  if (idx >= 0 && idx < openTabCount) {
+    activeTabIdx = idx;
+    if (tabBarReady > 0) {
+      applyTabColors(openTabCount);
+    }
+  }
+}
+
 /**
  * Open a tab for the given file. If already open, switch to it.
  * Returns 1 if the tab was already open, 0 if newly added.
  */
 export function openTab(filePath: string, fileName: string): number {
-  // Check if already open
+  // Check if already open (use length + charCodeAt — Perry === can fail for array strings)
   for (let i = 0; i < openTabCount; i++) {
-    if (openTabs[i] === filePath) {
-      activeTabIdx = i;
-      if (tabBarReady > 0) {
-        applyTabColors(openTabCount);
+    const stored = openTabs[i];
+    if (stored.length === filePath.length && stored.length > 0) {
+      let match = 1;
+      for (let j = 0; j < stored.length; j++) {
+        if (stored.charCodeAt(j) !== filePath.charCodeAt(j)) { match = 0; break; }
       }
-      return 1;
+      if (match > 0) {
+        activeTabIdx = i;
+        if (tabBarReady > 0) {
+          applyTabColors(openTabCount);
+        }
+        return 1;
+      }
     }
   }
 
@@ -99,6 +126,8 @@ export function openTab(filePath: string, fileName: string): number {
   let displayName = filePath;
   if (lastSlash >= 0) {
     displayName = filePath.slice(lastSlash + 1);
+  } else if (fileName.length > 0) {
+    displayName = fileName;
   }
 
   // Add to tracking arrays

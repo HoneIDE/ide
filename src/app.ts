@@ -18,9 +18,12 @@ import type { PlatformContext } from './platform';
 import { loadBuiltinThemes } from './workbench/theme/load-builtin-themes';
 import { setupNativeMenuBar } from './workbench/native-menu';
 import { renderWorkbench } from './workbench/render';
+import { initSettings, getWorkbenchSettings } from './workbench/settings';
 
-// 1. Load built-in themes (Hone Dark as default)
-loadBuiltinThemes('Hone Dark');
+// 1. Load persisted settings, then built-in themes
+initSettings();
+const _initialTheme = getWorkbenchSettings().colorTheme;
+loadBuiltinThemes(_initialTheme.length > 0 ? _initialTheme : 'Hone Dark');
 
 // 2. Detect platform
 const ctx: PlatformContext = getPlatformContext();

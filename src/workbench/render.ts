@@ -56,6 +56,7 @@ import {
 import {
   initTabBar, setTabDisplayCallback, setTabThemeColors,
   openTab, getActiveTabPath, getActiveTabIdx, getTabCount,
+  getOpenTabCount, getOpenTabPath, setActiveTabByIndex,
   markTabSaved, updateTabDirtyIcon, applyAllTabColors, closeActiveTab,
 } from './views/tabs/tab-bar';
 import {
@@ -69,7 +70,7 @@ import {
 // Extensions panel hidden for now — no runtime extension system yet
 import { renderChatPanel, setChatWorkspaceRoot, setChatFilePathGetter, setChatFileContentGetter } from './views/ai-chat/chat-panel';
 import { renderTerminalPanel, setTerminalCwd, destroyTerminalPanel, setTerminalCloseCallback, setTerminalProblemsFileOpener } from './views/terminal/terminal-panel';
-import { renderSettingsPanel } from './views/settings-ui/settings-panel';
+import { renderSettingsTab } from './views/settings-ui/settings-panel';
 import { setWelcomeActions, createWelcomeContent } from './views/welcome/welcome-tab';
 import { initNotifications, showNotification } from './views/notifications/notifications';
 import { setLspWorkspaceRoot, initLspBridge, triggerDiagnostics, getCompletions, setDiagnosticsStatusUpdater } from './views/lsp/lsp-bridge';
@@ -674,6 +675,10 @@ function safeReadFile(filePath: string): string {
 let activeDiffHeader: unknown = null;
 let activeDiffEditors: unknown = null;
 
+// Module-level ref for settings tab widget in editorPane
+let activeSettingsWidget: unknown = null;
+let settingsTabCreated: number = 0;
+
 /** Show the diff view for a file. Adds diff widgets alongside editor. */
 function showDiffForFile(filePath: string, relPath: string): void {
   if (!editorPaneWidget) return;
@@ -713,7 +718,40 @@ function hideDiffView(): void {
 }
 
 
+/** Show the settings tab in the editor pane. */
+function showSettingsInEditorPane(): void {
+  if (!editorPaneWidget || !themeColors) return;
+  if (activeDiffEditors) hideDiffView();
+  if (editorWidget) widgetSetHidden(editorWidget, 1);
+  if (activeSettingsWidget) {
+    widgetSetHidden(activeSettingsWidget, 0);
+    return;
+  }
+  const settingsCtr = VStack(0, []);
+  widgetSetHugging(settingsCtr, 1);
+  renderSettingsTab(settingsCtr, themeColors);
+  widgetAddChild(editorPaneWidget, settingsCtr);
+  activeSettingsWidget = settingsCtr;
+}
+
+/** Hide the settings tab from the editor pane. */
+function hideSettingsInEditorPane(): void {
+  if (!activeSettingsWidget) return;
+  widgetSetHidden(activeSettingsWidget, 1);
+  if (editorWidget) widgetSetHidden(editorWidget, 0);
+}
+
 function displayFileContent(filePath: string): void {
+  // Virtual paths (__settings__, __welcome__) — don't read file
+  if (filePath.length > 2 && filePath.charCodeAt(0) === 95 && filePath.charCodeAt(1) === 95) {
+    // __settings__ (length 12)
+    if (filePath.length === 12 && filePath.charCodeAt(2) === 115) {
+      showSettingsInEditorPane();
+    }
+    return;
+  }
+  // Switching away from settings — hide it
+  if (activeSettingsWidget) hideSettingsInEditorPane();
   currentEditorFilePath = filePath;
   setSidebarCurrentEditorPath(filePath);
   updateBreadcrumb();
@@ -870,11 +908,6 @@ function switchSidebarPanel(idx: number): void {
   }
 
   // idx===3 (AI Chat) handled by toggleRightPanel, not here
-
-  if (idx === 6) {
-    renderSettingsPanel(sidebarContainer, themeColors as ResolvedUIColors);
-    return;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -920,8 +953,8 @@ function renderActivityBarDesktop(colors: ResolvedUIColors): unknown {
   }
   widgetAddChild(bar, Spacer());
 
-  // Settings gear icon → Settings panel (idx 6)
-  const settingsBtn = Button('', () => { onActivityClick(6); });
+  // Settings gear icon → opens Settings tab in editor pane
+  const settingsBtn = Button('', () => { openSettingsAction(); });
   buttonSetBordered(settingsBtn, 0);
   buttonSetImage(settingsBtn, 'gearshape');
   buttonSetImagePosition(settingsBtn, 1);
@@ -1137,17 +1170,33 @@ function recolorUI(): void {
   switchSidebarPanel(activeActivityIdx);
 }
 
-/** Open the Settings panel in the sidebar. */
+/** Open the Settings tab in the editor pane. */
 export function openSettingsAction(): void {
-  // Show sidebar if hidden
-  if (sidebarToggleReady > 0 && sidebarVisible < 1) {
-    sidebarVisible = 1;
-    if (sidebarWidget) widgetSetHidden(sidebarWidget, 0);
-    if (sidebarBorderWidget) widgetSetHidden(sidebarBorderWidget, 0);
-    updateSettings({ sidebarVisible: true });
+  setTimeout(() => { openSettingsDeferred(); }, 0);
+}
+
+function openSettingsDeferred(): void {
+  if (settingsTabCreated < 1) {
+    openTab('__settings__', 'Settings');
+    settingsTabCreated = 1;
+  } else {
+    // Tab exists — just activate it via tab click simulation
+    activateSettingsTab();
   }
-  // Switch to settings (idx 6)
-  onActivityClick(6);
+  showSettingsInEditorPane();
+}
+
+function activateSettingsTab(): void {
+  // Find the __settings__ tab by scanning openTabs via the tab bar's exported helper
+  // Since we can't reliably compare strings in arrays, just set the active tab index
+  // by scanning for a path of length 12 starting with '_'
+  for (let i = 0; i < getOpenTabCount(); i++) {
+    const p = getOpenTabPath(i);
+    if (p.length === 12 && p.charCodeAt(0) === 95 && p.charCodeAt(1) === 95) {
+      setActiveTabByIndex(i);
+      return;
+    }
+  }
 }
 
 // Listen for settings changes — detect theme toggle and apply live

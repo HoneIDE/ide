@@ -42,6 +42,32 @@ export interface WorkbenchSettings {
   aiModel: string;
   /** AI inline completion enabled */
   aiInlineCompletionEnabled: boolean;
+  /** Editor: insert spaces instead of tabs */
+  editorInsertSpaces: boolean;
+  /** Editor: word wrap mode */
+  editorWordWrap: string;
+  /** Editor: minimap enabled */
+  editorMinimapEnabled: boolean;
+  /** Editor: format on save */
+  editorFormatOnSave: boolean;
+  /** Editor: cursor style */
+  editorCursorStyle: string;
+  /** Files: auto save mode */
+  filesAutoSave: string;
+  /** Files: auto save delay in ms */
+  filesAutoSaveDelay: number;
+  /** Files: trim trailing whitespace on save */
+  filesTrimTrailingWhitespace: boolean;
+  /** Terminal: font size */
+  terminalFontSize: number;
+  /** Terminal: cursor style */
+  terminalCursorStyle: string;
+  /** AI: inline completion delay in ms */
+  aiInlineCompletionDelay: number;
+  /** Search: use ignore files (.gitignore) */
+  searchUseIgnoreFiles: boolean;
+  /** Search: follow symlinks */
+  searchFollowSymlinks: boolean;
   /** Last opened folder path */
   lastOpenFolder: string;
 }
@@ -110,6 +136,19 @@ let _settings_editorLineNumbers: string = 'on';
 let _settings_aiProvider: string = 'anthropic';
 let _settings_aiModel: string = 'claude-sonnet-4-6';
 let _settings_aiInlineCompletionEnabled: number = 1;
+let _settings_editorInsertSpaces: number = 1;
+let _settings_editorWordWrap: string = 'off';
+let _settings_editorMinimapEnabled: number = 1;
+let _settings_editorFormatOnSave: number = 0;
+let _settings_editorCursorStyle: string = 'line';
+let _settings_filesAutoSave: string = 'off';
+let _settings_filesAutoSaveDelay: number = 1000;
+let _settings_filesTrimTrailingWhitespace: number = 0;
+let _settings_terminalFontSize: number = 13;
+let _settings_terminalCursorStyle: string = 'block';
+let _settings_aiInlineCompletionDelay: number = 300;
+let _settings_searchUseIgnoreFiles: number = 1;
+let _settings_searchFollowSymlinks: number = 1;
 let _settings_lastOpenFolder: string = '';
 let _settingsLoaded: number = 0;
 
@@ -159,6 +198,19 @@ export function initSettings(): void {
     if (key === 'aiProvider') _settings_aiProvider = val;
     if (key === 'aiModel') _settings_aiModel = val;
     if (key === 'aiInlineCompletionEnabled') _settings_aiInlineCompletionEnabled = val === '1' ? 1 : 0;
+    if (key === 'editorInsertSpaces') _settings_editorInsertSpaces = val === '1' ? 1 : 0;
+    if (key === 'editorWordWrap') _settings_editorWordWrap = val;
+    if (key === 'editorMinimapEnabled') _settings_editorMinimapEnabled = val === '1' ? 1 : 0;
+    if (key === 'editorFormatOnSave') _settings_editorFormatOnSave = val === '1' ? 1 : 0;
+    if (key === 'editorCursorStyle') _settings_editorCursorStyle = val;
+    if (key === 'filesAutoSave') _settings_filesAutoSave = val;
+    if (key === 'filesAutoSaveDelay') { const n = parseInt(val); if (n >= 0) _settings_filesAutoSaveDelay = n; }
+    if (key === 'filesTrimTrailingWhitespace') _settings_filesTrimTrailingWhitespace = val === '1' ? 1 : 0;
+    if (key === 'terminalFontSize') { const n = parseInt(val); if (n > 0) _settings_terminalFontSize = n; }
+    if (key === 'terminalCursorStyle') _settings_terminalCursorStyle = val;
+    if (key === 'aiInlineCompletionDelay') { const n = parseInt(val); if (n >= 0) _settings_aiInlineCompletionDelay = n; }
+    if (key === 'searchUseIgnoreFiles') _settings_searchUseIgnoreFiles = val === '1' ? 1 : 0;
+    if (key === 'searchFollowSymlinks') _settings_searchFollowSymlinks = val === '1' ? 1 : 0;
     if (key === 'lastOpenFolder') _settings_lastOpenFolder = val;
   }
 }
@@ -180,6 +232,19 @@ function buildSnapshot(): WorkbenchSettings {
     aiProvider: _settings_aiProvider,
     aiModel: _settings_aiModel,
     aiInlineCompletionEnabled: _settings_aiInlineCompletionEnabled > 0,
+    editorInsertSpaces: _settings_editorInsertSpaces > 0,
+    editorWordWrap: _settings_editorWordWrap,
+    editorMinimapEnabled: _settings_editorMinimapEnabled > 0,
+    editorFormatOnSave: _settings_editorFormatOnSave > 0,
+    editorCursorStyle: _settings_editorCursorStyle,
+    filesAutoSave: _settings_filesAutoSave,
+    filesAutoSaveDelay: _settings_filesAutoSaveDelay,
+    filesTrimTrailingWhitespace: _settings_filesTrimTrailingWhitespace > 0,
+    terminalFontSize: _settings_terminalFontSize,
+    terminalCursorStyle: _settings_terminalCursorStyle,
+    aiInlineCompletionDelay: _settings_aiInlineCompletionDelay,
+    searchUseIgnoreFiles: _settings_searchUseIgnoreFiles > 0,
+    searchFollowSymlinks: _settings_searchFollowSymlinks > 0,
     lastOpenFolder: _settings_lastOpenFolder,
   };
 }
@@ -257,6 +322,45 @@ function serializeFromVars(): string {
   out += 'aiInlineCompletionEnabled=';
   out += _settings_aiInlineCompletionEnabled > 0 ? '1' : '0';
   out += '\n';
+  out += 'editorInsertSpaces=';
+  out += _settings_editorInsertSpaces > 0 ? '1' : '0';
+  out += '\n';
+  out += 'editorWordWrap=';
+  out += _settings_editorWordWrap;
+  out += '\n';
+  out += 'editorMinimapEnabled=';
+  out += _settings_editorMinimapEnabled > 0 ? '1' : '0';
+  out += '\n';
+  out += 'editorFormatOnSave=';
+  out += _settings_editorFormatOnSave > 0 ? '1' : '0';
+  out += '\n';
+  out += 'editorCursorStyle=';
+  out += _settings_editorCursorStyle;
+  out += '\n';
+  out += 'filesAutoSave=';
+  out += _settings_filesAutoSave;
+  out += '\n';
+  out += 'filesAutoSaveDelay=';
+  out += intToStr(_settings_filesAutoSaveDelay);
+  out += '\n';
+  out += 'filesTrimTrailingWhitespace=';
+  out += _settings_filesTrimTrailingWhitespace > 0 ? '1' : '0';
+  out += '\n';
+  out += 'terminalFontSize=';
+  out += intToStr(_settings_terminalFontSize);
+  out += '\n';
+  out += 'terminalCursorStyle=';
+  out += _settings_terminalCursorStyle;
+  out += '\n';
+  out += 'aiInlineCompletionDelay=';
+  out += intToStr(_settings_aiInlineCompletionDelay);
+  out += '\n';
+  out += 'searchUseIgnoreFiles=';
+  out += _settings_searchUseIgnoreFiles > 0 ? '1' : '0';
+  out += '\n';
+  out += 'searchFollowSymlinks=';
+  out += _settings_searchFollowSymlinks > 0 ? '1' : '0';
+  out += '\n';
   out += 'lastOpenFolder=';
   out += _settings_lastOpenFolder;
   out += '\n';
@@ -279,6 +383,10 @@ export function setStringSetting(key: string, value: string): void {
   if (key === 'editorLineNumbers') _settings_editorLineNumbers = value;
   if (key === 'aiProvider') _settings_aiProvider = value;
   if (key === 'aiModel') _settings_aiModel = value;
+  if (key === 'editorWordWrap') _settings_editorWordWrap = value;
+  if (key === 'editorCursorStyle') _settings_editorCursorStyle = value;
+  if (key === 'filesAutoSave') _settings_filesAutoSave = value;
+  if (key === 'terminalCursorStyle') _settings_terminalCursorStyle = value;
   if (key === 'lastOpenFolder') _settings_lastOpenFolder = value;
   persistToDisk();
   notifyListeners();
@@ -289,6 +397,9 @@ export function setNumberSetting(key: string, value: number): void {
   if (key === 'activePanelIndex') _settings_activePanelIndex = value;
   if (key === 'editorFontSize') _settings_editorFontSize = value;
   if (key === 'editorTabSize') _settings_editorTabSize = value;
+  if (key === 'filesAutoSaveDelay') _settings_filesAutoSaveDelay = value;
+  if (key === 'terminalFontSize') _settings_terminalFontSize = value;
+  if (key === 'aiInlineCompletionDelay') _settings_aiInlineCompletionDelay = value;
   persistToDisk();
   notifyListeners();
 }
@@ -299,6 +410,12 @@ export function setBoolSetting(key: string, value: number): void {
   if (key === 'sidebarVisible') _settings_sidebarVisible = value;
   if (key === 'terminalVisible') _settings_terminalVisible = value;
   if (key === 'aiInlineCompletionEnabled') _settings_aiInlineCompletionEnabled = value;
+  if (key === 'editorInsertSpaces') _settings_editorInsertSpaces = value;
+  if (key === 'editorMinimapEnabled') _settings_editorMinimapEnabled = value;
+  if (key === 'editorFormatOnSave') _settings_editorFormatOnSave = value;
+  if (key === 'filesTrimTrailingWhitespace') _settings_filesTrimTrailingWhitespace = value;
+  if (key === 'searchUseIgnoreFiles') _settings_searchUseIgnoreFiles = value;
+  if (key === 'searchFollowSymlinks') _settings_searchFollowSymlinks = value;
   persistToDisk();
   notifyListeners();
 }
@@ -324,6 +441,19 @@ export function updateSettings(patch: Partial<WorkbenchSettings>): void {
     if (k === 'aiProvider') _settings_aiProvider = (patch as any).aiProvider;
     if (k === 'aiModel') _settings_aiModel = (patch as any).aiModel;
     if (k === 'aiInlineCompletionEnabled') _settings_aiInlineCompletionEnabled = (patch as any).aiInlineCompletionEnabled ? 1 : 0;
+    if (k === 'editorInsertSpaces') _settings_editorInsertSpaces = (patch as any).editorInsertSpaces ? 1 : 0;
+    if (k === 'editorWordWrap') _settings_editorWordWrap = (patch as any).editorWordWrap;
+    if (k === 'editorMinimapEnabled') _settings_editorMinimapEnabled = (patch as any).editorMinimapEnabled ? 1 : 0;
+    if (k === 'editorFormatOnSave') _settings_editorFormatOnSave = (patch as any).editorFormatOnSave ? 1 : 0;
+    if (k === 'editorCursorStyle') _settings_editorCursorStyle = (patch as any).editorCursorStyle;
+    if (k === 'filesAutoSave') _settings_filesAutoSave = (patch as any).filesAutoSave;
+    if (k === 'filesAutoSaveDelay') _settings_filesAutoSaveDelay = (patch as any).filesAutoSaveDelay;
+    if (k === 'filesTrimTrailingWhitespace') _settings_filesTrimTrailingWhitespace = (patch as any).filesTrimTrailingWhitespace ? 1 : 0;
+    if (k === 'terminalFontSize') _settings_terminalFontSize = (patch as any).terminalFontSize;
+    if (k === 'terminalCursorStyle') _settings_terminalCursorStyle = (patch as any).terminalCursorStyle;
+    if (k === 'aiInlineCompletionDelay') _settings_aiInlineCompletionDelay = (patch as any).aiInlineCompletionDelay;
+    if (k === 'searchUseIgnoreFiles') _settings_searchUseIgnoreFiles = (patch as any).searchUseIgnoreFiles ? 1 : 0;
+    if (k === 'searchFollowSymlinks') _settings_searchFollowSymlinks = (patch as any).searchFollowSymlinks ? 1 : 0;
     if (k === 'lastOpenFolder') _settings_lastOpenFolder = (patch as any).lastOpenFolder;
   }
   persistToDisk();
