@@ -68,16 +68,27 @@ export function updateStatusBarLanguage(filePath: string): void {
   if (!statusBarLangLabel) return;
   const lang = detectLanguage(filePath);
   let display = lang;
+  // Perry: use length + charCodeAt matching (no === on dynamic strings in Perry AOT)
   if (lang.length === 10 && lang.charCodeAt(0) === 116) display = 'TypeScript';
   else if (lang.length === 10 && lang.charCodeAt(0) === 106) display = 'JavaScript';
   else if (lang.length === 6 && lang.charCodeAt(0) === 112) display = 'Python';
-  else if (lang.length === 4 && lang.charCodeAt(0) === 114) display = 'Rust';
+  else if (lang.length === 4 && lang.charCodeAt(0) === 114 && lang.charCodeAt(2) === 115) display = 'Rust';
   else if (lang.length === 4 && lang.charCodeAt(0) === 104) display = 'HTML';
   else if (lang.length === 3 && lang.charCodeAt(0) === 99 && lang.charCodeAt(1) === 115) display = 'CSS';
-  else if (lang.length === 4 && lang.charCodeAt(0) === 106) display = 'JSON';
+  else if (lang.length === 4 && lang.charCodeAt(0) === 106 && lang.charCodeAt(1) === 115) display = 'JSON';
   else if (lang.length === 8 && lang.charCodeAt(0) === 109) display = 'Markdown';
   else if (lang.length === 1 && lang.charCodeAt(0) === 99) display = 'C';
-  else if (lang.length === 3 && lang.charCodeAt(0) === 99) display = 'C++';
+  else if (lang.length === 3 && lang.charCodeAt(0) === 99 && lang.charCodeAt(1) === 112) display = 'C++';
+  else if (lang.length === 2 && lang.charCodeAt(0) === 103) display = 'Go';
+  else if (lang.length === 4 && lang.charCodeAt(0) === 106 && lang.charCodeAt(1) === 97) display = 'Java';
+  else if (lang.length === 5 && lang.charCodeAt(0) === 115 && lang.charCodeAt(1) === 119) display = 'Swift';
+  else if (lang.length === 5 && lang.charCodeAt(0) === 115 && lang.charCodeAt(1) === 104) display = 'Shell';
+  else if (lang.length === 4 && lang.charCodeAt(0) === 114 && lang.charCodeAt(2) === 98) display = 'Ruby';
+  else if (lang.length === 3 && lang.charCodeAt(0) === 112) display = 'PHP';
+  else if (lang.length === 4 && lang.charCodeAt(0) === 121) display = 'YAML';
+  else if (lang.length === 4 && lang.charCodeAt(0) === 116 && lang.charCodeAt(1) === 111) display = 'TOML';
+  else if (lang.length === 3 && lang.charCodeAt(0) === 115 && lang.charCodeAt(1) === 113) display = 'SQL';
+  else if (lang.length === 3 && lang.charCodeAt(0) === 120) display = 'XML';
   else display = 'Plain Text';
   textSetString(statusBarLangLabel, display + ' ');
 }

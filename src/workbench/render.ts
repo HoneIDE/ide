@@ -27,10 +27,9 @@ import { Editor } from '@honeide/editor/perry';
 import { getActiveTheme, setActiveTheme, type ResolvedUIColors } from './theme/theme-loader';
 import type { LayoutMode } from '../platform';
 import { getWorkbenchSettings, updateSettings, onSettingsChange } from './settings';
-import { readFileSync, writeFileSync, readdirSync, isDirectory } from 'fs';
+import { readFileSync, writeFileSync, readdirSync, isDirectory, existsSync } from 'fs';
 import { join } from 'path';
-import { execSync } from 'child_process';
-import { getTempDir } from './paths';
+import { getTempDir, getCwd, getHomeDir } from './paths';
 import { getPlatformContext } from '../platform';
 
 // Extracted modules
@@ -332,7 +331,8 @@ export function newFileAction(): void {
 }
 
 function newFileDeferred(): void {
-  const path = getTempDir() + '/hone-untitled';
+  let path = getTempDir();
+  path += '/Untitled';
   const name = 'Untitled';
   try {
     writeFileSync(path, '\n');
@@ -759,6 +759,8 @@ function displayFileContent(filePath: string): void {
   updateBreadcrumb();
   updateStatusBarLanguageImpl(filePath);
   if (editorReady < 1) return;
+  const lang = detectLanguage(filePath);
+  editorInstance.setLanguage(lang);
   const content = safeReadFile(filePath);
   editorInstance.setContent(content);
   editorInstance.render();
@@ -1253,23 +1255,55 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
 
   themeColors = theme.uiColors;
 
-  // Restore last opened folder, or fall back to cwd
+  // Determine workspace root: prefer cwd (launch directory) over persisted setting,
+  // unless cwd is the home directory (generic launch — user double-clicked the app
+  // or launched from ~, so fall back to last opened folder).
   const _initSettings = getWorkbenchSettings();
-  if (_initSettings.lastOpenFolder.length > 0) {
-    workspaceRoot = _initSettings.lastOpenFolder;
-  }
-  if (workspaceRoot.length < 1) {
-    try {
-      const cwd = execSync('pwd');
-      // Trim trailing newline
-      if (cwd.length > 0 && cwd.charCodeAt(cwd.length - 1) === 10) {
-        workspaceRoot = cwd.slice(0, cwd.length - 1);
-      } else {
-        workspaceRoot = cwd;
+  const _launchCwd = getCwd();
+  const _homeDir = getHomeDir();
+
+  // Check if cwd is a meaningful project directory (not home dir, not empty, not root)
+  let _cwdIsProject = 0;
+  if (_launchCwd.length > 1) {
+    // Compare cwd against home dir using charCodeAt (Perry string === unreliable)
+    let _cwdMatchesHome = 0;
+    if (_launchCwd.length === _homeDir.length) {
+      _cwdMatchesHome = 1;
+      for (let _ci = 0; _ci < _launchCwd.length; _ci++) {
+        if (_launchCwd.charCodeAt(_ci) !== _homeDir.charCodeAt(_ci)) {
+          _cwdMatchesHome = 0;
+          break;
+        }
       }
-    } catch (e: any) {
-      workspaceRoot = '';
     }
+    if (_cwdMatchesHome < 1) {
+      _cwdIsProject = 1;
+    }
+  }
+
+  if (_cwdIsProject > 0) {
+    // User launched from a specific directory — use it as workspace root
+    workspaceRoot = _launchCwd;
+  } else if (_initSettings.lastOpenFolder.length > 0) {
+    // Generic launch location — try to restore last opened folder if it still exists
+    let _lastFolderValid = 0;
+    try {
+      if (existsSync(_initSettings.lastOpenFolder)) {
+        if (isDirectory(_initSettings.lastOpenFolder)) {
+          _lastFolderValid = 1;
+        }
+      }
+    } catch (e: any) {}
+    if (_lastFolderValid > 0) {
+      workspaceRoot = _initSettings.lastOpenFolder;
+    } else {
+      // Persisted folder no longer exists — clear it
+      workspaceRoot = _launchCwd;
+      updateSettings({ lastOpenFolder: '' });
+    }
+  } else {
+    // No persisted folder and generic cwd — use cwd anyway
+    workspaceRoot = _launchCwd;
   }
 
   // Wire up extracted panel callbacks
