@@ -60,8 +60,7 @@ export function pathId(path: string): number {
   return hash;
 }
 
-/** Extract filename from a full path. Uses charCodeAt for comparison
- *  since Perry's string === is broken (always returns true). */
+/** Extract filename from a full path. */
 export function getFileName(filePath: string): string {
   let lastSlash = -1;
   for (let i = 0; i < filePath.length; i++) {
@@ -72,15 +71,6 @@ export function getFileName(filePath: string): string {
     return filePath.slice(lastSlash + 1);
   }
   return filePath;
-}
-
-/** Char-by-char string comparison (Perry === on strings is unreliable). */
-export function strEq(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a.charCodeAt(i) !== b.charCodeAt(i)) return false;
-  }
-  return true;
 }
 
 /** ASCII uppercase→lowercase. */
