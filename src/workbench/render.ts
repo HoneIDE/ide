@@ -16,7 +16,7 @@ import {
   ScrollView, scrollViewSetChild,
   textSetFontSize, textSetFontWeight,
   buttonSetBordered, buttonSetImage, buttonSetImagePosition,
-  widgetAddChild, widgetClearChildren,
+  widgetAddChild, widgetClearChildren, widgetRemoveChild,
   widgetSetWidth, widgetSetHeight, widgetSetHugging, widgetSetHidden,
   stackSetDetachesHidden, widgetMatchParentHeight,
   embedNSView,
@@ -38,10 +38,14 @@ import {
 } from './views/search/search-panel';
 import {
   renderGitPanel as renderGitPanelImpl,
-  setGitWorkspaceRoot, setGitFileOpener, setGitStatusBarUpdater,
+  setGitWorkspaceRoot, setGitFileOpener, setGitStatusBarUpdater, setGitDiffOpener,
   resetGitPanelReady, refreshGitState, updateStatusBarBranch,
   getGitFileStatus, getGitDirStatus,
 } from './views/git/git-panel';
+import {
+  renderDiffView, openDiffForFile, closeDiffView, isDiffActive, setDiffThemeColors,
+  getDiffHeaderWidget, getDiffEditorsWidget,
+} from './views/diff/diff-view';
 import {
   renderExplorerPanel, refreshSidebarContent, updateSidebarSelection,
   setSidebarWorkspaceRoot, setSidebarFileClickCallback, setSidebarOpenFolderCallback,
@@ -119,6 +123,11 @@ let compactShowingExplorer: number = 0;
 // Breadcrumb bar
 let breadcrumbContainer: unknown = null;
 let breadcrumbReady: number = 0;
+
+// Diff view
+let diffViewContainer: unknown = null;
+let normalEditorContainer: unknown = null;
+let tabBarContainer: unknown = null;
 
 // Right panel (AI Chat — Cursor-style)
 let rightPanelWidget: unknown = null;
@@ -379,6 +388,49 @@ function safeReadFile(filePath: string): string {
   return content;
 }
 
+// Module-level refs for diff widgets currently in editorPane
+let activeDiffHeader: unknown = null;
+let activeDiffEditors: unknown = null;
+
+/** Show the diff view for a file. Adds diff widgets alongside editor. */
+function showDiffForFile(filePath: string, relPath: string): void {
+  if (!editorPaneWidget) return;
+  // Create the diff editors
+  openDiffForFile(filePath, relPath, workspaceRoot, 0);
+  // Hide the editor while diff is active
+  if (editorWidget) widgetSetHidden(editorWidget, 1);
+  const hdr = getDiffHeaderWidget();
+  if (hdr) {
+    widgetAddChild(editorPaneWidget, hdr);
+    activeDiffHeader = hdr;
+  }
+  const edr = getDiffEditorsWidget();
+  if (edr) {
+    widgetAddChild(editorPaneWidget, edr);
+    widgetSetHugging(edr, 1);
+    activeDiffEditors = edr;
+  }
+}
+
+/** Close the diff view and restore the normal editor. */
+function hideDiffView(): void {
+  if (!editorPaneWidget) return;
+  // Remove diff widgets from the editor pane
+  if (activeDiffEditors) {
+    widgetRemoveChild(editorPaneWidget, activeDiffEditors);
+    activeDiffEditors = null;
+  }
+  if (activeDiffHeader) {
+    widgetRemoveChild(editorPaneWidget, activeDiffHeader);
+    activeDiffHeader = null;
+  }
+  // Dispose diff editors (clears children first, then destroys native views)
+  closeDiffView();
+  // Restore the main editor
+  if (editorWidget) widgetSetHidden(editorWidget, 0);
+}
+
+
 function displayFileContent(filePath: string): void {
   currentEditorFilePath = filePath;
   setSidebarCurrentEditorPath(filePath);
@@ -391,6 +443,11 @@ function displayFileContent(filePath: string): void {
 }
 
 function openFileInEditor(filePath: string, fileName: string): void {
+  // Close diff view BEFORE modifying the tab bar — the tab rebuild triggers
+  // a layout pass that crashes if diff editor NSViews are still in the hierarchy.
+  if (isDiffActive() > 0) {
+    hideDiffView();
+  }
   openTab(filePath, fileName);
   displayFileContent(filePath);
 }
@@ -425,9 +482,6 @@ function onSidebarFileClick(path: string, name: string): void {
   openFileInEditor(path, name);
   setSidebarCurrentEditorPath(currentEditorFilePath);
   updateSidebarSelection();
-  if (compactShowingExplorer > 0) {
-    hideExplorer();
-  }
 }
 
 /** Called by search panel when a file is opened from results. */
@@ -452,9 +506,29 @@ function getCurrentEditorPathForChat(): string {
   return currentEditorFilePath;
 }
 
-/** Called by git panel when a file is clicked. */
+/** Called by git panel when a file is clicked (untracked files). */
 function openFileFromGitPanel(path: string, name: string): void {
   openFileInEditor(path, name);
+}
+
+// Deferred diff opener (Perry button callbacks can't do structural UI mutations)
+let pendingDiffFilePath = '';
+let pendingDiffRelPath = '';
+
+/** Called by git panel when a modified/staged file is clicked — opens diff view. */
+function onGitDiffOpen(filePath: string, relPath: string): void {
+  pendingDiffFilePath = filePath;
+  pendingDiffRelPath = relPath;
+  setTimeout(() => { onGitDiffOpenDeferred(); }, 0);
+}
+
+function onGitDiffOpenDeferred(): void {
+  if (pendingDiffFilePath.length < 1) return;
+  const fp = pendingDiffFilePath;
+  const rp = pendingDiffRelPath;
+  pendingDiffFilePath = '';
+  pendingDiffRelPath = '';
+  showDiffForFile(fp, rp);
 }
 
 /** Called by autocomplete popup when a completion is accepted. */
@@ -654,7 +728,16 @@ function renderEditorArea(colors: ResolvedUIColors): unknown {
   updateBreadcrumb();
 
   widgetSetHugging(editorWidget, 1); // editor stretches to fill available space
+  tabBarContainer = tbc;
 
+  // Diff view container (initially unused; swapped into editorPane when diff is active)
+  const diffCtr = VStack(0, []);
+  widgetSetHugging(diffCtr, 1);
+  diffViewContainer = diffCtr;
+  renderDiffView(diffCtr, colors);
+
+  // editorPane: tabs + breadcrumb + editor. When diff is active, the editor
+  // is replaced with diffCtr via widgetClearChildren/widgetAddChild.
   const editorPane = VStack(0, [tbc, breadcrumbContainer, editorWidget]);
   setBg(editorPane, colors.editorBackground);
   widgetSetHugging(editorPane, 1); // editor pane stretches in mainRow
@@ -770,6 +853,9 @@ function recolorUI(): void {
   setTabThemeColors(c);
   applyAllTabColors();
 
+  // Diff view
+  setDiffThemeColors(c);
+
   // Re-render active sidebar panel with new colors
   switchSidebarPanel(activeActivityIdx);
 }
@@ -855,6 +941,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   setSearchCurrentEditorPath(getCurrentEditorPath);
   setGitWorkspaceRoot(workspaceRoot);
   setGitFileOpener(openFileFromGitPanel);
+  setGitDiffOpener(onGitDiffOpen);
   setGitStatusBarUpdater(updateStatusBarBranchLabelImpl);
   setTerminalCwd(workspaceRoot);
   setChatWorkspaceRoot(workspaceRoot);

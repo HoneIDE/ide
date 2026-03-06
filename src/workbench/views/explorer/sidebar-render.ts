@@ -121,6 +121,10 @@ function deferredRefreshSidebar(): void {
 // ---------------------------------------------------------------------------
 
 function onFileClick(idx: number): void {
+  if (idx < 0) return;
+  if (idx >= fileEntryCount) return;
+  // Defer to next tick — synchronous widget mutations inside a button callback
+  // cause RefCell reentrancy panics (or crashes) in Perry's Rust widget system.
   pendingFileClickIdx = idx;
   setTimeout(() => { onFileClickDeferred(); }, 0);
 }
@@ -141,15 +145,18 @@ function onFileClickDeferred(): void {
 export function updateSidebarSelection(): void {
   if (!panelColors) return;
   // Clear old selection
-  if (selectedFileIdx >= 0 && selectedFileIdx < fileRowWidgets.length && fileRowWidgets[selectedFileIdx]) {
-    setBg(fileRowWidgets[selectedFileIdx], panelColors.sideBarBackground);
+  if (selectedFileIdx >= 0) {
+    if (selectedFileIdx < fileRowWidgets.length) {
+      setBg(fileRowWidgets[selectedFileIdx], panelColors.sideBarBackground);
+    }
   }
   // Find new selection
   selectedFileIdx = -1;
   for (let i = 0; i < fileEntryCount; i++) {
-    if (fileEntries[i].path === sidebarCurrentEditorPath) {
+    const epath = fileEntries[i].path;
+    if (epath.length === sidebarCurrentEditorPath.length && epath === sidebarCurrentEditorPath) {
       selectedFileIdx = i;
-      if (i < fileRowWidgets.length && fileRowWidgets[i]) {
+      if (i < fileRowWidgets.length) {
         setBg(fileRowWidgets[i], panelColors.listActiveSelectionBackground);
       }
       return;

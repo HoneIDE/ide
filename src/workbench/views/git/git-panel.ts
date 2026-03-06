@@ -47,9 +47,11 @@ let panelColors: ResolvedUIColors = null as any;
 // External callbacks
 let _fileOpener: (path: string, name: string) => void = _noopOpener;
 let _statusBarUpdater: (branch: string) => void = _noopStatusBar;
+let _diffOpener: (filePath: string, relPath: string) => void = _noopDiffOpener;
 
 function _noopOpener(p: string, n: string): void {}
 function _noopStatusBar(b: string): void {}
+function _noopDiffOpener(fp: string, rp: string): void {}
 
 // ---------------------------------------------------------------------------
 // Public API — setters
@@ -65,6 +67,10 @@ export function setGitFileOpener(fn: (path: string, name: string) => void): void
 
 export function setGitStatusBarUpdater(fn: (branch: string) => void): void {
   _statusBarUpdater = fn;
+}
+
+export function setGitDiffOpener(fn: (filePath: string, relPath: string) => void): void {
+  _diffOpener = fn;
 }
 
 export function getGitBranch(): string {
@@ -439,7 +445,28 @@ function updateGitResultsUI(): void {
 function onGitFileClick(filePath: string): void {
   const fullPath = join(gitWorkspaceRoot, filePath);
   const name = getFileName(filePath);
-  _fileOpener(fullPath, name);
+  // Modified/staged files open in diff view; untracked files open normally.
+  // Check if the file is modified or staged (has a HEAD version to diff against).
+  let isDiffable = 0;
+  for (let i = 0; i < gitStagedCount; i++) {
+    if (gitStagedPaths[i].length === filePath.length && gitStagedPaths[i] === filePath) {
+      isDiffable = 1;
+      break;
+    }
+  }
+  if (isDiffable < 1) {
+    for (let i = 0; i < gitModifiedCount; i++) {
+      if (gitModifiedPaths[i].length === filePath.length && gitModifiedPaths[i] === filePath) {
+        isDiffable = 1;
+        break;
+      }
+    }
+  }
+  if (isDiffable > 0) {
+    _diffOpener(fullPath, filePath);
+  } else {
+    _fileOpener(fullPath, name);
+  }
 }
 
 function onCommitMessageInput(text: string): void {
