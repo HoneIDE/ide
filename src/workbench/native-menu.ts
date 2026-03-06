@@ -9,7 +9,14 @@ import {
   menuCreate, menuAddItem, menuAddSeparator,
   menuBarCreate, menuBarAddMenu, menuBarAttach,
 } from 'perry/ui';
-import { openFolderAction, openFileAction, toggleSidebarAction, closeEditorAction, saveFileAction, toggleTerminalAction, newFileAction, findAction, openSettingsAction } from './render';
+import {
+  openFolderAction, openFileAction, toggleSidebarAction, closeEditorAction,
+  saveFileAction, saveFileAsAction, toggleTerminalAction, newFileAction, findAction,
+  openSettingsAction, zoomInAction, zoomOutAction, zoomResetAction,
+  showWelcomeAction, goToLineAction, goToFileAction,
+} from './render';
+import { execSync } from 'child_process';
+import { showNotification } from './views/notifications/notifications';
 
 // Module-level function refs for callbacks (Perry closures can't call methods
 // on captured variables — must use module-level functions)
@@ -31,7 +38,7 @@ function onSave(): void {
 }
 
 function onSaveAs(): void {
-  // Placeholder — future: save as dialog
+  saveFileAsAction();
 }
 
 function onCloseEditor(): void {
@@ -67,7 +74,7 @@ function onFind(): void {
 }
 
 function onReplace(): void {
-  // Placeholder — future: replace panel
+  findAction();
 }
 
 function onSelectAll(): void {
@@ -87,23 +94,23 @@ function onToggleTerminal(): void {
 }
 
 function onZoomIn(): void {
-  // Placeholder
+  zoomInAction();
 }
 
 function onZoomOut(): void {
-  // Placeholder
+  zoomOutAction();
 }
 
 function onResetZoom(): void {
-  // Placeholder
+  zoomResetAction();
 }
 
 function onGoToFile(): void {
-  // Placeholder — future: quick open
+  goToFileAction();
 }
 
 function onGoToLine(): void {
-  // Placeholder — future: go to line
+  goToLineAction();
 }
 
 function onGoToSymbol(): void {
@@ -111,15 +118,15 @@ function onGoToSymbol(): void {
 }
 
 function onWelcome(): void {
-  // Placeholder
+  showWelcomeAction();
 }
 
 function onDocs(): void {
-  // Placeholder
+  try { execSync('open https://hone.dev/docs'); } catch (e) {}
 }
 
 function onAbout(): void {
-  // Placeholder
+  showNotification('Hone IDE v0.1.0', 'info');
 }
 
 /**

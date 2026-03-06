@@ -14,19 +14,21 @@ import {
   VStack, HStack, Text, Button, Spacer,
   VStackWithInsets, HStackWithInsets,
   ScrollView, scrollViewSetChild,
+  TextField,
   textSetFontSize, textSetFontWeight,
   buttonSetBordered, buttonSetImage, buttonSetImagePosition,
   widgetAddChild, widgetClearChildren, widgetRemoveChild,
   widgetSetWidth, widgetSetHeight, widgetSetHugging, widgetSetHidden,
   stackSetDetachesHidden, widgetMatchParentHeight,
   embedNSView,
-  openFolderDialog, openFileDialog,
+  openFolderDialog, openFileDialog, saveFileDialog,
 } from 'perry/ui';
 import { Editor } from '@honeide/editor/perry';
 import { getActiveTheme, setActiveTheme, type ResolvedUIColors } from './theme/theme-loader';
 import type { LayoutMode } from '../platform';
 import { getWorkbenchSettings, updateSettings, onSettingsChange } from './settings';
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync, readdirSync, isDirectory } from 'fs';
+import { join } from 'path';
 import { execSync } from 'child_process';
 
 // Extracted modules
@@ -64,14 +66,12 @@ import {
   pollCursorPosition as pollCursorPositionImpl,
   recolorStatusBar, getStatusBarWidget,
 } from './views/status-bar/status-bar';
-import { renderDebugPanel } from './views/debug/debug-panel';
 // Extensions panel hidden for now — no runtime extension system yet
 import { renderChatPanel, setChatWorkspaceRoot, setChatFilePathGetter, setChatFileContentGetter } from './views/ai-chat/chat-panel';
-import { renderTerminalPanel, setTerminalCwd, destroyTerminalPanel, setTerminalCloseCallback } from './views/terminal/terminal-panel';
+import { renderTerminalPanel, setTerminalCwd, destroyTerminalPanel, setTerminalCloseCallback, setTerminalProblemsFileOpener } from './views/terminal/terminal-panel';
 import { renderSettingsPanel } from './views/settings-ui/settings-panel';
 import { setWelcomeActions, createWelcomeContent } from './views/welcome/welcome-tab';
 import { initNotifications, showNotification } from './views/notifications/notifications';
-import { renderPRReviewPanel } from './views/pr-review/pr-review-panel';
 import { setLspWorkspaceRoot, initLspBridge, triggerDiagnostics, getCompletions, setDiagnosticsStatusUpdater } from './views/lsp/lsp-bridge';
 import { setDiagnosticsFileOpener } from './views/lsp/diagnostics-panel';
 import { createAutocompletePopup, setAutocompleteAcceptHandler } from './views/lsp/autocomplete-popup';
@@ -362,6 +362,288 @@ export function saveFileAction(): void {
   markTabSaved(content.length);
 }
 
+export function saveFileAsAction(): void {
+  setTimeout(() => { saveFileAsDeferred(); }, 0);
+}
+
+let pendingSaveAsPath = '';
+
+function saveFileAsDeferred(): void {
+  if (editorReady < 1) return;
+  const defaultName = currentEditorFilePath.length > 0 ? getFileName(currentEditorFilePath) : 'untitled.txt';
+  saveFileDialog((path: string) => { onSaveAsCb(path); }, defaultName, '');
+}
+
+function onSaveAsCb(path: string): void {
+  if (path.length < 1) return;
+  if (editorReady < 1) return;
+  const content = editorInstance.getContent();
+  writeFileSync(path, content);
+  currentEditorFilePath = path;
+  setSidebarCurrentEditorPath(path);
+  updateBreadcrumb();
+  updateStatusBarLanguageImpl(path);
+  let savedMsg = 'Saved to ';
+  savedMsg += getFileName(path);
+  showNotification(savedMsg, 'info');
+}
+
+export function zoomInAction(): void {
+  const s = getWorkbenchSettings();
+  updateSettings({ editorFontSize: s.editorFontSize + 1 });
+}
+
+export function zoomOutAction(): void {
+  const s = getWorkbenchSettings();
+  if (s.editorFontSize > 6) {
+    updateSettings({ editorFontSize: s.editorFontSize - 1 });
+  }
+}
+
+export function zoomResetAction(): void {
+  updateSettings({ editorFontSize: 13 });
+}
+
+export function showWelcomeAction(): void {
+  setTimeout(() => { showWelcomeDeferred(); }, 0);
+}
+
+function showWelcomeDeferred(): void {
+  if (!themeColors) return;
+  const welcomeContent = createWelcomeContent(themeColors);
+  const path = '__welcome__';
+  const name = 'Welcome';
+  openTab(path, name);
+  // Don't load file content for welcome tab
+}
+
+export function goToLineAction(): void {
+  setTimeout(() => { goToLineDeferred(); }, 0);
+}
+
+// Go to Line state
+let goToLineInput: unknown = null;
+let goToLineText = '';
+
+function goToLineDeferred(): void {
+  if (!sidebarContainer || !themeColors) return;
+  // Show sidebar if hidden
+  if (sidebarToggleReady > 0 && sidebarVisible < 1) {
+    sidebarVisible = 1;
+    widgetSetHidden(sidebarWidget, 0);
+    widgetSetHidden(sidebarBorderWidget, 0);
+  }
+  widgetClearChildren(sidebarContainer);
+  resetSearchPanelReady();
+
+  const title = Text('GO TO LINE');
+  textSetFontSize(title, 11);
+  textSetFontWeight(title, 11, 0.7);
+  setFg(title, themeColors.sideBarForeground);
+  widgetAddChild(sidebarContainer, title);
+
+  goToLineText = '';
+  goToLineInput = TextField('Line number...', (text: string) => { goToLineText = text; });
+  widgetAddChild(sidebarContainer, goToLineInput);
+
+  const goBtn = Button('Go', () => { onGoToLineConfirm(); });
+  buttonSetBordered(goBtn, 0);
+  textSetFontSize(goBtn, 12);
+  setBtnFg(goBtn, themeColors.sideBarForeground);
+  widgetAddChild(sidebarContainer, goBtn);
+  widgetAddChild(sidebarContainer, Spacer());
+}
+
+function onGoToLineConfirm(): void {
+  if (goToLineText.length < 1) return;
+  if (editorReady < 1) return;
+  let lineNum = 0;
+  for (let i = 0; i < goToLineText.length; i++) {
+    const ch = goToLineText.charCodeAt(i);
+    if (ch >= 48 && ch <= 57) {
+      lineNum = lineNum * 10 + (ch - 48);
+    }
+  }
+  if (lineNum < 1) return;
+  // Set cursor to the target line
+  const vm = editorInstance.viewModel;
+  const cursors = vm.cursors;
+  if (cursors.length > 0) {
+    cursors[0].line = lineNum - 1;
+    cursors[0].column = 0;
+  }
+  editorInstance.render();
+  // Switch back to file explorer
+  activeActivityIdx = 0;
+  updateActivityBar();
+  switchSidebarPanel(0);
+}
+
+export function goToFileAction(): void {
+  setTimeout(() => { goToFileDeferred(); }, 0);
+}
+
+// Go to File state
+let goToFileInput: unknown = null;
+let goToFileText = '';
+let goToFileResults: unknown = null;
+let goToFileFilePaths: string[] = [];
+let goToFileFileNames: string[] = [];
+let goToFileCount: number = 0;
+
+function collectFiles(dirPath: string, depth: number): void {
+  if (depth > 6) return;
+  if (goToFileCount >= 500) return;
+  let names: string[] = [];
+  try { names = readdirSync(dirPath); } catch (e) { return; }
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    if (name.charCodeAt(0) === 46) continue; // skip hidden
+    if (goToFileCount >= 500) return;
+    const fullPath = join(dirPath, name);
+    if (isDirectory(fullPath)) {
+      // Skip node_modules
+      if (name.length === 12 && name.charCodeAt(0) === 110) continue;
+      collectFiles(fullPath, depth + 1);
+    } else {
+      goToFileFilePaths[goToFileCount] = fullPath;
+      goToFileFileNames[goToFileCount] = name;
+      goToFileCount = goToFileCount + 1;
+    }
+  }
+}
+
+function goToFileDeferred(): void {
+  if (!sidebarContainer || !themeColors) return;
+  // Show sidebar if hidden
+  if (sidebarToggleReady > 0 && sidebarVisible < 1) {
+    sidebarVisible = 1;
+    widgetSetHidden(sidebarWidget, 0);
+    widgetSetHidden(sidebarBorderWidget, 0);
+  }
+  widgetClearChildren(sidebarContainer);
+  resetSearchPanelReady();
+
+  const title = Text('GO TO FILE');
+  textSetFontSize(title, 11);
+  textSetFontWeight(title, 11, 0.7);
+  setFg(title, themeColors.sideBarForeground);
+  widgetAddChild(sidebarContainer, title);
+
+  goToFileText = '';
+  goToFileInput = TextField('File name...', (text: string) => { onGoToFileInput(text); });
+  widgetAddChild(sidebarContainer, goToFileInput);
+
+  // Collect all files from workspace
+  goToFileFilePaths = [];
+  goToFileFileNames = [];
+  goToFileCount = 0;
+  if (workspaceRoot.length > 0) {
+    collectFiles(workspaceRoot, 0);
+  }
+
+  goToFileResults = VStack(2, []);
+  const scroll = ScrollView();
+  scrollViewSetChild(scroll, goToFileResults);
+  widgetAddChild(sidebarContainer, scroll);
+
+  // Show all files initially
+  renderGoToFileList('');
+}
+
+function onGoToFileInput(text: string): void {
+  goToFileText = text;
+  setTimeout(() => { renderGoToFileListDeferred(); }, 0);
+}
+
+function renderGoToFileListDeferred(): void {
+  renderGoToFileList(goToFileText);
+}
+
+function renderGoToFileList(query: string): void {
+  if (!goToFileResults || !themeColors) return;
+  widgetClearChildren(goToFileResults);
+
+  let shown = 0;
+  let lowerQuery = '';
+  for (let i = 0; i < query.length; i++) {
+    const ch = query.charCodeAt(i);
+    if (ch >= 65 && ch <= 90) {
+      lowerQuery += String.fromCharCode(ch + 32);
+    } else {
+      lowerQuery += query.slice(i, i + 1);
+    }
+  }
+
+  for (let i = 0; i < goToFileCount; i++) {
+    if (shown >= 50) break;
+    const name = goToFileFileNames[i];
+    // Filter by query
+    if (lowerQuery.length > 0) {
+      let lowerName = '';
+      for (let j = 0; j < name.length; j++) {
+        const ch = name.charCodeAt(j);
+        if (ch >= 65 && ch <= 90) {
+          lowerName += String.fromCharCode(ch + 32);
+        } else {
+          lowerName += name.slice(j, j + 1);
+        }
+      }
+      // Simple substring match
+      let found = 0;
+      for (let k = 0; k <= lowerName.length - lowerQuery.length; k++) {
+        let match = 1;
+        for (let m = 0; m < lowerQuery.length; m++) {
+          if (lowerName.charCodeAt(k + m) !== lowerQuery.charCodeAt(m)) {
+            match = 0;
+            break;
+          }
+        }
+        if (match > 0) { found = 1; break; }
+      }
+      if (found < 1) continue;
+    }
+
+    const filePath = goToFileFilePaths[i];
+    const fileName = name;
+    const btn = Button(name, () => { onGoToFileSelect(filePath, fileName); });
+    buttonSetBordered(btn, 0);
+    textSetFontSize(btn, 11);
+    setBtnFg(btn, themeColors.sideBarForeground);
+    widgetAddChild(goToFileResults, btn);
+    shown = shown + 1;
+  }
+
+  if (shown < 1) {
+    const noResults = Text('No matching files');
+    textSetFontSize(noResults, 11);
+    setFg(noResults, themeColors.sideBarForeground);
+    widgetAddChild(goToFileResults, noResults);
+  }
+}
+
+let pendingGoToFilePath = '';
+let pendingGoToFileName = '';
+
+function onGoToFileSelect(path: string, name: string): void {
+  pendingGoToFilePath = path;
+  pendingGoToFileName = name;
+  setTimeout(() => { onGoToFileSelectDeferred(); }, 0);
+}
+
+function onGoToFileSelectDeferred(): void {
+  if (pendingGoToFilePath.length < 1) return;
+  const fp = pendingGoToFilePath;
+  const fn = pendingGoToFileName;
+  pendingGoToFilePath = '';
+  pendingGoToFileName = '';
+  openFileInEditor(fp, fn);
+  // Switch back to file explorer
+  activeActivityIdx = 0;
+  updateActivityBar();
+  switchSidebarPanel(0);
+}
+
 function pollDirtyState(): void {
   if (editorReady < 1) return;
   const content = editorInstance.getContent();
@@ -551,8 +833,8 @@ function onActivityClickDeferred(): void {
   const idx = pendingActivityIdx;
   if (idx < 0) return;
   pendingActivityIdx = -1;
-  // AI Chat (idx=4) toggles the right panel instead of the sidebar
-  if (idx === 4) {
+  // AI Chat (idx=3) toggles the right panel instead of the sidebar
+  if (idx === 3) {
     toggleRightPanel();
     return;
   }
@@ -560,7 +842,7 @@ function onActivityClickDeferred(): void {
   updateActivityBar();
   switchSidebarPanel(idx);
   // Persist active panel (only for sidebar panels, not settings gear)
-  if (idx >= 0 && idx <= 3) {
+  if (idx >= 0 && idx <= 2) {
     updateSettings({ activePanelIndex: idx });
   }
 }
@@ -587,12 +869,7 @@ function switchSidebarPanel(idx: number): void {
     return;
   }
 
-  if (idx === 3) {
-    renderDebugPanel(sidebarContainer, themeColors as ResolvedUIColors);
-    return;
-  }
-
-  // idx===4 (AI Chat) handled by toggleRightPanel, not here
+  // idx===3 (AI Chat) handled by toggleRightPanel, not here
 
   if (idx === 6) {
     renderSettingsPanel(sidebarContainer, themeColors as ResolvedUIColors);
@@ -608,10 +885,10 @@ function renderActivityBarDesktop(colors: ResolvedUIColors): unknown {
   activityButtons = [];
   activityIndicators = [];
 
-  // Icons: 0=Files, 1=Search, 2=Git, 3=Debug, 4=AI Chat
-  const icons = ['doc.on.doc', 'magnifyingglass', 'arrow.triangle.branch', 'ladybug', 'sparkles'];
+  // Icons: 0=Files, 1=Search, 2=Git, 3=AI Chat
+  const icons = ['doc.on.doc', 'magnifyingglass', 'arrow.triangle.branch', 'sparkles'];
 
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 4; i++) {
     const idx = i;
     const btn = Button('', () => { onActivityClick(idx); });
     buttonSetBordered(btn, 0);
@@ -1039,7 +1316,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   }
 
   // Apply persisted active panel
-  if (settings.activePanelIndex > 0 && settings.activePanelIndex <= 3) {
+  if (settings.activePanelIndex > 0 && settings.activePanelIndex <= 2) {
     activeActivityIdx = settings.activePanelIndex;
     updateActivityBar();
     switchSidebarPanel(settings.activePanelIndex);
@@ -1062,6 +1339,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   widgetSetHeight(termPanel, 200);
   widgetSetHugging(termPanel, 750);
   setTerminalCloseCallback(toggleTerminalAction);
+  setTerminalProblemsFileOpener(openFileFromSearchPanel);
   renderTerminalPanel(termPanel, themeColors);
   if (!settings.terminalVisible) {
     widgetSetHidden(termPanel, 1);

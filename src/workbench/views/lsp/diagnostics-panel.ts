@@ -48,6 +48,19 @@ let _dMessages: string[] = [];
 let _dSeverities: string[] = [];
 let _dCount: number = 0;
 
+// Update callback registration
+let _onUpdateCallback: (() => void) | null = null;
+
+export function onDiagnosticsUpdate(fn: () => void): void {
+  _onUpdateCallback = fn;
+}
+
+export function getDiagFiles(): string[] { return _dFiles; }
+export function getDiagLines(): number[] { return _dLines; }
+export function getDiagMessages(): string[] { return _dMessages; }
+export function getDiagSeverities(): string[] { return _dSeverities; }
+export function getDiagCount(): number { return _dCount; }
+
 export function updateDiagnostics(
   files: string[],
   lines: number[],
@@ -61,6 +74,7 @@ export function updateDiagnostics(
   _dSeverities = severities;
   _dCount = count;
   refreshDiagnosticsUI();
+  if (_onUpdateCallback) _onUpdateCallback();
 }
 
 function refreshDiagnosticsUI(): void {

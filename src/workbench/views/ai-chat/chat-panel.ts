@@ -969,7 +969,32 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): v
   chatScrollView = scrollView;
 
   chatPanelReady = 1;
-  updateMessages();
+
+  // Show API key setup hint if no key configured
+  if (chatApiKey.length < 5) {
+    const hintBlock = VStackWithInsets(4, 8, 8, 8, 8);
+    widgetSetBackgroundColor(hintBlock, 0.15, 0.18, 0.25, 1.0);
+
+    const hintTitle = Text('API Key Required');
+    textSetFontSize(hintTitle, 12);
+    textSetFontWeight(hintTitle, 12, 0.7);
+    setFg(hintTitle, colors.sideBarForeground);
+    widgetAddChild(hintBlock, hintTitle);
+
+    const hint1 = Text('Set the ANTHROPIC_API_KEY environment variable,');
+    textSetFontSize(hint1, 11);
+    setFg(hint1, colors.sideBarForeground);
+    widgetAddChild(hintBlock, hint1);
+
+    const hint2 = Text('or add "anthropicApiKey" to ~/.hone/settings.json');
+    textSetFontSize(hint2, 11);
+    setFg(hint2, colors.sideBarForeground);
+    widgetAddChild(hintBlock, hint2);
+
+    widgetAddChild(chatMessagesContainer, hintBlock);
+  } else {
+    updateMessages();
+  }
 
   // --- Context chips ---
   chipsContainer = HStack(4, []);
