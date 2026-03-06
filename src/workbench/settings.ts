@@ -7,7 +7,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { execSync } from 'child_process';
+import { getHomeDir, getAppDataDir } from './paths';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -78,36 +78,14 @@ type SettingsChangeListener = (settings: WorkbenchSettings) => void;
 // Persistence helpers
 // ---------------------------------------------------------------------------
 
-let _homeDir: string = '';
-
-function getHomeDir(): string {
-  if (_homeDir.length > 0) return _homeDir;
-  try {
-    const result = execSync('/bin/echo $HOME');
-    // Trim trailing newline
-    let dir = result;
-    if (dir.length > 0 && dir.charCodeAt(dir.length - 1) === 10) {
-      dir = dir.slice(0, dir.length - 1);
-    }
-    _homeDir = dir;
-  } catch (e: any) {
-    _homeDir = '/tmp';
-  }
-  return _homeDir;
-}
-
 function getSettingsPath(): string {
-  let p = '';
-  p += getHomeDir();
-  p += '/.hone/settings.ini';
+  let p = getAppDataDir();
+  p += '/settings.ini';
   return p;
 }
 
 function getSettingsDir(): string {
-  let p = '';
-  p += getHomeDir();
-  p += '/.hone';
-  return p;
+  return getAppDataDir();
 }
 
 function ensureDir(dir: string): void {

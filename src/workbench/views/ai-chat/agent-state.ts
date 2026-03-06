@@ -12,6 +12,7 @@
  */
 import { extractJsonString, jsonEscape, getSSEData, parseSSEEventType, parseSSETextDelta, parseSSEToolUse, parseSSEToolId, parseSSEToolDelta, isSSEDone } from './sse-parser';
 import { executeTool, isDestructiveTool, buildToolDefinitionsJSON, buildReadOnlyToolsJSON, getToolWorkspaceRoot } from './agent-tools';
+import { getAppDataDir } from '../../paths';
 
 // --- Module-level state ---
 
@@ -26,7 +27,8 @@ let toolCallArgsAccumulator = '';
 let lastToolResult = '';
 
 // Conversation messages stored as file (same pattern as chat-panel)
-let agentMsgFilePath = '/tmp/hone-agent-msgs.txt';
+// Path set lazily via getAppDataDir() on first use
+let agentMsgFilePath = '';
 
 // Current stream accumulated text
 let agentStreamText = '';

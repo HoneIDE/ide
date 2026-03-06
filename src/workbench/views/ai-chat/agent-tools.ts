@@ -5,6 +5,7 @@
 import { readFileSync, writeFileSync, readdirSync, isDirectory } from 'fs';
 import { execSync } from 'child_process';
 import { jsonEscape } from './sse-parser';
+import { getTempDir, canRunShellCommands } from '../../paths';
 
 // Module-level state
 let toolWorkspaceRoot = '';
@@ -76,7 +77,7 @@ function executeToolFileCreate(filePath: string, content: string): string {
 function executeToolTerminalRun(command: string, cwd: string): string {
   let dir = cwd;
   if (dir.length < 1) dir = toolWorkspaceRoot;
-  if (dir.length < 1) dir = '/tmp';
+  if (dir.length < 1) dir = getTempDir();
   try {
     let cmd = 'cd "';
     cmd += dir;

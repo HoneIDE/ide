@@ -30,6 +30,8 @@ import { getWorkbenchSettings, updateSettings, onSettingsChange } from './settin
 import { readFileSync, writeFileSync, readdirSync, isDirectory } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
+import { getTempDir } from './paths';
+import { getPlatformContext } from '../platform';
 
 // Extracted modules
 import { setBg, setFg, setBtnFg, setBtnTint, getFileName, detectLanguage, getFileIcon, getFileIconColor } from './ui-helpers';
@@ -330,7 +332,7 @@ export function newFileAction(): void {
 }
 
 function newFileDeferred(): void {
-  const path = '/tmp/hone-untitled';
+  const path = getTempDir() + '/hone-untitled';
   const name = 'Untitled';
   try {
     writeFileSync(path, '\n');
@@ -1084,11 +1086,24 @@ function onBottomBarEditor(): void {
   hideExplorer();
 }
 
-function onBottomBarAI(): void {}
+function onBottomBarAI(): void {
+  // Toggle AI chat in compact mode — switch sidebar to chat panel
+  if (compactShowingExplorer > 0) {
+    hideExplorer();
+  }
+  // Signal to render AI chat overlay (handled by chat-panel)
+}
 
-function onBottomBarTerm(): void {}
+function onBottomBarTerm(): void {
+  // Toggle terminal in compact mode
+  toggleTerminalAction();
+}
 
-function onBottomBarSettings(): void {}
+function onBottomBarSettings(): void {
+  // Switch sidebar to settings panel, then show it
+  switchSidebarPanel(5); // 5 = settings
+  showExplorer();
+}
 
 function renderBottomToolbar(colors: ResolvedUIColors): unknown {
   const filesBtn = Button('', () => { onBottomBarFiles(); });
@@ -1112,10 +1127,14 @@ function renderBottomToolbar(colors: ResolvedUIColors): unknown {
   for (let i = 0; i < allBtns.length; i++) {
     buttonSetBordered(allBtns[i], 0);
     setBtnTint(allBtns[i], colors.activityBarForeground);
+    // Enforce minimum touch target (44pt Apple HIG)
+    widgetSetWidth(allBtns[i], 44);
+    widgetSetHeight(allBtns[i], 44);
   }
 
   const bar = HStack(0, [filesBtn, Spacer(), editorBtn, Spacer(), aiBtn, Spacer(), termBtn, Spacer(), settingsBtn]);
   setBg(bar, colors.activityBarBackground);
+  widgetSetHeight(bar, 49); // 44pt buttons + 5pt padding
   return bar;
 }
 
@@ -1309,10 +1328,14 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   }
 
   if (layoutMode === 'split') {
+    const activityBar = renderActivityBarDesktop(themeColors);
     const sidebar = renderSidebar(themeColors);
     const editorArea = renderEditorArea(themeColors);
     const statusBar = renderStatusBarImpl(themeColors);
 
+    // Narrower activity bar and sidebar for tablet
+    widgetSetWidth(activityBar, 44);
+    widgetSetHugging(activityBar, 750);
     widgetSetWidth(sidebar, 180);
     widgetSetHugging(sidebar, 750);
     widgetSetHugging(editorArea, 1);
@@ -1322,15 +1345,19 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
     widgetSetWidth(sidebarBorder, 1);
     widgetSetHugging(sidebarBorder, 1000);
 
+    activityBarWidget = activityBar;
     sidebarWidget = sidebar;
     sidebarBorderWidget = sidebarBorder;
     sidebarToggleReady = 1;
 
-    const mainRow = HStack(0, [sidebar, sidebarBorder, editorArea]);
+    const mainRow = HStack(0, [activityBar, sidebar, sidebarBorder, editorArea]);
     widgetSetHugging(mainRow, 1);
     widgetSetHugging(statusBar, 750);
     const shell = VStack(0, [mainRow, statusBar]);
     setBg(shell, themeColors.editorBackground);
+    widgetMatchParentHeight(activityBar);
+    widgetMatchParentHeight(sidebar);
+    widgetMatchParentHeight(editorArea);
     return shell;
   }
 
@@ -1382,10 +1409,17 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   widgetSetHugging(mainRow, 1);
   widgetSetHugging(statusBar, 750);
 
+  // Platform context for responsive sizing
+  const ctx = getPlatformContext();
+
   // Terminal bottom panel (hidden by default unless persisted, toggle via Cmd+J)
+  // Terminal height: 25% of screen height (capped 150-250px)
+  let termHeight = Math.floor(ctx.screen.height * 0.25);
+  if (termHeight < 150) termHeight = 150;
+  if (termHeight > 250) termHeight = 250;
   const termPanel = VStack(0, []);
   setBg(termPanel, themeColors.editorBackground);
-  widgetSetHeight(termPanel, 200);
+  widgetSetHeight(termPanel, termHeight);
   widgetSetHugging(termPanel, 750);
   setTerminalCloseCallback(toggleTerminalAction);
   setTerminalProblemsFileOpener(openFileFromSearchPanel);
@@ -1407,8 +1441,10 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   termBorderWidget = termBorder;
 
   // Notification overlay container (positioned at top-right)
+  // Width adapts to screen: max 300px, but capped to screen width - 40 on small screens
+  const notifWidth = ctx.screen.width < 400 ? ctx.screen.width - 40 : 300;
   notifOverlay = VStack(4, []);
-  widgetSetWidth(notifOverlay, 300);
+  widgetSetWidth(notifOverlay, notifWidth);
   widgetSetHugging(notifOverlay, 750);
   initNotifications(notifOverlay, themeColors);
 
@@ -1421,9 +1457,11 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
 
   // Right panel for AI Chat (Cursor-style) — outside mainRow to avoid
   // layout conflicts with the embedded editor NSView
+  // Right panel width: 360px on desktop, 300px on tablet portrait, hidden on phone
+  const rightPanelWidth = ctx.deviceClass === 'tablet' ? 300 : 360;
   const rightPanel = VStack(8, []);
   setBg(rightPanel, themeColors.sideBarBackground);
-  widgetSetWidth(rightPanel, 360);
+  widgetSetWidth(rightPanel, rightPanelWidth);
   widgetSetHugging(rightPanel, 750);
   rightPanelContainer = rightPanel;
   rightPanelWidget = rightPanel;

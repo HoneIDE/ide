@@ -9,7 +9,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { execSync } from 'child_process';
+import { getHomeDir, getAppDataDir } from './paths';
 
 // --- Module-level state ---
 
@@ -34,6 +34,9 @@ let offlinePayloads: string[] = [];
 let offlineCount: number = 0;
 const MAX_OFFLINE = 100;
 
+// Message ID counter for deduplication
+let msgIdCounter: number = 0;
+
 // Transport send function
 let _sendFn: (data: string) => void = _noopData;
 
@@ -42,45 +45,30 @@ let _onConnected: () => void = _noopVoid;
 let _onDisconnected: (reason: string) => void = _noopReason;
 let _onMessage: (data: string) => void = _noopData;
 let _onReconnecting: (attempt: number) => void = _noopAttempt;
+let _onQueueWarning: (count: number, max: number) => void = _noopAttempt2;
+let _onQueueFull: (count: number, max: number) => void = _noopAttempt2;
+
+// App lifecycle state (background/foreground)
+let appInBackground: number = 0;
+let foregroundReconnectPending: number = 0;
 
 function _noopVoid(): void {}
 function _noopReason(r: string): void {}
 function _noopData(d: string): void {}
 function _noopAttempt(n: number): void {}
+function _noopAttempt2(count: number, max: number): void {}
 
 // --- Persistence ---
 
-let _homeDir = '';
-
-function getHomeDir(): string {
-  if (_homeDir.length > 0) return _homeDir;
-  try {
-    const result = execSync('/bin/echo $HOME');
-    let dir = result;
-    if (dir.length > 0 && dir.charCodeAt(dir.length - 1) === 10) {
-      dir = dir.slice(0, dir.length - 1);
-    }
-    _homeDir = dir;
-  } catch (e: any) {
-    _homeDir = '/tmp';
-  }
-  return _homeDir;
-}
-
 function getSyncPath(): string {
-  let p = '';
-  p += getHomeDir();
-  p += '/.hone/sync-connection.ini';
+  let p = getAppDataDir();
+  p += '/sync-connection.ini';
   return p;
 }
 
 function ensureHoneDir(): void {
-  let dir = '';
-  dir += getHomeDir();
-  dir += '/.hone';
-  if (!existsSync(dir)) {
-    try { mkdirSync(dir); } catch (e: any) { /* ignore */ }
-  }
+  // getAppDataDir() already creates ~/.hone/ if needed
+  getAppDataDir();
 }
 
 function persistConnection(): void {
@@ -277,10 +265,19 @@ export function resetReconnectAttempts(): void {
 
 // --- Offline queue ---
 
+const QUEUE_WARNING_THRESHOLD = 90;
+
 export function enqueueOffline(payload: string): void {
-  if (offlineCount >= MAX_OFFLINE) return;
+  if (offlineCount >= MAX_OFFLINE) {
+    _onQueueFull(offlineCount, MAX_OFFLINE);
+    return;
+  }
   offlinePayloads.push(payload);
   offlineCount = offlineCount + 1;
+  // Warn when approaching capacity
+  if (offlineCount >= QUEUE_WARNING_THRESHOLD) {
+    _onQueueWarning(offlineCount, MAX_OFFLINE);
+  }
 }
 
 export function getOfflineCount(): number {
@@ -318,6 +315,17 @@ export function getGuestDeviceId(): string {
   return guestDeviceId;
 }
 
+/** Generate a unique message ID for deduplication (deviceId + counter). */
+export function generateMsgId(): string {
+  msgIdCounter = msgIdCounter + 1;
+  let id = guestDeviceId;
+  id += ':';
+  id += String(Date.now());
+  id += ':';
+  id += String(msgIdCounter);
+  return id;
+}
+
 // --- Event setters ---
 
 export function setOnConnected(fn: () => void): void {
@@ -338,4 +346,47 @@ export function setSendFn(fn: (data: string) => void): void {
 
 export function setOnReconnecting(fn: (attempt: number) => void): void {
   _onReconnecting = fn;
+}
+
+export function setOnQueueWarning(fn: (count: number, max: number) => void): void {
+  _onQueueWarning = fn;
+}
+
+export function setOnQueueFull(fn: (count: number, max: number) => void): void {
+  _onQueueFull = fn;
+}
+
+// --- App lifecycle (background/foreground) ---
+
+/** Call when app enters background (iOS/Android). Gracefully closes connection. */
+export function onAppBackground(): void {
+  appInBackground = 1;
+  if (guestConnected === 1) {
+    markDisconnected('app_background');
+  }
+}
+
+/** Call when app returns to foreground. Triggers immediate reconnect (no backoff). */
+export function onAppForeground(): void {
+  appInBackground = 0;
+  if (guestActive === 1 && guestConnected === 0 && guestRoomId.length > 0) {
+    // Reset backoff for immediate reconnect
+    reconnectAttempts = 0;
+    foregroundReconnectPending = 1;
+    _onReconnecting(0);
+  }
+}
+
+/** Check if a foreground reconnect is pending (caller should initiate connect). */
+export function consumeForegroundReconnect(): number {
+  if (foregroundReconnectPending > 0) {
+    foregroundReconnectPending = 0;
+    return 1;
+  }
+  return 0;
+}
+
+/** Whether the app is currently in background. */
+export function isAppInBackground(): number {
+  return appInBackground;
 }

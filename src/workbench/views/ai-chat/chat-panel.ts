@@ -17,7 +17,18 @@ import {
 import { execSync } from 'child_process';
 import { readFileSync, writeFileSync } from 'fs';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
+import { getAppDataDir, canRunShellCommands } from '../../paths';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
+
+// Session persistence
+import {
+  ensureChatsDir, getSessionFilePath, createNewSession,
+  loadSessionMessages, saveSessionMessages, updateSessionTitle,
+  updateSessionMode, deleteSession, getSessionList, getSessionAt,
+  generateTitle, getActiveSessionId, setActiveSessionId,
+  getActiveSessionMode, setActiveSessionMode, getMostRecentSessionId,
+  loadSessionMeta, getParsedId, getParsedMode, getParsedTitle,
+} from './session-store';
 
 // SSE streaming via Perry native fetch (from node-fetch module)
 import { streamStart, streamPoll, streamStatus, streamClose } from 'node-fetch';
@@ -48,7 +59,7 @@ let chatInputText = '';
 let panelColors: ResolvedUIColors = null as any;
 let chatPanelReady: number = 0;
 
-let msgFilePath = '/tmp/hone-chat-msgs.txt';
+let msgFilePath = '';
 let chatApiKey = '';
 let chatApiKeyLoaded: number = 0;
 
@@ -91,8 +102,20 @@ let wsRoot = '';
 // Message count for tracking
 let msgCount: number = 0;
 
+// Session list UI
+let sessionListContainer: unknown = null;
+let sessionListScrollView: unknown = null;
+let sessionListVisible: number = 0;
+let firstUserMsgSent: number = 0;
+
+// Session click slot IDs (cached from getSessionAt)
+let slotId0 = ''; let slotId1 = ''; let slotId2 = ''; let slotId3 = '';
+let slotId4 = ''; let slotId5 = ''; let slotId6 = ''; let slotId7 = '';
+let slotId8 = ''; let slotId9 = ''; let slotId10 = ''; let slotId11 = '';
+let slotId12 = ''; let slotId13 = ''; let slotId14 = ''; let slotId15 = '';
+
 // Agent continuation messages (tool results to feed back)
-let agentConversationFile = '/tmp/hone-agent-conv.txt';
+let agentConversationFile = '';
 
 // ---------------------------------------------------------------------------
 // Public setters (called from render.ts)
@@ -163,6 +186,14 @@ function appendMessage(isUser: number, content: string): void {
   existing += encodeContent(content);
   try { writeFileSync(msgFilePath, existing); } catch (e) {}
   msgCount += 1;
+
+  // Auto-title on first user message
+  if (isUser > 0 && firstUserMsgSent < 1) {
+    firstUserMsgSent = 1;
+    const title = generateTitle(content);
+    updateSessionTitle(getActiveSessionId(), title);
+    refreshSessionList();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -172,16 +203,18 @@ function appendMessage(isUser: number, content: string): void {
 function loadApiKey(): void {
   if (chatApiKeyLoaded > 0) return;
   chatApiKeyLoaded = 1;
+  // Try environment variable (macOS/Linux/Windows only — not available on iOS/Android)
+  if (canRunShellCommands()) {
+    try {
+      const envResult = execSync('echo $ANTHROPIC_API_KEY') as unknown as string;
+      const key = trimNewline(envResult);
+      if (key.length > 5) { chatApiKey = key; return; }
+    } catch (e) {}
+  }
+  // Try settings file (works on all platforms via centralized paths)
   try {
-    const envResult = execSync('echo $ANTHROPIC_API_KEY') as unknown as string;
-    const key = trimNewline(envResult);
-    if (key.length > 5) { chatApiKey = key; return; }
-  } catch (e) {}
-  try {
-    const homeResult = execSync('echo $HOME') as unknown as string;
-    const home = trimNewline(homeResult);
-    let settingsPath = home;
-    settingsPath += '/.hone/settings.json';
+    let settingsPath = getAppDataDir();
+    settingsPath += '/settings.json';
     const raw = readFileSync(settingsPath);
     chatApiKey = extractJsonString(raw, 'anthropicApiKey');
   } catch (e) {}
@@ -687,6 +720,277 @@ function appendToolResultMessage(content: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Session slot helpers
+// ---------------------------------------------------------------------------
+
+function setSlotId(idx: number, id: string): void {
+  if (idx === 0) slotId0 = id;
+  if (idx === 1) slotId1 = id;
+  if (idx === 2) slotId2 = id;
+  if (idx === 3) slotId3 = id;
+  if (idx === 4) slotId4 = id;
+  if (idx === 5) slotId5 = id;
+  if (idx === 6) slotId6 = id;
+  if (idx === 7) slotId7 = id;
+  if (idx === 8) slotId8 = id;
+  if (idx === 9) slotId9 = id;
+  if (idx === 10) slotId10 = id;
+  if (idx === 11) slotId11 = id;
+  if (idx === 12) slotId12 = id;
+  if (idx === 13) slotId13 = id;
+  if (idx === 14) slotId14 = id;
+  if (idx === 15) slotId15 = id;
+}
+
+function getSlotId(idx: number): string {
+  if (idx === 0) return slotId0;
+  if (idx === 1) return slotId1;
+  if (idx === 2) return slotId2;
+  if (idx === 3) return slotId3;
+  if (idx === 4) return slotId4;
+  if (idx === 5) return slotId5;
+  if (idx === 6) return slotId6;
+  if (idx === 7) return slotId7;
+  if (idx === 8) return slotId8;
+  if (idx === 9) return slotId9;
+  if (idx === 10) return slotId10;
+  if (idx === 11) return slotId11;
+  if (idx === 12) return slotId12;
+  if (idx === 13) return slotId13;
+  if (idx === 14) return slotId14;
+  if (idx === 15) return slotId15;
+  return '';
+}
+
+function switchToSession(id: string): void {
+  if (streamActive > 0) return;
+  if (id.length < 1) return;
+
+  setActiveSessionId(id);
+  loadSessionMeta(id);
+
+  panelMode = getActiveSessionMode();
+  msgFilePath = getSessionFilePath(id);
+  firstUserMsgSent = 0;
+
+  // Count messages in loaded file
+  msgCount = 0;
+  let fileContent = '';
+  try { fileContent = readFileSync(msgFilePath); } catch (e) {}
+  if (fileContent.length > 1) {
+    let lineStart = 0;
+    let lineIdx = 0;
+    for (let i = 0; i <= fileContent.length; i++) {
+      if (i === fileContent.length || fileContent.charCodeAt(i) === 10) {
+        lineIdx += 1;
+        lineStart = i + 1;
+      }
+    }
+    // Messages are pairs of lines (role + content), so count = lineIdx / 2
+    msgCount = Math.floor(lineIdx / 2);
+  }
+
+  // Check if first user message exists
+  if (fileContent.length > 0 && fileContent.charCodeAt(0) === 85) {
+    firstUserMsgSent = 1;
+  }
+
+  streamAccumulated = '';
+  streamingMsgBlock = null;
+  resetAgentState();
+  updateMessages();
+  updateModeTabStyles();
+  refreshSessionList();
+}
+
+// Fixed session click callbacks (Perry: closures capture by value)
+function onSessionClick0(): void { switchToSession(getSlotId(0)); }
+function onSessionClick1(): void { switchToSession(getSlotId(1)); }
+function onSessionClick2(): void { switchToSession(getSlotId(2)); }
+function onSessionClick3(): void { switchToSession(getSlotId(3)); }
+function onSessionClick4(): void { switchToSession(getSlotId(4)); }
+function onSessionClick5(): void { switchToSession(getSlotId(5)); }
+function onSessionClick6(): void { switchToSession(getSlotId(6)); }
+function onSessionClick7(): void { switchToSession(getSlotId(7)); }
+function onSessionClick8(): void { switchToSession(getSlotId(8)); }
+function onSessionClick9(): void { switchToSession(getSlotId(9)); }
+function onSessionClick10(): void { switchToSession(getSlotId(10)); }
+function onSessionClick11(): void { switchToSession(getSlotId(11)); }
+function onSessionClick12(): void { switchToSession(getSlotId(12)); }
+function onSessionClick13(): void { switchToSession(getSlotId(13)); }
+function onSessionClick14(): void { switchToSession(getSlotId(14)); }
+function onSessionClick15(): void { switchToSession(getSlotId(15)); }
+
+function getSessionClickFn(idx: number): () => void {
+  if (idx === 0) return onSessionClick0;
+  if (idx === 1) return onSessionClick1;
+  if (idx === 2) return onSessionClick2;
+  if (idx === 3) return onSessionClick3;
+  if (idx === 4) return onSessionClick4;
+  if (idx === 5) return onSessionClick5;
+  if (idx === 6) return onSessionClick6;
+  if (idx === 7) return onSessionClick7;
+  if (idx === 8) return onSessionClick8;
+  if (idx === 9) return onSessionClick9;
+  if (idx === 10) return onSessionClick10;
+  if (idx === 11) return onSessionClick11;
+  if (idx === 12) return onSessionClick12;
+  if (idx === 13) return onSessionClick13;
+  if (idx === 14) return onSessionClick14;
+  return onSessionClick15;
+}
+
+// Fixed session delete callbacks
+function deleteSlot(idx: number): void {
+  const id = getSlotId(idx);
+  if (id.length < 1) return;
+  // If deleting active session, switch to another
+  const activeId = getActiveSessionId();
+  let isActive: number = 0;
+  if (id.length === activeId.length) {
+    isActive = 1;
+    for (let i = 0; i < id.length; i++) {
+      if (id.charCodeAt(i) !== activeId.charCodeAt(i)) { isActive = 0; break; }
+    }
+  }
+  deleteSession(id);
+  if (isActive > 0) {
+    // Switch to most recent remaining, or create new
+    const recentId = getMostRecentSessionId();
+    if (recentId.length > 0) {
+      switchToSession(recentId);
+    } else {
+      onNewChat();
+    }
+  } else {
+    refreshSessionList();
+  }
+}
+
+function onDelSession0(): void { deleteSlot(0); }
+function onDelSession1(): void { deleteSlot(1); }
+function onDelSession2(): void { deleteSlot(2); }
+function onDelSession3(): void { deleteSlot(3); }
+function onDelSession4(): void { deleteSlot(4); }
+function onDelSession5(): void { deleteSlot(5); }
+function onDelSession6(): void { deleteSlot(6); }
+function onDelSession7(): void { deleteSlot(7); }
+function onDelSession8(): void { deleteSlot(8); }
+function onDelSession9(): void { deleteSlot(9); }
+function onDelSession10(): void { deleteSlot(10); }
+function onDelSession11(): void { deleteSlot(11); }
+function onDelSession12(): void { deleteSlot(12); }
+function onDelSession13(): void { deleteSlot(13); }
+function onDelSession14(): void { deleteSlot(14); }
+function onDelSession15(): void { deleteSlot(15); }
+
+function getDelSessionFn(idx: number): () => void {
+  if (idx === 0) return onDelSession0;
+  if (idx === 1) return onDelSession1;
+  if (idx === 2) return onDelSession2;
+  if (idx === 3) return onDelSession3;
+  if (idx === 4) return onDelSession4;
+  if (idx === 5) return onDelSession5;
+  if (idx === 6) return onDelSession6;
+  if (idx === 7) return onDelSession7;
+  if (idx === 8) return onDelSession8;
+  if (idx === 9) return onDelSession9;
+  if (idx === 10) return onDelSession10;
+  if (idx === 11) return onDelSession11;
+  if (idx === 12) return onDelSession12;
+  if (idx === 13) return onDelSession13;
+  if (idx === 14) return onDelSession14;
+  return onDelSession15;
+}
+
+// ---------------------------------------------------------------------------
+// Session list rendering
+// ---------------------------------------------------------------------------
+
+function refreshSessionList(): void {
+  if (!sessionListContainer) return;
+  widgetClearChildren(sessionListContainer);
+
+  const total = getSessionList();
+  if (total < 1) return;
+
+  const activeId = getActiveSessionId();
+
+  // Show most recent first — iterate from end, max 16
+  let displayed = 0;
+  for (let revIdx = total - 1; revIdx >= 0; revIdx--) {
+    if (displayed >= 16) break;
+    getSessionAt(revIdx);
+    const sid = getParsedId();
+    const smode = getParsedMode();
+    const stitle = getParsedTitle();
+
+    if (sid.length < 1) continue;
+
+    setSlotId(displayed, sid);
+
+    // Mode badge
+    let badge = 'C';
+    if (smode === 1) badge = 'A';
+    if (smode === 2) badge = 'P';
+    const badgeLabel = Text(badge);
+    textSetFontSize(badgeLabel, 9);
+    textSetFontFamily(badgeLabel, 9, 'Menlo');
+    if (panelColors) setFg(badgeLabel, panelColors.sideBarForeground);
+
+    // Title
+    let displayTitle = stitle;
+    if (displayTitle.length < 1) displayTitle = 'New chat';
+    const titleLabel = Text(displayTitle);
+    textSetFontSize(titleLabel, 11);
+    if (panelColors) setFg(titleLabel, panelColors.sideBarForeground);
+
+    // Delete button
+    const delFn = getDelSessionFn(displayed);
+    const delBtn = Button('\u00D7', () => { delFn(); });
+    buttonSetBordered(delBtn, 0);
+    textSetFontSize(delBtn, 10);
+    if (panelColors) setBtnFg(delBtn, panelColors.sideBarForeground);
+
+    // Click handler for the row
+    const clickFn = getSessionClickFn(displayed);
+    const rowBtn = Button(displayTitle, () => { clickFn(); });
+    buttonSetBordered(rowBtn, 0);
+    textSetFontSize(rowBtn, 11);
+    if (panelColors) setBtnFg(rowBtn, panelColors.sideBarForeground);
+
+    const row = HStack(4, [badgeLabel, rowBtn, Spacer(), delBtn]);
+
+    // Highlight active session
+    let isActive: number = 0;
+    if (sid.length === activeId.length) {
+      isActive = 1;
+      for (let c = 0; c < sid.length; c++) {
+        if (sid.charCodeAt(c) !== activeId.charCodeAt(c)) { isActive = 0; break; }
+      }
+    }
+    if (isActive > 0) {
+      widgetSetBackgroundColor(row, 0.25, 0.25, 0.3, 1.0);
+    }
+
+    widgetAddChild(sessionListContainer, row);
+    displayed += 1;
+  }
+}
+
+function toggleSessionList(): void {
+  if (sessionListVisible > 0) {
+    sessionListVisible = 0;
+  } else {
+    sessionListVisible = 1;
+    refreshSessionList();
+  }
+  if (sessionListScrollView) {
+    widgetSetHidden(sessionListScrollView, sessionListVisible < 1 ? 1 : 0);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // UI event handlers
 // ---------------------------------------------------------------------------
 
@@ -730,15 +1034,21 @@ function onSend(): void {
   startStream(body);
 }
 
-function onClear(): void {
+function onNewChat(): void {
+  if (streamActive > 0) return;
   msgCount = 0;
-  try { writeFileSync(msgFilePath, ''); } catch (e) {}
   clearContext();
   resetAgentState();
   streamAccumulated = '';
   streamingMsgBlock = null;
+  firstUserMsgSent = 0;
+
+  const newId = createNewSession(panelMode);
+  msgFilePath = getSessionFilePath(newId);
+
   updateMessages();
   renderChipsArea();
+  refreshSessionList();
 }
 
 // ---------------------------------------------------------------------------
@@ -747,16 +1057,19 @@ function onClear(): void {
 
 function onModeChat(): void {
   panelMode = 0;
+  updateSessionMode(getActiveSessionId(), 0);
   updateModeTabStyles();
 }
 
 function onModeAgent(): void {
   panelMode = 1;
+  updateSessionMode(getActiveSessionId(), 1);
   updateModeTabStyles();
 }
 
 function onModePlan(): void {
   panelMode = 2;
+  updateSessionMode(getActiveSessionId(), 2);
   updateModeTabStyles();
 }
 
@@ -926,6 +1239,27 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): v
 
   loadApiKey();
 
+  // --- Session persistence init ---
+  ensureChatsDir();
+  let currentId = getMostRecentSessionId();
+  if (currentId.length < 1) {
+    currentId = createNewSession(0);
+  } else {
+    loadSessionMeta(currentId);
+    panelMode = getActiveSessionMode();
+  }
+  setActiveSessionId(currentId);
+  msgFilePath = getSessionFilePath(currentId);
+
+  // Check if first user message already sent
+  firstUserMsgSent = 0;
+  try {
+    const existingContent = readFileSync(msgFilePath);
+    if (existingContent.length > 0 && existingContent.charCodeAt(0) === 85) {
+      firstUserMsgSent = 1;
+    }
+  } catch (e) {}
+
   // Set up agent callbacks
   setAgentCallbacks(
     onAgentTextDelta,
@@ -938,7 +1272,17 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): v
   );
   setChipsRenderCallback(() => { renderChipsArea(); });
 
-  // --- Mode tabs ---
+  // --- Header row: History toggle + New Chat + mode tabs + clear ---
+  const historyBtn = Button('History', () => { toggleSessionList(); });
+  buttonSetBordered(historyBtn, 0);
+  textSetFontSize(historyBtn, 11);
+  setBtnFg(historyBtn, colors.sideBarForeground);
+
+  const newChatBtn = Button('+ New', () => { onNewChat(); });
+  buttonSetBordered(newChatBtn, 0);
+  textSetFontSize(newChatBtn, 11);
+  setBtnFg(newChatBtn, colors.sideBarForeground);
+
   modeChatBtn = Button('Chat', () => { onModeChat(); });
   buttonSetBordered(modeChatBtn, 0);
   textSetFontSize(modeChatBtn, 11);
@@ -951,13 +1295,23 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): v
   buttonSetBordered(modePlanBtn, 0);
   textSetFontSize(modePlanBtn, 11);
 
-  const clearBtn = Button('Clear', () => { onClear(); });
-  buttonSetBordered(clearBtn, 0);
-  textSetFontSize(clearBtn, 11);
-  setBtnFg(clearBtn, colors.sideBarForeground);
-
-  const modeRow = HStack(2, [modeChatBtn, modeAgentBtn, modePlanBtn, Spacer(), clearBtn]);
+  const modeRow = HStack(2, [historyBtn, newChatBtn, Spacer(), modeChatBtn, modeAgentBtn, modePlanBtn]);
   widgetAddChild(container, modeRow);
+
+  // --- Session list (collapsible) ---
+  sessionListContainer = VStack(2, []);
+  sessionListScrollView = ScrollView();
+  scrollViewSetChild(sessionListScrollView, sessionListContainer);
+  widgetSetHeight(sessionListScrollView, 180);
+  widgetSetHidden(sessionListScrollView, 1);
+  sessionListVisible = 0;
+  widgetAddChild(container, sessionListScrollView);
+
+  // 1px divider
+  const divider = Text('');
+  widgetSetHeight(divider, 1);
+  widgetSetBackgroundColor(divider, 0.3, 0.3, 0.35, 1.0);
+  widgetAddChild(container, divider);
 
   updateModeTabStyles();
 
