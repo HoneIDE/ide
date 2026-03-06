@@ -10,7 +10,7 @@ import {
   textSetFontSize,
   textSetString,
   buttonSetBordered, buttonSetImage, buttonSetImagePosition,
-  widgetAddChild,
+  widgetAddChild, widgetSetHeight,
 } from 'perry/ui';
 import { setBg, setFg, setBtnTint, detectLanguage } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
@@ -178,6 +178,7 @@ export function renderStatusBar(colors: ResolvedUIColors): unknown {
   widgetAddChild(bar, encodingLabel);
   widgetAddChild(bar, lang);
   setBg(bar, colors.statusBarBackground);
+  widgetSetHeight(bar, 25);
   statusBarWidget = bar;
 
   return bar;

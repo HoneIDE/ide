@@ -13,6 +13,7 @@
   "license": "MIT",
   "dependencies": {
     "@honeide/core": "file:../core",
+    "@honeide/editor": "file:../editor",
     "@honeide/terminal": "file:../terminal"
   },
   "devDependencies": {

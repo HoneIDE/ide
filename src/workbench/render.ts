@@ -31,6 +31,8 @@ import { readFileSync, writeFileSync, readdirSync, isDirectory } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 
+import { registerBuiltinCommands, registerCommand } from '../commands';
+
 // Extracted modules
 import { setBg, setFg, setBtnFg, setBtnTint, getFileName, detectLanguage, getFileIcon, getFileIconColor } from './ui-helpers';
 import {
@@ -1178,6 +1180,10 @@ function onSettingsChanged(): void {
 // ---------------------------------------------------------------------------
 
 export function renderWorkbench(layoutMode: LayoutMode): unknown {
+  // Register commands with real handlers (overrides stubs in commands.ts)
+  registerBuiltinCommands();
+  registerCommand('workbench.action.newEditor', 'New Editor', newFileAction, { showInPalette: false });
+
   const theme = getActiveTheme();
   if (!theme) {
     return VStack(0, [Text('Hone IDE \u2014 No theme loaded')]);
