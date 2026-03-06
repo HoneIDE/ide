@@ -1,20 +1,17 @@
 /**
- * AI Chat panel — chat interface for AI assistant.
+ * AI Chat/Agent panel — streaming AI assistant with tool execution.
  *
- * Uses Anthropic Messages API via Perry's native fetch (reqwest).
- * API key from ANTHROPIC_API_KEY env var or ~/.hone/settings.json.
+ * Three modes: Chat (0), Agent (1), Plan (2).
+ * Uses Perry native SSE streaming via streamStart/streamPoll/streamStatus/streamClose.
  * All state is module-level (Perry closures capture by value).
- *
- * IMPORTANT: Perry corrupts string/number values in module-level arrays
- * when read from depth 2+ callback functions. To work around this,
- * messages are serialized to a temp file and read back for display.
  */
 import {
-  VStack, HStack, Text, Button, Spacer,
+  VStack, HStack, VStackWithInsets, HStackWithInsets, Text, Button, Spacer,
   TextField, ScrollView, scrollViewSetChild,
-  textSetFontSize, textSetFontWeight, textSetFontFamily,
-  buttonSetBordered,
-  widgetAddChild, widgetClearChildren,
+  textSetFontSize, textSetFontWeight, textSetFontFamily, textSetString,
+  buttonSetBordered, buttonSetTitle,
+  widgetAddChild, widgetClearChildren, widgetSetBackgroundColor, widgetSetWidth,
+  widgetSetHidden, widgetSetHeight, widgetRemoveChild,
   textfieldSetString, textfieldFocus,
 } from 'perry/ui';
 import { execSync } from 'child_process';
@@ -22,11 +19,27 @@ import { readFileSync, writeFileSync } from 'fs';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 
-// Perry native fetch
-import fetch from 'node-fetch';
+// SSE streaming via Perry native fetch (from node-fetch module)
+import { streamStart, streamPoll, streamStatus, streamClose } from 'node-fetch';
+
+// Local modules
+import { extractJsonString, jsonEscape, getSSEData, parseSSEEventType, parseSSETextDelta, parseSSEToolUse, parseSSEToolId, parseSSEToolDelta, isSSEDone } from './sse-parser';
+import { renderMarkdownBlock } from './markdown-render';
+import { setToolWorkspaceRoot, executeTool, isDestructiveTool, buildToolDefinitionsJSON, buildReadOnlyToolsJSON } from './agent-tools';
+import {
+  getAgentStatus, processAgentSSELine, resetAgentState,
+  setAgentCallbacks, onApprovalAllow, onApprovalDeny,
+  buildAgentSystemPrompt, buildPlanSystemPrompt,
+  getLastToolResult, getLastToolName, getLastToolId,
+  getAgentIterationCount,
+} from './agent-state';
+import {
+  addFileContext, removeContext, clearContext, getContextCount,
+  buildContextString, getContextTokenEstimate, renderChips, setChipsRenderCallback,
+} from './context-chips';
 
 // ---------------------------------------------------------------------------
-// Module-level state (must be declared BEFORE any function — Perry no-hoist)
+// Module-level state
 // ---------------------------------------------------------------------------
 
 let chatInput: unknown = null;
@@ -35,23 +48,70 @@ let chatInputText = '';
 let panelColors: ResolvedUIColors = null as any;
 let chatPanelReady: number = 0;
 
-// Message count (number — reliable in Perry)
-let msgCount: number = 0;
-
-// Messages stored in file: /tmp/hone-chat-msgs.txt
-// Format: each message is two lines: "U" or "A" (role), then content (with \n replaced by \x01)
-// This avoids Perry's broken array reads at depth 2+.
 let msgFilePath = '/tmp/hone-chat-msgs.txt';
-
-// API key — loaded at render time, not in callbacks
 let chatApiKey = '';
 let chatApiKeyLoaded: number = 0;
 
-// Pending send state
-let sendPending: number = 0;
+// Mode: 0=Chat, 1=Agent, 2=Plan
+let panelMode: number = 0;
+let modeChatBtn: unknown = null;
+let modeAgentBtn: unknown = null;
+let modePlanBtn: unknown = null;
+
+// Streaming state
+let streamHandle: number = 0;
+let streamActive: number = 0;
+let streamPollTimer: number = 0;
+let streamAccumulated = '';
+let streamingMsgBlock: unknown = null;
+
+// Thinking indicator
+let thinkingTimer: number = 0;
+let thinkingDots: number = 0;
+let thinkingLabel: unknown = null;
+
+// Agent mode — tool display
+let approvalContainer: unknown = null;
+let toolDisplayContainer: unknown = null;
+
+// Context chips container
+let chipsContainer: unknown = null;
+
+// Scroll view
+let chatScrollView: unknown = null;
+
+// Current editor file path getter (set from render.ts)
+let getCurrentFilePath: (() => string) | null = null;
+let getCurrentFileContent: (() => string) | null = null;
+
+// Workspace root setter
+let wsRoot = '';
+
+// Message count for tracking
+let msgCount: number = 0;
+
+// Agent continuation messages (tool results to feed back)
+let agentConversationFile = '/tmp/hone-agent-conv.txt';
 
 // ---------------------------------------------------------------------------
-// Pure helper functions (only use parameters, never read module-level vars)
+// Public setters (called from render.ts)
+// ---------------------------------------------------------------------------
+
+export function setChatWorkspaceRoot(root: string): void {
+  wsRoot = root;
+  setToolWorkspaceRoot(root);
+}
+
+export function setChatFilePathGetter(fn: () => string): void {
+  getCurrentFilePath = fn;
+}
+
+export function setChatFileContentGetter(fn: () => string): void {
+  getCurrentFileContent = fn;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
 // ---------------------------------------------------------------------------
 
 function trimNewline(s: string): string {
@@ -64,220 +124,48 @@ function trimNewline(s: string): string {
       break;
     }
   }
-  if (end < s.length) {
-    return s.slice(0, end);
-  }
+  if (end < s.length) return s.slice(0, end);
   return s;
 }
 
-/** Escape a string for embedding in JSON. */
-function jsonEscape(s: string): string {
-  let result = '';
-  for (let i = 0; i < s.length; i++) {
-    const ch = s.charCodeAt(i);
-    if (ch === 92) {
-      result += '\\';
-      result += '\\';
-    } else if (ch === 34) {
-      result += '\\';
-      result += '"';
-    } else if (ch === 10) {
-      result += '\\';
-      result += 'n';
-    } else if (ch === 13) {
-      result += '\\';
-      result += 'r';
-    } else if (ch === 9) {
-      result += '\\';
-      result += 't';
-    } else {
-      result += s.slice(i, i + 1);
-    }
-  }
-  return result;
-}
-
-/** Encode message content for storage: replace newlines with \x01 */
 function encodeContent(s: string): string {
   let result = '';
   for (let i = 0; i < s.length; i++) {
     const ch = s.charCodeAt(i);
-    if (ch === 10) {
-      result += '\x01';
-    } else if (ch === 13) {
-      // skip CR
-    } else {
-      result += s.slice(i, i + 1);
-    }
+    if (ch === 10) { result += '\x01'; }
+    else if (ch === 13) { /* skip */ }
+    else { result += s.slice(i, i + 1); }
   }
   return result;
 }
 
-/** Decode content: restore \x01 to newlines */
 function decodeContent(s: string): string {
   let result = '';
   for (let i = 0; i < s.length; i++) {
     const ch = s.charCodeAt(i);
-    if (ch === 1) {
-      result += '\n';
-    } else {
-      result += s.slice(i, i + 1);
-    }
+    if (ch === 1) { result += '\n'; }
+    else { result += s.slice(i, i + 1); }
   }
   return result;
 }
 
-/** Extract a JSON string value for a given key. Pure function — uses only params. */
-function extractJsonString(json: string, key: string): string {
-  let pattern = '"';
-  pattern += key;
-  pattern += '"';
-
-  let searchStart = 0;
-  while (searchStart <= json.length - pattern.length) {
-    let pos = -1;
-    for (let i = searchStart; i <= json.length - pattern.length; i++) {
-      let match = 1;
-      for (let j = 0; j < pattern.length; j++) {
-        if (json.charCodeAt(i + j) !== pattern.charCodeAt(j)) {
-          match = 0;
-          break;
-        }
-      }
-      if (match > 0) {
-        pos = i;
-        break;
-      }
-    }
-    if (pos < 0) return '';
-
-    let afterKey = pos + pattern.length;
-    while (afterKey < json.length) {
-      const ch = json.charCodeAt(afterKey);
-      if (ch === 32 || ch === 9 || ch === 10 || ch === 13) {
-        afterKey = afterKey + 1;
-      } else {
-        break;
-      }
-    }
-    if (afterKey >= json.length || json.charCodeAt(afterKey) !== 58) {
-      searchStart = pos + 1;
-      continue;
-    }
-
-    afterKey = afterKey + 1;
-    while (afterKey < json.length) {
-      const ch = json.charCodeAt(afterKey);
-      if (ch === 32 || ch === 9 || ch === 10 || ch === 13) {
-        afterKey = afterKey + 1;
-      } else {
-        break;
-      }
-    }
-
-    if (afterKey >= json.length || json.charCodeAt(afterKey) !== 34) {
-      searchStart = pos + 1;
-      continue;
-    }
-    afterKey = afterKey + 1;
-
-    let result = '';
-    while (afterKey < json.length) {
-      const ch = json.charCodeAt(afterKey);
-      if (ch === 92) {
-        afterKey = afterKey + 1;
-        if (afterKey < json.length) {
-          const next = json.charCodeAt(afterKey);
-          if (next === 110) { result += '\n'; }
-          else if (next === 116) { result += '\t'; }
-          else if (next === 114) { result += '\r'; }
-          else if (next === 34) { result += '"'; }
-          else if (next === 92) { result += '\\'; }
-          else if (next === 117) {
-            afterKey = afterKey + 4;
-            result += ' ';
-          } else {
-            result += json.slice(afterKey, afterKey + 1);
-          }
-        }
-      } else if (ch === 34) {
-        break;
-      } else {
-        result += json.slice(afterKey, afterKey + 1);
-      }
-      afterKey = afterKey + 1;
-    }
-
-    return result;
-  }
-
-  return '';
-}
-
 // ---------------------------------------------------------------------------
-// Message file I/O — avoids Perry's broken array reads at depth 2+
+// Message file I/O
 // ---------------------------------------------------------------------------
 
-/** Append a message to the file. Call at depth 1 (callback handler). */
 function appendMessage(isUser: number, content: string): void {
   let existing = '';
   try { existing = readFileSync(msgFilePath); } catch (e) {}
-  if (existing.length > 0) {
-    existing += '\n';
-  }
-  if (isUser > 0) {
-    existing += 'U\n';
-  } else {
-    existing += 'A\n';
-  }
+  if (existing.length > 0) existing += '\n';
+  if (isUser > 0) { existing += 'U\n'; }
+  else { existing += 'A\n'; }
   existing += encodeContent(content);
   try { writeFileSync(msgFilePath, existing); } catch (e) {}
-  msgCount = msgCount + 1;
-}
-
-/** Build API request body from message file. Pure function (reads file, not arrays). */
-function buildRequestBody(fileContent: string): string {
-  let body = '{"model":"claude-sonnet-4-20250514","max_tokens":4096,';
-  body += '"system":"You are Hone, an AI coding assistant built into the Hone IDE. Be concise and helpful.",';
-  body += '"messages":[';
-
-  // Parse file lines: pairs of (role, content)
-  let lineStart = 0;
-  let lineIdx = 0;
-  let currentRole = '';
-  let firstMsg: number = 1;
-  for (let i = 0; i <= fileContent.length; i++) {
-    if (i === fileContent.length || fileContent.charCodeAt(i) === 10) {
-      const line = fileContent.slice(lineStart, i);
-      if (lineIdx % 2 === 0) {
-        // Role line: "U" or "A"
-        if (line.length > 0 && line.charCodeAt(0) === 85) {
-          currentRole = 'user';
-        } else {
-          currentRole = 'assistant';
-        }
-      } else {
-        // Content line
-        const decoded = decodeContent(line);
-        if (firstMsg < 1) body += ',';
-        firstMsg = 0;
-        body += '{"role":"';
-        body += currentRole;
-        body += '","content":"';
-        body += jsonEscape(decoded);
-        body += '"}';
-      }
-      lineIdx = lineIdx + 1;
-      lineStart = i + 1;
-    }
-  }
-
-  body += ']}';
-  return body;
+  msgCount += 1;
 }
 
 // ---------------------------------------------------------------------------
-// API key loading — called at render time (outside callbacks)
+// API key loading
 // ---------------------------------------------------------------------------
 
 function loadApiKey(): void {
@@ -286,10 +174,7 @@ function loadApiKey(): void {
   try {
     const envResult = execSync('echo $ANTHROPIC_API_KEY') as unknown as string;
     const key = trimNewline(envResult);
-    if (key.length > 5) {
-      chatApiKey = key;
-      return;
-    }
+    if (key.length > 5) { chatApiKey = key; return; }
   } catch (e) {}
   try {
     const homeResult = execSync('echo $HOME') as unknown as string;
@@ -302,146 +187,650 @@ function loadApiKey(): void {
 }
 
 // ---------------------------------------------------------------------------
-// API call via Perry native fetch
+// Build request body
 // ---------------------------------------------------------------------------
 
-async function doFetchSend(): Promise<void> {
-  // Build request body from file (avoids reading module-level arrays)
-  let fileContent = '';
-  try { fileContent = readFileSync(msgFilePath); } catch (e) {}
-  const body = buildRequestBody(fileContent);
-
-  const apiKey = chatApiKey;
-  if (apiKey.length < 5) {
-    appendMessage(0, 'No API key found. Set ANTHROPIC_API_KEY or add "anthropicApiKey" to ~/.hone/settings.json');
-    updateMessages();
-    sendPending = 0;
-    return;
+function buildRequestBody(fileContent: string, systemPrompt: string, includeStream: number, toolsJson: string): string {
+  let body = '{"model":"claude-sonnet-4-20250514","max_tokens":4096';
+  if (includeStream > 0) {
+    body += ',"stream":true';
   }
 
-  // Use Perry native fetch (reqwest) — await compiles to busy-wait loop
-  // Falls back to curl if fetch throws
-  try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      body: body,
-    });
-    const response = await (resp as any).text() as unknown as string;
-    handleApiResponse(response);
-  } catch (e) {
-    // Fallback to curl
-    doFetchSendCurl(body, apiKey);
-  }
-  sendPending = 0;
-}
+  // System prompt
+  body += ',"system":"';
+  body += jsonEscape(systemPrompt);
+  body += '"';
 
-function doFetchSendCurl(body: string, apiKey: string): void {
-  try {
-    writeFileSync('/tmp/hone-chat-body.json', body);
-  } catch (e) {
-    appendMessage(0, 'Error: Could not write request body');
-    updateMessages();
-    return;
+  // Tools
+  if (toolsJson.length > 2) {
+    body += ',"tools":';
+    body += toolsJson;
   }
 
-  let script = '#!/bin/sh\n';
-  script += 'curl -s -m 30 -X POST https://api.anthropic.com/v1/messages';
-  script += ' -H "Content-Type: application/json"';
-  script += ' -H "x-api-key: ';
-  script += apiKey;
-  script += '"';
-  script += ' -H "anthropic-version: 2023-06-01"';
-  script += ' -d @/tmp/hone-chat-body.json\n';
-  try {
-    writeFileSync('/tmp/hone-chat-curl.sh', script);
-  } catch (e) {
-    appendMessage(0, 'Error: Could not write curl script');
-    updateMessages();
-    return;
-  }
+  body += ',"messages":[';
 
-  try {
-    execSync('sh /tmp/hone-chat-curl.sh > /tmp/hone-chat-response.json 2>/dev/null');
-  } catch (e) {
-    appendMessage(0, 'Error: API request failed. Check your internet connection.');
-    updateMessages();
-    return;
-  }
+  // Parse message file
+  let lineStart = 0;
+  let lineIdx = 0;
+  let currentRole = '';
+  let firstMsg: number = 1;
+  for (let i = 0; i <= fileContent.length; i++) {
+    if (i === fileContent.length || fileContent.charCodeAt(i) === 10) {
+      const line = fileContent.slice(lineStart, i);
+      if (lineIdx % 2 === 0) {
+        if (line.length > 0 && line.charCodeAt(0) === 85) {
+          currentRole = 'user';
+        } else if (line.length > 0 && line.charCodeAt(0) === 84) {
+          // 'T' = tool_result
+          currentRole = 'tool_result';
+        } else {
+          currentRole = 'assistant';
+        }
+      } else {
+        const decoded = decodeContent(line);
+        if (firstMsg < 1) body += ',';
+        firstMsg = 0;
 
-  let response = '';
-  try {
-    response = readFileSync('/tmp/hone-chat-response.json');
-  } catch (e) {
-    appendMessage(0, 'Error: Could not read API response');
-    updateMessages();
-    return;
-  }
-
-  handleApiResponse(response);
-}
-
-function handleApiResponse(response: string): void {
-  if (response.length < 2) {
-    appendMessage(0, 'Error: Empty response from API');
-    updateMessages();
-    return;
-  }
-
-  // Parse response
-  const text = extractJsonString(response, 'text');
-  if (text.length > 0) {
-    appendMessage(0, text);
-  } else {
-    const errMsg = extractJsonString(response, 'message');
-    if (errMsg.length > 0) {
-      let errText = 'API Error: ';
-      errText += errMsg;
-      appendMessage(0, errText);
-    } else {
-      appendMessage(0, 'Error: Could not parse API response');
+        if (currentRole.length === 11) {
+          // tool_result — special format
+          // Content is: toolId|toolName|result
+          let pipePos1 = -1;
+          let pipePos2 = -1;
+          for (let p = 0; p < decoded.length; p++) {
+            if (decoded.charCodeAt(p) === 124) {
+              if (pipePos1 < 0) pipePos1 = p;
+              else if (pipePos2 < 0) { pipePos2 = p; break; }
+            }
+          }
+          if (pipePos1 > 0 && pipePos2 > 0) {
+            const toolId = decoded.slice(0, pipePos1);
+            const toolResult = decoded.slice(pipePos2 + 1);
+            body += '{"role":"user","content":[{"type":"tool_result","tool_use_id":"';
+            body += jsonEscape(toolId);
+            body += '","content":"';
+            body += jsonEscape(toolResult);
+            body += '"}]}';
+          }
+        } else {
+          body += '{"role":"';
+          body += currentRole;
+          body += '","content":"';
+          body += jsonEscape(decoded);
+          body += '"}';
+        }
+      }
+      lineIdx += 1;
+      lineStart = i + 1;
     }
   }
+
+  body += ']}';
+  return body;
+}
+
+// ---------------------------------------------------------------------------
+// Streaming via Perry native SSE
+// ---------------------------------------------------------------------------
+
+function startStream(requestBody: string): void {
+  if (chatApiKey.length < 5) {
+    appendMessage(0, 'No API key found. Set ANTHROPIC_API_KEY or add "anthropicApiKey" to ~/.hone/settings.json');
+    updateMessages();
+    return;
+  }
+
+  let headersJson = '{"Content-Type":"application/json","x-api-key":"';
+  headersJson += chatApiKey;
+  headersJson += '","anthropic-version":"2023-06-01"}';
+
+  streamAccumulated = '';
+  streamActive = 1;
+
+  streamHandle = streamStart(
+    'https://api.anthropic.com/v1/messages',
+    'POST',
+    requestBody,
+    headersJson
+  );
+
+  // Start thinking indicator
+  startThinking();
+
+  // Start polling
+  streamPollTimer = setInterval(() => { pollStreamTick(); }, 16);
+}
+
+// Module-level variable to pass SSE line data — avoids passing FFI strings
+// as function parameters (Perry codegen issue with NaN-boxed FFI string params)
+let currentSSELine: string = '';
+
+function pollStreamTick(): void {
+  if (streamActive < 1) return;
+
+  const status = streamStatus(streamHandle);
+
+  // Drain all pending lines
+  for (let drain = 0; drain < 50; drain++) {
+    const line = streamPoll(streamHandle);
+    if (line.length < 1) break;
+    currentSSELine = '' + line;
+    processCurrentLine();
+  }
+
+  // Check if done or error
+  if (status >= 2) {
+    finishStream();
+  }
+}
+
+// Inline SSE parsing state — all module-level to avoid passing strings as function params
+let sseLineIsData: number = 0;
+let sseDataPayload: string = '';
+let sseExtractedText: string = '';
+
+function inlineCheckData(): void {
+  // Check if currentSSELine starts with "data: " (d=100,a=97,t=116,a=97,:=58,space=32)
+  sseLineIsData = 0;
+  if (currentSSELine.length < 6) return;
+  const c0 = currentSSELine.charCodeAt(0);
+  const c1 = currentSSELine.charCodeAt(1);
+  const c2 = currentSSELine.charCodeAt(2);
+  const c3 = currentSSELine.charCodeAt(3);
+  const c4 = currentSSELine.charCodeAt(4);
+  const c5 = currentSSELine.charCodeAt(5);
+  if (c0 === 100 && c1 === 97 && c2 === 116 && c3 === 97 && c4 === 58 && c5 === 32) {
+    sseLineIsData = 1;
+    sseDataPayload = currentSSELine.slice(6);
+  }
+}
+
+function inlineCheckDone(): number {
+  // Check for [DONE] at start of data payload
+  if (sseDataPayload.length < 6) return 0;
+  if (sseDataPayload.charCodeAt(0) === 91 && sseDataPayload.charCodeAt(1) === 68 &&
+      sseDataPayload.charCodeAt(2) === 79 && sseDataPayload.charCodeAt(3) === 78 &&
+      sseDataPayload.charCodeAt(4) === 69) return 1;
+  return 0;
+}
+
+function inlineExtractText(): void {
+  // Extract "text" field value from sseDataPayload JSON
+  // Pattern: "text":"<value>"
+  sseExtractedText = '';
+  for (let i = 0; i < sseDataPayload.length - 8; i++) {
+    if (sseDataPayload.charCodeAt(i) === 34 &&      // "
+        sseDataPayload.charCodeAt(i + 1) === 116 && // t
+        sseDataPayload.charCodeAt(i + 2) === 101 && // e
+        sseDataPayload.charCodeAt(i + 3) === 120 && // x
+        sseDataPayload.charCodeAt(i + 4) === 116 && // t
+        sseDataPayload.charCodeAt(i + 5) === 34) {  // "
+      // Found "text", now look for :"
+      let j = i + 6;
+      // Skip whitespace
+      while (j < sseDataPayload.length && (sseDataPayload.charCodeAt(j) === 32 || sseDataPayload.charCodeAt(j) === 9)) { j += 1; }
+      if (j >= sseDataPayload.length || sseDataPayload.charCodeAt(j) !== 58) continue; // :
+      j += 1;
+      while (j < sseDataPayload.length && (sseDataPayload.charCodeAt(j) === 32 || sseDataPayload.charCodeAt(j) === 9)) { j += 1; }
+      if (j >= sseDataPayload.length || sseDataPayload.charCodeAt(j) !== 34) continue; // opening "
+      j += 1;
+      // Read until closing "
+      let result = '';
+      while (j < sseDataPayload.length) {
+        const ch = sseDataPayload.charCodeAt(j);
+        if (ch === 92) { // backslash
+          j += 1;
+          if (j < sseDataPayload.length) {
+            const next = sseDataPayload.charCodeAt(j);
+            if (next === 110) { result += '\n'; }
+            else if (next === 116) { result += '\t'; }
+            else if (next === 34) { result += '"'; }
+            else if (next === 92) { result += '\\'; }
+            else if (next === 117) { j += 4; result += ' '; } // \uXXXX
+            else { result += sseDataPayload.slice(j, j + 1); }
+          }
+        } else if (ch === 34) { // closing "
+          break;
+        } else {
+          result += sseDataPayload.slice(j, j + 1);
+        }
+        j += 1;
+      }
+      sseExtractedText = result;
+      return;
+    }
+  }
+}
+
+let streamDisplayLabel: unknown = null;
+
+function processCurrentLine(): void {
+  inlineCheckData();
+  if (sseLineIsData < 1) return;
+  if (inlineCheckDone() > 0) return;
+  inlineExtractText();
+  if (sseExtractedText.length > 0) {
+    streamAccumulated += sseExtractedText;
+  }
+}
+
+function updateStreamingDisplay(): void {
+  if (chatPanelReady < 1) return;
+  if (!chatMessagesContainer) return;
+
+  if (!streamDisplayLabel) {
+    streamDisplayLabel = Text(streamAccumulated);
+    textSetFontSize(streamDisplayLabel, 12);
+    if (panelColors) setFg(streamDisplayLabel, panelColors.sideBarForeground);
+    widgetAddChild(chatMessagesContainer, streamDisplayLabel);
+  } else {
+    textSetString(streamDisplayLabel, streamAccumulated);
+  }
+}
+
+function finishStream(): void {
+  streamActive = 0;
+  if (streamPollTimer > 0) {
+    clearInterval(streamPollTimer);
+    streamPollTimer = 0;
+  }
+  streamClose(streamHandle);
+  streamHandle = 0;
+  stopThinking();
+
+  // Save accumulated text as assistant message
+  if (streamAccumulated.length > 0) {
+    appendMessage(0, streamAccumulated);
+  }
+  streamAccumulated = '';
+  streamingMsgBlock = null;
+  streamDisplayLabel = null;
 
   updateMessages();
 }
 
 // ---------------------------------------------------------------------------
-// UI handlers — all module-level reads/writes at depth 1 (Perry constraint)
+// Thinking indicator
+// ---------------------------------------------------------------------------
+
+function startThinking(): void {
+  thinkingDots = 0;
+  if (chatMessagesContainer) {
+    thinkingLabel = Text('Thinking');
+    textSetFontSize(thinkingLabel, 12);
+    if (panelColors) setFg(thinkingLabel, panelColors.sideBarForeground);
+    widgetAddChild(chatMessagesContainer, thinkingLabel);
+  }
+  thinkingTimer = setInterval(() => { updateThinkingDots(); }, 400);
+}
+
+function updateThinkingDots(): void {
+  thinkingDots += 1;
+  if (thinkingDots > 3) thinkingDots = 0;
+  if (!thinkingLabel) return;
+  let txt = 'Thinking';
+  for (let d = 0; d < thinkingDots; d++) {
+    txt += '.';
+  }
+  try { textSetString(thinkingLabel, txt); } catch (e) {}
+}
+
+function stopThinking(): void {
+  if (thinkingTimer > 0) {
+    clearInterval(thinkingTimer);
+    thinkingTimer = 0;
+  }
+  if (thinkingLabel && chatMessagesContainer) {
+    try { widgetRemoveChild(chatMessagesContainer, thinkingLabel); } catch (e) {}
+    thinkingLabel = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Agent mode — callbacks from agent-state
+// ---------------------------------------------------------------------------
+
+function onAgentTextDelta(text: string): void {
+  streamAccumulated += text;
+  updateStreamingDisplay();
+}
+
+function onAgentToolStart(name: string, id: string): void {
+  // Show tool execution indicator
+  if (!chatMessagesContainer) return;
+
+  let toolLabel = '\u2699 Using tool: ';
+  toolLabel += name;
+  const toolText = Text(toolLabel);
+  textSetFontSize(toolText, 11);
+  textSetFontFamily(toolText, 11, 'Menlo');
+  if (panelColors) setFg(toolText, panelColors.sideBarForeground);
+
+  toolDisplayContainer = VStackWithInsets(2, 4, 8, 4, 8);
+  widgetSetBackgroundColor(toolDisplayContainer, 0.15, 0.15, 0.18, 1.0);
+  widgetAddChild(toolDisplayContainer, toolText);
+  widgetAddChild(chatMessagesContainer, toolDisplayContainer);
+}
+
+function onAgentToolResult(name: string, result: string): void {
+  if (!toolDisplayContainer) return;
+
+  // Show result (truncated)
+  let displayResult = result;
+  if (displayResult.length > 500) {
+    displayResult = result.slice(0, 500) + '\n... (truncated)';
+  }
+  const resultText = Text(displayResult);
+  textSetFontSize(resultText, 10);
+  textSetFontFamily(resultText, 10, 'Menlo');
+  if (panelColors) setFg(resultText, panelColors.sideBarForeground);
+  widgetAddChild(toolDisplayContainer, resultText);
+  toolDisplayContainer = null;
+}
+
+function onAgentApprovalNeeded(name: string, args: string): void {
+  if (!chatMessagesContainer) return;
+
+  // Stop streaming while waiting for approval
+  if (streamActive > 0) {
+    streamActive = 0;
+    if (streamPollTimer > 0) {
+      clearInterval(streamPollTimer);
+      streamPollTimer = 0;
+    }
+  }
+
+  approvalContainer = VStackWithInsets(4, 8, 8, 8, 8);
+  widgetSetBackgroundColor(approvalContainer, 0.25, 0.18, 0.12, 1.0);
+
+  let warnText = '\u26A0 Tool "';
+  warnText += name;
+  warnText += '" requires approval';
+  const warnLabel = Text(warnText);
+  textSetFontSize(warnLabel, 12);
+  textSetFontWeight(warnLabel, 12, 0.5);
+  if (panelColors) setFg(warnLabel, panelColors.sideBarForeground);
+  widgetAddChild(approvalContainer, warnLabel);
+
+  // Show args preview
+  let argsPreview = args;
+  if (argsPreview.length > 200) argsPreview = args.slice(0, 200) + '...';
+  const argsText = Text(argsPreview);
+  textSetFontSize(argsText, 10);
+  textSetFontFamily(argsText, 10, 'Menlo');
+  if (panelColors) setFg(argsText, panelColors.sideBarForeground);
+  widgetAddChild(approvalContainer, argsText);
+
+  const allowBtn = Button('Allow', () => { onAllowClick(); });
+  buttonSetBordered(allowBtn, 0);
+  textSetFontSize(allowBtn, 12);
+  setBtnFg(allowBtn, panelColors.sideBarForeground);
+
+  const denyBtn = Button('Deny', () => { onDenyClick(); });
+  buttonSetBordered(denyBtn, 0);
+  textSetFontSize(denyBtn, 12);
+  setBtnFg(denyBtn, panelColors.sideBarForeground);
+
+  const btnRow = HStack(8, [allowBtn, denyBtn, Spacer()]);
+  widgetAddChild(approvalContainer, btnRow);
+  widgetAddChild(chatMessagesContainer, approvalContainer);
+}
+
+function onAllowClick(): void {
+  // Remove approval UI
+  if (approvalContainer && chatMessagesContainer) {
+    try { widgetRemoveChild(chatMessagesContainer, approvalContainer); } catch (e) {}
+    approvalContainer = null;
+  }
+  onApprovalAllow();
+  // Check if agent needs continuation
+  const agentSt = getAgentStatus();
+  if (agentSt === 5) {
+    continueAgentLoop();
+  }
+}
+
+function onDenyClick(): void {
+  if (approvalContainer && chatMessagesContainer) {
+    try { widgetRemoveChild(chatMessagesContainer, approvalContainer); } catch (e) {}
+    approvalContainer = null;
+  }
+  onApprovalDeny();
+  const agentSt = getAgentStatus();
+  if (agentSt === 5) {
+    continueAgentLoop();
+  }
+}
+
+function onAgentStreamDone(): void {
+  // Agent stream finished without tool call — finalize
+  finishStream();
+}
+
+function onAgentError(msg: string): void {
+  if (chatMessagesContainer) {
+    const errText = Text(msg);
+    textSetFontSize(errText, 12);
+    if (panelColors) setFg(errText, panelColors.sideBarForeground);
+    widgetAddChild(chatMessagesContainer, errText);
+  }
+  finishStream();
+}
+
+function onAgentIterationStart(n: number): void {
+  // Could show iteration counter
+}
+
+/** Continue the agent loop after tool execution. */
+function continueAgentLoop(): void {
+  // Get tool result info
+  const toolResult = getLastToolResult();
+  const toolName = getLastToolName();
+  const toolId = getLastToolId();
+  const iterCount = getAgentIterationCount();
+
+  // Append assistant message (with tool use) and tool result to conversation
+  // Save current accumulated text as assistant message
+  if (streamAccumulated.length > 0) {
+    appendMessage(0, streamAccumulated);
+  }
+
+  // Append tool result as special 'T' message type
+  let toolMsg = toolId;
+  toolMsg += '|';
+  toolMsg += toolName;
+  toolMsg += '|';
+  toolMsg += toolResult;
+  appendToolResultMessage(toolMsg);
+
+  // Clear streaming state
+  streamAccumulated = '';
+  streamingMsgBlock = null;
+
+  // Close old stream
+  if (streamHandle > 0) {
+    streamClose(streamHandle);
+    streamHandle = 0;
+  }
+
+  // Reset agent status for next iteration
+  resetAgentState();
+
+  // Build and send next request
+  let fileContent = '';
+  try { fileContent = readFileSync(msgFilePath); } catch (e) {}
+
+  let systemPrompt = '';
+  let toolsJson = '';
+  if (panelMode === 2) {
+    systemPrompt = buildPlanSystemPrompt();
+    toolsJson = buildReadOnlyToolsJSON();
+  } else {
+    systemPrompt = buildAgentSystemPrompt();
+    toolsJson = buildToolDefinitionsJSON();
+  }
+
+  const contextStr = buildContextString();
+  if (contextStr.length > 0) {
+    systemPrompt += contextStr;
+  }
+
+  const body = buildRequestBody(fileContent, systemPrompt, 1, toolsJson);
+  startStream(body);
+}
+
+function appendToolResultMessage(content: string): void {
+  let existing = '';
+  try { existing = readFileSync(msgFilePath); } catch (e) {}
+  if (existing.length > 0) existing += '\n';
+  existing += 'T\n'; // Tool result role marker
+  existing += encodeContent(content);
+  try { writeFileSync(msgFilePath, existing); } catch (e) {}
+  msgCount += 1;
+}
+
+// ---------------------------------------------------------------------------
+// UI event handlers
 // ---------------------------------------------------------------------------
 
 function onChatInput(text: string): void {
   chatInputText = text;
 }
 
-/**
- * Send message and call API — ALL INLINE at depth 1.
- */
 function onSend(): void {
   if (chatInputText.length < 1) return;
-  if (sendPending > 0) return;
+  if (streamActive > 0) return;
 
-  // Add user message to file
   appendMessage(1, chatInputText);
   chatInputText = '';
   if (chatInput) textfieldSetString(chatInput, '');
   updateMessages();
 
-  sendPending = 1;
-  // Defer the API call to next tick so UI updates first
-  setTimeout(() => { doFetchSend(); }, 0);
+  // Build request
+  let fileContent = '';
+  try { fileContent = readFileSync(msgFilePath); } catch (e) {}
+
+  let systemPrompt = 'You are Hone, an AI coding assistant built into the Hone IDE. Be concise and helpful.';
+  let toolsJson = '';
+
+  if (panelMode === 1) {
+    // Agent mode
+    systemPrompt = buildAgentSystemPrompt();
+    toolsJson = buildToolDefinitionsJSON();
+  } else if (panelMode === 2) {
+    // Plan mode
+    systemPrompt = buildPlanSystemPrompt();
+    toolsJson = buildReadOnlyToolsJSON();
+  }
+
+  // Add context
+  const contextStr = buildContextString();
+  if (contextStr.length > 0) {
+    systemPrompt += contextStr;
+  }
+
+  const body = buildRequestBody(fileContent, systemPrompt, 1, toolsJson);
+  startStream(body);
 }
 
 function onClear(): void {
   msgCount = 0;
   try { writeFileSync(msgFilePath, ''); } catch (e) {}
+  clearContext();
+  resetAgentState();
+  streamAccumulated = '';
+  streamingMsgBlock = null;
   updateMessages();
+  renderChipsArea();
 }
 
-/**
- * Render messages by reading from file (not arrays).
- * File I/O works at any depth — avoids Perry's stale array reads.
- */
+// ---------------------------------------------------------------------------
+// Mode tabs
+// ---------------------------------------------------------------------------
+
+function onModeChat(): void {
+  panelMode = 0;
+  updateModeTabStyles();
+}
+
+function onModeAgent(): void {
+  panelMode = 1;
+  updateModeTabStyles();
+}
+
+function onModePlan(): void {
+  panelMode = 2;
+  updateModeTabStyles();
+}
+
+function updateModeTabStyles(): void {
+  if (!panelColors) return;
+  // Active tab gets brighter text
+  if (modeChatBtn) {
+    if (panelMode === 0) {
+      setBtnFg(modeChatBtn, panelColors.sideBarForeground);
+      widgetSetBackgroundColor(modeChatBtn, 0.25, 0.25, 0.3, 1.0);
+    } else {
+      setBtnFg(modeChatBtn, panelColors.sideBarForeground);
+      widgetSetBackgroundColor(modeChatBtn, 0.0, 0.0, 0.0, 0.0);
+    }
+  }
+  if (modeAgentBtn) {
+    if (panelMode === 1) {
+      setBtnFg(modeAgentBtn, panelColors.sideBarForeground);
+      widgetSetBackgroundColor(modeAgentBtn, 0.25, 0.25, 0.3, 1.0);
+    } else {
+      setBtnFg(modeAgentBtn, panelColors.sideBarForeground);
+      widgetSetBackgroundColor(modeAgentBtn, 0.0, 0.0, 0.0, 0.0);
+    }
+  }
+  if (modePlanBtn) {
+    if (panelMode === 2) {
+      setBtnFg(modePlanBtn, panelColors.sideBarForeground);
+      widgetSetBackgroundColor(modePlanBtn, 0.25, 0.25, 0.3, 1.0);
+    } else {
+      setBtnFg(modePlanBtn, panelColors.sideBarForeground);
+      widgetSetBackgroundColor(modePlanBtn, 0.0, 0.0, 0.0, 0.0);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Context attachment
+// ---------------------------------------------------------------------------
+
+function onAttachFile(): void {
+  if (!getCurrentFilePath) return;
+  const filePath = getCurrentFilePath();
+  if (filePath.length < 1) return;
+  try {
+    const content = readFileSync(filePath);
+    addFileContext(filePath, content);
+    renderChipsArea();
+  } catch (e) {}
+}
+
+function onAttachSelection(): void {
+  if (!getCurrentFileContent) return;
+  if (!getCurrentFilePath) return;
+  const filePath = getCurrentFilePath();
+  const content = getCurrentFileContent();
+  if (content.length < 1) return;
+  addFileContext(filePath, content);
+  renderChipsArea();
+}
+
+function renderChipsArea(): void {
+  if (!chipsContainer) return;
+  widgetClearChildren(chipsContainer);
+  if (getContextCount() > 0) {
+    renderChips(chipsContainer, panelColors);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Message rendering
+// ---------------------------------------------------------------------------
+
 function updateMessages(): void {
   if (chatPanelReady < 1) return;
   widgetClearChildren(chatMessagesContainer);
@@ -450,7 +839,10 @@ function updateMessages(): void {
   try { fileContent = readFileSync(msgFilePath); } catch (e) {}
 
   if (fileContent.length < 2) {
-    const hint = Text('Ask a question about your code');
+    let hintText = 'Ask a question about your code';
+    if (panelMode === 1) hintText = 'Describe a task for the AI agent';
+    if (panelMode === 2) hintText = 'Describe what you want to plan';
+    const hint = Text(hintText);
     textSetFontSize(hint, 12);
     if (panelColors) setFg(hint, panelColors.sideBarForeground);
     widgetAddChild(chatMessagesContainer, hint);
@@ -461,79 +853,68 @@ function updateMessages(): void {
   let lineStart = 0;
   let lineIdx = 0;
   let isUser: number = 0;
+  let isTool: number = 0;
   for (let i = 0; i <= fileContent.length; i++) {
     if (i === fileContent.length || fileContent.charCodeAt(i) === 10) {
       const line = fileContent.slice(lineStart, i);
       if (lineIdx % 2 === 0) {
-        // Role line
         isUser = 0;
-        if (line.length > 0 && line.charCodeAt(0) === 85) {
-          isUser = 1;
-        }
+        isTool = 0;
+        if (line.length > 0 && line.charCodeAt(0) === 85) { isUser = 1; }
+        if (line.length > 0 && line.charCodeAt(0) === 84) { isTool = 1; }
       } else {
-        // Content line — render the message
         const content = decodeContent(line);
-        const roleLabel = Text(isUser > 0 ? 'You' : 'Assistant');
-        textSetFontSize(roleLabel, 10);
-        textSetFontWeight(roleLabel, 10, 0.7);
-        if (panelColors) setFg(roleLabel, panelColors.sideBarForeground);
 
-        const msgBlock = VStack(2, [roleLabel]);
+        if (isTool > 0) {
+          // Tool result message — show compact
+          const toolBlock = VStackWithInsets(2, 4, 8, 4, 8);
+          widgetSetBackgroundColor(toolBlock, 0.15, 0.15, 0.18, 1.0);
+          const toolLabel = Text('\u2699 Tool result');
+          textSetFontSize(toolLabel, 10);
+          textSetFontFamily(toolLabel, 10, 'Menlo');
+          if (panelColors) setFg(toolLabel, panelColors.sideBarForeground);
+          widgetAddChild(toolBlock, toolLabel);
 
-        // Render content line by line
-        let cLineStart = 0;
-        let inCodeBlock: number = 0;
-        for (let c = 0; c <= content.length; c++) {
-          if (c === content.length || content.charCodeAt(c) === 10) {
-            let cLine = content.slice(cLineStart, c);
-
-            let isFence: number = 0;
-            if (cLine.length >= 3) {
-              if (cLine.charCodeAt(0) === 96 && cLine.charCodeAt(1) === 96 && cLine.charCodeAt(2) === 96) {
-                isFence = 1;
-              }
+          // Show truncated result
+          let pipeCount = 0;
+          let resultStart = 0;
+          for (let p = 0; p < content.length; p++) {
+            if (content.charCodeAt(p) === 124) {
+              pipeCount += 1;
+              if (pipeCount === 2) { resultStart = p + 1; break; }
             }
-            if (isFence > 0) {
-              if (inCodeBlock > 0) {
-                inCodeBlock = 0;
-              } else {
-                inCodeBlock = 1;
-              }
-              cLineStart = c + 1;
-              continue;
-            }
-
-            if (cLine.length < 1) cLine = ' ';
-            const lineText = Text(cLine);
-            if (inCodeBlock > 0) {
-              textSetFontFamily(lineText, 11, 'Menlo');
-              textSetFontSize(lineText, 11);
-            } else {
-              textSetFontSize(lineText, 12);
-            }
-            if (panelColors) setFg(lineText, panelColors.sideBarForeground);
-            widgetAddChild(msgBlock, lineText);
-            cLineStart = c + 1;
           }
-        }
+          let resultPreview = content.slice(resultStart);
+          if (resultPreview.length > 200) resultPreview = resultPreview.slice(0, 200) + '...';
+          const resultText = Text(resultPreview);
+          textSetFontSize(resultText, 10);
+          textSetFontFamily(resultText, 10, 'Menlo');
+          if (panelColors) setFg(resultText, panelColors.sideBarForeground);
+          widgetAddChild(toolBlock, resultText);
+          widgetAddChild(chatMessagesContainer, toolBlock);
+        } else {
+          // User or assistant message
+          const roleLabel = Text(isUser > 0 ? 'You' : 'Hone');
+          textSetFontSize(roleLabel, 10);
+          textSetFontWeight(roleLabel, 10, 0.7);
+          if (panelColors) setFg(roleLabel, panelColors.sideBarForeground);
 
-        if (isUser > 0 && panelColors) {
-          setBg(msgBlock, panelColors.editorBackground);
-        }
+          const msgBlock = VStackWithInsets(2, 4, 8, 4, 8);
+          widgetAddChild(msgBlock, roleLabel);
 
-        widgetAddChild(chatMessagesContainer, msgBlock);
+          // Use markdown rendering for all messages
+          renderMarkdownBlock(content, msgBlock, panelColors);
+
+          if (isUser > 0 && panelColors) {
+            widgetSetBackgroundColor(msgBlock, 0.18, 0.18, 0.22, 1.0);
+          }
+
+          widgetAddChild(chatMessagesContainer, msgBlock);
+        }
       }
-      lineIdx = lineIdx + 1;
+      lineIdx += 1;
       lineStart = i + 1;
     }
-  }
-
-  // Show loading indicator if send is pending
-  if (sendPending > 0) {
-    const loading = Text('Thinking...');
-    textSetFontSize(loading, 12);
-    if (panelColors) setFg(loading, panelColors.sideBarForeground);
-    widgetAddChild(chatMessagesContainer, loading);
   }
 }
 
@@ -545,33 +926,72 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): v
   panelColors = colors;
   chatPanelReady = 0;
 
-  // Load API key at render time (outside callbacks)
   loadApiKey();
 
-  // Header row
-  const title = Text('AI CHAT');
-  textSetFontSize(title, 11);
-  textSetFontWeight(title, 11, 0.7);
-  setFg(title, colors.sideBarForeground);
+  // Set up agent callbacks
+  setAgentCallbacks(
+    onAgentTextDelta,
+    onAgentToolStart,
+    onAgentToolResult,
+    onAgentApprovalNeeded,
+    onAgentStreamDone,
+    onAgentError,
+    onAgentIterationStart
+  );
+  setChipsRenderCallback(() => { renderChipsArea(); });
+
+  // --- Mode tabs ---
+  modeChatBtn = Button('Chat', () => { onModeChat(); });
+  buttonSetBordered(modeChatBtn, 0);
+  textSetFontSize(modeChatBtn, 11);
+
+  modeAgentBtn = Button('Agent', () => { onModeAgent(); });
+  buttonSetBordered(modeAgentBtn, 0);
+  textSetFontSize(modeAgentBtn, 11);
+
+  modePlanBtn = Button('Plan', () => { onModePlan(); });
+  buttonSetBordered(modePlanBtn, 0);
+  textSetFontSize(modePlanBtn, 11);
 
   const clearBtn = Button('Clear', () => { onClear(); });
   buttonSetBordered(clearBtn, 0);
   textSetFontSize(clearBtn, 11);
   setBtnFg(clearBtn, colors.sideBarForeground);
 
-  const headerRow = HStack(4, [title, Spacer(), clearBtn]);
-  widgetAddChild(container, headerRow);
+  const modeRow = HStack(2, [modeChatBtn, modeAgentBtn, modePlanBtn, Spacer(), clearBtn]);
+  widgetAddChild(container, modeRow);
 
-  // Messages area
-  chatMessagesContainer = VStack(8, []);
-  widgetAddChild(container, chatMessagesContainer);
+  updateModeTabStyles();
+
+  // --- Messages area (scrollable) ---
+  chatMessagesContainer = VStack(6, []);
+  const scrollView = ScrollView();
+  scrollViewSetChild(scrollView, chatMessagesContainer);
+  widgetAddChild(container, scrollView);
+  chatScrollView = scrollView;
 
   chatPanelReady = 1;
-
-  // Restore existing messages or show hint
   updateMessages();
 
-  // Input — text field added directly (HStack wrapping breaks TextField callbacks in Perry)
+  // --- Context chips ---
+  chipsContainer = HStack(4, []);
+  widgetAddChild(container, chipsContainer);
+
+  // --- Attach buttons ---
+  const attachFileBtn = Button('+ File', () => { onAttachFile(); });
+  buttonSetBordered(attachFileBtn, 0);
+  textSetFontSize(attachFileBtn, 10);
+  setBtnFg(attachFileBtn, colors.sideBarForeground);
+
+  const attachSelBtn = Button('+ Selection', () => { onAttachSelection(); });
+  buttonSetBordered(attachSelBtn, 0);
+  textSetFontSize(attachSelBtn, 10);
+  setBtnFg(attachSelBtn, colors.sideBarForeground);
+
+  const attachRow = HStack(4, [attachFileBtn, attachSelBtn, Spacer()]);
+  widgetAddChild(container, attachRow);
+
+  // --- Input ---
   chatInput = TextField('Ask a question...', (text: string) => { onChatInput(text); });
   widgetAddChild(container, chatInput);
 

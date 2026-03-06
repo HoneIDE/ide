@@ -48,7 +48,7 @@ import {
 } from './views/git/git-panel';
 import { renderDebugPanel } from './views/debug/debug-panel';
 // Extensions panel hidden for now — no runtime extension system yet
-import { renderChatPanel } from './views/ai-chat/chat-panel';
+import { renderChatPanel, setChatWorkspaceRoot, setChatFilePathGetter, setChatFileContentGetter } from './views/ai-chat/chat-panel';
 import { renderTerminalPanel, setTerminalCwd, destroyTerminalPanel, setTerminalCloseCallback } from './views/terminal/terminal-panel';
 import { renderSettingsPanel } from './views/settings-ui/settings-panel';
 import { setWelcomeActions, createWelcomeContent } from './views/welcome/welcome-tab';
@@ -718,6 +718,7 @@ function onFolderOpened(folderPath: string): void {
   setGitWorkspaceRoot(folderPath);
   setTerminalCwd(folderPath);
   setLspWorkspaceRoot(folderPath);
+  setChatWorkspaceRoot(folderPath);
   initLspBridge();
   refreshSidebar();
   updateSettings({ lastOpenFolder: folderPath });
@@ -762,6 +763,14 @@ function toggleRightPanel(): void {
       renderChatPanel(rightPanelContainer, themeColors as ResolvedUIColors);
     }
   }
+}
+
+function debugAutoRenderChat(): void {
+  if (rightPanelRendered > 0) return;
+  rightPanelRendered = 1;
+  try { writeFileSync('/tmp/hone-render-debug.txt', 'calling renderChatPanel'); } catch (e) {}
+  renderChatPanel(rightPanelContainer, themeColors as ResolvedUIColors);
+  try { writeFileSync('/tmp/hone-render-debug2.txt', 'renderChatPanel returned'); } catch (e) {}
 }
 
 export function closeEditorAction(): void {
@@ -1103,6 +1112,10 @@ function reloadEditorContent(path: string, content: string): void {
 
 /** Called by search panel to get current editor path. */
 function getCurrentEditorPath(): string {
+  return currentEditorFilePath;
+}
+
+function getCurrentEditorPathForChat(): string {
   return currentEditorFilePath;
 }
 
@@ -1711,10 +1724,12 @@ function onSettingsChanged(): void {
   _lastThemeName = newTheme;
 
   // Switch the active theme
-  const loaded = setActiveTheme(newTheme);
-  if (loaded) {
-    themeColors = loaded.uiColors;
-    recolorUI();
+  if (setActiveTheme(newTheme)) {
+    const active = getActiveTheme();
+    if (active) {
+      themeColors = active.uiColors;
+      recolorUI();
+    }
   }
 }
 
@@ -1758,6 +1773,8 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   setGitFileOpener(openFileFromGitPanel);
   setGitStatusBarUpdater(updateStatusBarBranchLabel);
   setTerminalCwd(workspaceRoot);
+  setChatWorkspaceRoot(workspaceRoot);
+  setChatFilePathGetter(() => { return getCurrentEditorPathForChat(); });
 
   // Wire welcome tab actions
   setWelcomeActions(openFolderAction, openFileAction, openFileAction);
@@ -1904,7 +1921,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   // layout conflicts with the embedded editor NSView
   const rightPanel = VStack(8, []);
   setBg(rightPanel, themeColors.sideBarBackground);
-  widgetSetWidth(rightPanel, 300);
+  widgetSetWidth(rightPanel, 360);
   widgetSetHugging(rightPanel, 750);
   rightPanelContainer = rightPanel;
   rightPanelWidget = rightPanel;
@@ -1913,11 +1930,9 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   widgetSetWidth(rightBorderDiv, 1);
   widgetSetHugging(rightBorderDiv, 1000);
   rightPanelBorder = rightBorderDiv;
-  // Start hidden — toggle via activity bar icon
-  rightPanelVisible = 0;
+  // DEBUG: Start visible, auto-render after a delay
+  rightPanelVisible = 1;
   rightPanelRendered = 0;
-  widgetSetHidden(rightPanel, 1);
-  widgetSetHidden(rightBorderDiv, 1);
 
   // Outer shell: left content + right panel
   const shell = HStack(0, [leftContent, rightBorderDiv, rightPanel]);
@@ -1938,6 +1953,9 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   // Register settings change listener for live theme switching
   _lastThemeName = settings.colorTheme;
   onSettingsChange(() => { onSettingsChanged(); });
+
+  // DEBUG: auto-render chat panel after delay
+  setInterval(() => { debugAutoRenderChat(); }, 2000);
 
   return shell;
 }
