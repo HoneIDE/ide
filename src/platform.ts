@@ -66,24 +66,9 @@ const SPLIT_MAX_WIDTH = 1023;
 // Detection
 // ---------------------------------------------------------------------------
 
-// Compile-time platform ID injected by Perry codegen:
-// 0 = macOS, 1 = iOS, 2 = Android, 3 = Windows, 4 = Linux, 5 = Web
-declare const __platform__: number;
-
 export function detectPlatform(): Platform {
-  if (__platform__ === 0) return 'macos';
-  if (__platform__ === 1) {
-    // Distinguish iPhone from iPad by screen size
-    const screen = detectScreen();
-    const shortSide = Math.min(screen.width, screen.height);
-    if (shortSide >= 600) return 'ipados';
-    return 'ios';
-  }
-  if (__platform__ === 2) return 'android';
-  if (__platform__ === 3) return 'windows';
-  if (__platform__ === 4) return 'linux';
-  if (__platform__ === 5) return 'web';
-  return 'macos'; // default for unknown
+  // Hardcoded for Windows build — perry_get_platform() FFI not available
+  return 'windows';
 }
 
 export function detectScreen(): ScreenInfo {
@@ -106,29 +91,15 @@ export function detectScreen(): ScreenInfo {
   }
   // Platform-appropriate defaults
   if (__platform__ === 1) {
-    // iOS: detect iPad vs iPhone by checking screen FFI first, then default
-    // iPhone default (393×852 = iPhone 15)
+    // iOS (iPhone) — compact portrait
     return { width: 393, height: 852, scaleFactor: 3, orientation: 'portrait' };
   }
-  if (__platform__ === 2) {
-    // Android phone default (412×915 = Pixel 7)
-    return { width: 412, height: 915, scaleFactor: 2.625, orientation: 'portrait' };
-  }
-  // Desktop fallback (macOS, Windows, Linux)
+  // Desktop fallback
   return { width: 1440, height: 900, scaleFactor: 2, orientation: 'landscape' };
 }
 
 export function detectHasHardwareKeyboard(): boolean {
-  // Phones never have hardware keyboards by default
-  if (__platform__ === 1 || __platform__ === 2) {
-    const screen = detectScreen();
-    const shortSide = Math.min(screen.width, screen.height);
-    // Tablets might have hardware keyboards (iPad with Magic Keyboard)
-    // but we default to false for touch-first experience
-    if (shortSide < 600) return false;
-  }
-  // Desktop platforms always have hardware keyboards
-  return __platform__ === 0 || __platform__ === 3 || __platform__ === 4;
+  return true;
 }
 
 export function classifyDevice(platform: Platform, screen: ScreenInfo): DeviceClass {
@@ -232,21 +203,9 @@ function notifyListeners(): void {
   }
 }
 
-/** Perry FFI: register a callback for window resize / orientation changes. */
-declare function perry_on_layout_change(callback: () => void): void;
-
 function installNativeListeners(): void {
-  try {
-    perry_on_layout_change(() => { onLayoutChanged(); });
-  } catch {
-    // FFI not available on this platform — no dynamic relayout
-  }
-}
-
-function onLayoutChanged(): void {
-  const newCtx = buildContext();
-  _current = newCtx;
-  notifyListeners();
+  // perry_on_resize / perry_on_orientation_change FFI not available on Windows yet.
+  // TODO: Implement via Win32 WM_SIZE / WM_DISPLAYCHANGE messages.
 }
 
 // ---------------------------------------------------------------------------
