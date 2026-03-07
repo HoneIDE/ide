@@ -22,19 +22,15 @@ import { getGitFileStatus, getGitDirStatus } from '../git/git-panel';
 // Module-level state (must be declared BEFORE any function — Perry no-hoist)
 // ---------------------------------------------------------------------------
 
-interface FileEntry {
-  name: string;
-  path: string;
-  depth: number;
-  isDir: boolean;
-  label: string;
-}
+// Perry AOT: module-level array indexed assignment with objects is broken.
+// Use parallel string arrays with .push() instead of FileEntry[].
+let fileEntryPaths: string[] = [];
+let fileEntryLabels: string[] = [];
 
 let sidebarWorkspaceRoot = '';
 let panelColors: ResolvedUIColors = null as any;
 let sidebarCurrentEditorPath = '';
 
-let fileEntries: FileEntry[] = [];
 let fileEntryCount = 0;
 let fileRowWidgets: unknown[] = [];
 let fileTreeButtons: unknown[] = [];
@@ -134,8 +130,9 @@ function onFileClickDeferred(): void {
   if (idx < 0) return;
   pendingFileClickIdx = -1;
   if (idx >= fileEntryCount) return;
-  const entry = fileEntries[idx];
-  _fileClickCallback(entry.path, entry.label);
+  const path = fileEntryPaths[idx];
+  const label = fileEntryLabels[idx];
+  _fileClickCallback(path, label);
 }
 
 // ---------------------------------------------------------------------------
@@ -153,7 +150,7 @@ export function updateSidebarSelection(): void {
   // Find new selection
   selectedFileIdx = -1;
   for (let i = 0; i < fileEntryCount; i++) {
-    const epath = fileEntries[i].path;
+    const epath = fileEntryPaths[i];
     if (epath.length === sidebarCurrentEditorPath.length && epath === sidebarCurrentEditorPath) {
       selectedFileIdx = i;
       if (i < fileRowWidgets.length) {
@@ -173,7 +170,8 @@ function refreshSidebar(): void {
   widgetClearChildren(sidebarContainer);
   fileTreeButtons = [];
   selectedFileIdx = -1;
-  fileEntries = [];
+  fileEntryPaths = [];
+  fileEntryLabels = [];
   fileEntryCount = 0;
   fileRowWidgets = [];
 
@@ -316,22 +314,21 @@ function renderTreeLevel(dirPath: string, depth: number): void {
   try { names = readdirSync(dirPath); } catch (e) { return; }
 
   // Separate dirs and files
+  // Perry AOT: local array indexed assignment may also be broken — use .push()
   let dirNames: string[] = [];
   let fileNames: string[] = [];
-  let dirCount = 0;
-  let fileCount = 0;
   for (let i = 0; i < names.length; i++) {
     const n = names[i];
     if (n.charCodeAt(0) === 46) continue; // skip hidden
     const full = join(dirPath, n);
     if (isDirectory(full)) {
-      dirNames[dirCount] = n;
-      dirCount = dirCount + 1;
+      dirNames.push(n);
     } else {
-      fileNames[fileCount] = n;
-      fileCount = fileCount + 1;
+      fileNames.push(n);
     }
   }
+  const dirCount = dirNames.length;
+  const fileCount = fileNames.length;
 
   // Render directories first — chevron + name only (no folder icon)
   for (let i = 0; i < dirCount; i++) {
@@ -411,7 +408,8 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     const name = fileNames[i];
     const full = join(dirPath, name);
     const idx = fileEntryCount;
-    fileEntries[idx] = { name: name, path: full, depth: depth, isDir: false, label: name };
+    fileEntryPaths.push(full);
+    fileEntryLabels.push(name);
     fileEntryCount = fileEntryCount + 1;
 
     const row = HStack(2, []);
@@ -483,7 +481,7 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     widgetAddChild(row, rpad);
 
     fileTreeButtons.push(nameBtn);
-    fileRowWidgets[idx] = row;
+    fileRowWidgets.push(row);
 
     // Selection highlight
     if (panelColors && sidebarCurrentEditorPath.length > 0 && full === sidebarCurrentEditorPath) {
