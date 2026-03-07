@@ -67,7 +67,7 @@ const SPLIT_MAX_WIDTH = 1023;
 // ---------------------------------------------------------------------------
 
 export function detectPlatform(): Platform {
-  // Hardcoded for Windows build — perry_get_platform() FFI not available
+  // Hardcoded for Windows build -- perry_get_platform() FFI not available
   return 'windows';
 }
 
@@ -77,7 +77,7 @@ export function detectScreen(): ScreenInfo {
     const h = perry_get_screen_height();
     const s = perry_get_scale_factor();
     const o = perry_get_orientation();
-    // Validate — if FFI stubs returned 0, fall through to defaults
+    // Validate -- if FFI stubs returned 0, fall through to defaults
     if (w > 0 && h > 0) {
       return {
         width: w,
@@ -91,7 +91,7 @@ export function detectScreen(): ScreenInfo {
   }
   // Platform-appropriate defaults
   if (__platform__ === 1) {
-    // iOS (iPhone) — compact portrait
+    // iOS (iPhone) -- compact portrait
     return { width: 393, height: 852, scaleFactor: 3, orientation: 'portrait' };
   }
   // Desktop fallback
@@ -156,7 +156,7 @@ export function detectInputMode(
 }
 
 // ---------------------------------------------------------------------------
-// PlatformContext — observable state
+// PlatformContext -- observable state
 // ---------------------------------------------------------------------------
 
 type Listener = (ctx: PlatformContext) => void;
