@@ -761,6 +761,7 @@ function displayFileContent(filePath: string): void {
   setSidebarCurrentEditorPath(filePath);
   updateBreadcrumb();
   updateStatusBarLanguageImpl(filePath);
+  updateSidebarSelection();
   if (editorReady < 1) return;
   const lang = detectLanguage(filePath);
   editorInstance.setLanguage(lang);
@@ -1018,7 +1019,10 @@ function renderSidebar(colors: ResolvedUIColors): unknown {
 // ---------------------------------------------------------------------------
 
 function renderEditorArea(colors: ResolvedUIColors): unknown {
-  const defaultFile = workspaceRoot + '/src/app.ts';
+  // Use += instead of + (Perry string + is broken)
+  let defaultFile = '';
+  defaultFile += workspaceRoot;
+  defaultFile += '/src/app.ts';
   const defaultName = 'app.ts';
 
   const tbc = HStack(0, []);

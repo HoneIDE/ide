@@ -106,7 +106,9 @@ export function openTab(filePath: string, fileName: string): number {
     if (stored.length === filePath.length && stored.length > 0) {
       let match = 1;
       for (let j = 0; j < stored.length; j++) {
-        if (stored.charCodeAt(j) !== filePath.charCodeAt(j)) { match = 0; break; }
+        if (stored.charCodeAt(j) !== filePath.charCodeAt(j)) {
+          match = 0; break;
+        }
       }
       if (match > 0) {
         activeTabIdx = i;
@@ -130,9 +132,9 @@ export function openTab(filePath: string, fileName: string): number {
     displayName = fileName;
   }
 
-  // Add to tracking arrays
-  openTabs[openTabCount] = filePath;
-  openTabNames[openTabCount] = displayName;
+  // Add to tracking arrays — use .push() (Perry AOT indexed assignment broken)
+  openTabs.push(filePath);
+  openTabNames.push(displayName);
   openTabCount = openTabCount + 1;
   activeTabIdx = openTabCount - 1;
 
@@ -306,14 +308,12 @@ function onTabCloseDeferred(): void {
   if (openTabCount < 2) return;
   const newTabs: string[] = [];
   const newNames: string[] = [];
-  let j = 0;
   for (let i = 0; i < openTabCount; i++) {
     if (i === idx) continue;
-    newTabs[j] = openTabs[i];
-    newNames[j] = openTabNames[i];
-    j = j + 1;
+    newTabs.push(openTabs[i]);
+    newNames.push(openTabNames[i]);
   }
-  const newCount = j;
+  const newCount = newTabs.length;
   openTabs = newTabs;
   openTabNames = newNames;
   openTabCount = newCount;
@@ -392,4 +392,5 @@ export function initTabBar(container: unknown, colors: ResolvedUIColors, default
   openTabCount = 1;
   activeTabIdx = 0;
   rebuildTabBarDirect(openTabCount, openTabNames, openTabs, tabBarContainer);
+
 }

@@ -147,16 +147,22 @@ export function updateSidebarSelection(): void {
       setBg(fileRowWidgets[selectedFileIdx], panelColors.sideBarBackground);
     }
   }
-  // Find new selection
+  // Find new selection (use charCodeAt — Perry === is unreliable for strings)
   selectedFileIdx = -1;
   for (let i = 0; i < fileEntryCount; i++) {
     const epath = fileEntryPaths[i];
-    if (epath.length === sidebarCurrentEditorPath.length && epath === sidebarCurrentEditorPath) {
-      selectedFileIdx = i;
-      if (i < fileRowWidgets.length) {
-        setBg(fileRowWidgets[i], panelColors.listActiveSelectionBackground);
+    if (epath.length === sidebarCurrentEditorPath.length && epath.length > 0) {
+      let match = 1;
+      for (let j = 0; j < epath.length; j++) {
+        if (epath.charCodeAt(j) !== sidebarCurrentEditorPath.charCodeAt(j)) { match = 0; break; }
       }
-      return;
+      if (match > 0) {
+        selectedFileIdx = i;
+        if (i < fileRowWidgets.length) {
+          setBg(fileRowWidgets[i], panelColors.listActiveSelectionBackground);
+        }
+        return;
+      }
     }
   }
 }
@@ -483,10 +489,16 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     fileTreeButtons.push(nameBtn);
     fileRowWidgets.push(row);
 
-    // Selection highlight
-    if (panelColors && sidebarCurrentEditorPath.length > 0 && full === sidebarCurrentEditorPath) {
-      setBg(row, panelColors.listActiveSelectionBackground);
-      selectedFileIdx = idx;
+    // Selection highlight (charCodeAt comparison — Perry === unreliable for strings)
+    if (panelColors && sidebarCurrentEditorPath.length > 0 && full.length === sidebarCurrentEditorPath.length) {
+      let selMatch = 1;
+      for (let si = 0; si < full.length; si++) {
+        if (full.charCodeAt(si) !== sidebarCurrentEditorPath.charCodeAt(si)) { selMatch = 0; break; }
+      }
+      if (selMatch > 0) {
+        setBg(row, panelColors.listActiveSelectionBackground);
+        selectedFileIdx = idx;
+      }
     }
 
     widgetAddChild(sidebarContainer, row);
