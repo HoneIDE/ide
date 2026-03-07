@@ -22,6 +22,7 @@ import {
   stackSetDetachesHidden, widgetMatchParentHeight,
   embedNSView,
   openFolderDialog, openFileDialog, saveFileDialog,
+  textfieldFocus,
 } from 'perry/ui';
 import { Editor } from '@honeide/editor/perry';
 import { getActiveTheme, setActiveTheme, type ResolvedUIColors } from './theme/theme-loader';
@@ -69,7 +70,7 @@ import {
   recolorStatusBar, getStatusBarWidget,
 } from './views/status-bar/status-bar';
 // Extensions panel hidden for now — no runtime extension system yet
-import { renderChatPanel, setChatWorkspaceRoot, setChatFilePathGetter, setChatFileContentGetter } from './views/ai-chat/chat-panel';
+import { renderChatPanel, focusChatInput, getChatInputHandle, setChatWorkspaceRoot, setChatFilePathGetter, setChatFileContentGetter } from './views/ai-chat/chat-panel';
 import { renderTerminalPanel, setTerminalCwd, destroyTerminalPanel, setTerminalCloseCallback, setTerminalProblemsFileOpener } from './views/terminal/terminal-panel';
 import { renderSettingsTab } from './views/settings-ui/settings-panel';
 import { setWelcomeActions, createWelcomeContent } from './views/welcome/welcome-tab';
@@ -137,6 +138,7 @@ let rightPanelBorder: unknown = null;
 let rightPanelContainer: unknown = null;
 let rightPanelVisible: number = 0;
 let rightPanelRendered: number = 0;
+let chatInputWidget: unknown = null;
 let mainRowWidget: unknown = null;
 
 // Notification overlay
@@ -303,18 +305,19 @@ function toggleRightPanel(): void {
     rightPanelVisible = 1;
     widgetSetHidden(rightPanelWidget, 0);
     widgetSetHidden(rightPanelBorder, 0);
-    // Render chat panel on first open
+    // Defer chat panel rendering to next tick (avoid GC pressure in button callback)
     if (rightPanelRendered < 1) {
-      rightPanelRendered = 1;
-      renderChatPanel(rightPanelContainer, themeColors as ResolvedUIColors);
+      setTimeout(() => { doChatRender(); }, 0);
     }
+    // Focus chat input (uses setInterval inside chat-panel module)
+    focusChatInput();
   }
 }
 
-function autoRenderChat(): void {
+function doChatRender(): void {
   if (rightPanelRendered > 0) return;
   rightPanelRendered = 1;
-  renderChatPanel(rightPanelContainer, themeColors as ResolvedUIColors);
+  chatInputWidget = renderChatPanel(rightPanelContainer, themeColors as ResolvedUIColors);
 }
 
 export function closeEditorAction(): void {
@@ -1504,8 +1507,10 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   widgetSetWidth(rightBorderDiv, 1);
   widgetSetHugging(rightBorderDiv, 1000);
   rightPanelBorder = rightBorderDiv;
-  rightPanelVisible = 1;
+  rightPanelVisible = 0;
   rightPanelRendered = 0;
+  widgetSetHidden(rightPanel, 1);
+  widgetSetHidden(rightBorderDiv, 1);
 
   // Outer shell: left content + right panel
   const shell = HStack(0, [leftContent, rightBorderDiv, rightPanel]);
@@ -1527,8 +1532,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   _lastThemeName = settings.colorTheme;
   onSettingsChange(() => { onSettingsChanged(); });
 
-  // Auto-render chat panel after delay
-  setInterval(() => { autoRenderChat(); }, 2000);
+  // Chat panel renders on first toggle via setTimeout (avoids GC crash)
 
   return shell;
 }

@@ -318,7 +318,7 @@ export function renderTerminalPanel(container: unknown, colors: any): void {
   widgetAddChild(container, termView);
 
   // Poll every 16ms for PTY output
-  pollInterval = setInterval(doPoll, 16);
+  pollInterval = setInterval(() => { doPoll(); }, 16);
 }
 
 export function destroyTerminalPanel(): void {

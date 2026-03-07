@@ -8,16 +8,17 @@
 import {
   VStack, HStack, VStackWithInsets, HStackWithInsets, Text, Button, Spacer,
   TextField, ScrollView, scrollViewSetChild,
-  textSetFontSize, textSetFontWeight, textSetFontFamily, textSetString,
+  textSetFontSize, textSetFontWeight, textSetFontFamily, textSetString, textSetWraps,
   buttonSetBordered, buttonSetTitle,
   widgetAddChild, widgetClearChildren, widgetSetBackgroundColor, widgetSetWidth,
   widgetSetHidden, widgetSetHeight, widgetRemoveChild,
-  textfieldSetString, textfieldFocus,
+  textfieldSetString, textfieldFocus, textfieldGetString, textfieldSetOnSubmit,
 } from 'perry/ui';
 import { execSync } from 'child_process';
 import { readFileSync, writeFileSync } from 'fs';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
 import { getAppDataDir, canRunShellCommands } from '../../paths';
+import { getWorkbenchSettings } from '../../settings';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 
 // Session persistence
@@ -41,7 +42,7 @@ import {
   getAgentStatus, processAgentSSELine, resetAgentState,
   setAgentCallbacks, onApprovalAllow, onApprovalDeny,
   buildAgentSystemPrompt, buildPlanSystemPrompt,
-  getLastToolResult, getLastToolName, getLastToolId,
+  getLastToolResult, getLastToolName, getLastToolId, getPendingToolArgs,
   getAgentIterationCount,
 } from './agent-state';
 import {
@@ -55,6 +56,7 @@ import {
 
 let chatInput: unknown = null;
 let chatMessagesContainer: unknown = null;
+let chatFocusCountdown: number = 0;
 let chatInputText = '';
 let panelColors: ResolvedUIColors = null as any;
 let chatPanelReady: number = 0;
@@ -177,14 +179,22 @@ function decodeContent(s: string): string {
 // Message file I/O
 // ---------------------------------------------------------------------------
 
+function getCurrentMsgFilePath(): string {
+  // Re-derive from active session (Perry: module vars stale in callbacks)
+  const sid = getActiveSessionId();
+  if (sid.length > 0) return getSessionFilePath(sid);
+  return msgFilePath;
+}
+
 function appendMessage(isUser: number, content: string): void {
+  const fp = getCurrentMsgFilePath();
   let existing = '';
-  try { existing = readFileSync(msgFilePath); } catch (e) {}
+  try { existing = readFileSync(fp); } catch (e) {}
   if (existing.length > 0) existing += '\n';
   if (isUser > 0) { existing += 'U\n'; }
   else { existing += 'A\n'; }
   existing += encodeContent(content);
-  try { writeFileSync(msgFilePath, existing); } catch (e) {}
+  try { writeFileSync(fp, existing); } catch (e) {}
   msgCount += 1;
 
   // Auto-title on first user message
@@ -196,28 +206,52 @@ function appendMessage(isUser: number, content: string): void {
   }
 }
 
+function appendAssistantWithTool(text: string, toolId: string, toolName: string, toolArgs: string): void {
+  const fp = getCurrentMsgFilePath();
+  let existing = '';
+  try { existing = readFileSync(fp); } catch (e) {}
+  if (existing.length > 0) existing += '\n';
+  existing += 'W\n'; // 'W' = assistant message with tool_use
+  // Fields separated by SOH (\x01): text | toolId | toolName | toolArgsJson
+  let encoded = encodeContent(text);
+  encoded += '\x01';
+  encoded += toolId;
+  encoded += '\x01';
+  encoded += toolName;
+  encoded += '\x01';
+  encoded += toolArgs;
+  existing += encoded;
+  try { writeFileSync(fp, existing); } catch (e) {}
+  msgCount += 1;
+}
+
 // ---------------------------------------------------------------------------
 // API key loading
 // ---------------------------------------------------------------------------
 
-function loadApiKey(): void {
-  if (chatApiKeyLoaded > 0) return;
-  chatApiKeyLoaded = 1;
-  // Try environment variable (macOS/Linux/Windows only — not available on iOS/Android)
+/** Returns the loaded key (Perry workaround: caller must assign to module var). */
+function loadApiKeyValue(): string {
+  // 1. Try workbench settings (settings.ini — persisted via Settings UI)
+  try {
+    const s = getWorkbenchSettings();
+    if (s.aiApiKey.length > 5) { return s.aiApiKey; }
+  } catch (e) {}
+  // 2. Try environment variable (macOS/Linux/Windows only — not available on iOS/Android)
   if (canRunShellCommands()) {
     try {
       const envResult = execSync('echo $ANTHROPIC_API_KEY') as unknown as string;
       const key = trimNewline(envResult);
-      if (key.length > 5) { chatApiKey = key; return; }
+      if (key.length > 5) { return key; }
     } catch (e) {}
   }
-  // Try settings file (works on all platforms via centralized paths)
+  // 3. Try legacy settings.json file
   try {
     let settingsPath = getAppDataDir();
     settingsPath += '/settings.json';
     const raw = readFileSync(settingsPath);
-    chatApiKey = extractJsonString(raw, 'anthropicApiKey');
+    return extractJsonString(raw, 'anthropicApiKey');
   } catch (e) {}
+  return '';
 }
 
 // ---------------------------------------------------------------------------
@@ -256,6 +290,9 @@ function buildRequestBody(fileContent: string, systemPrompt: string, includeStre
         } else if (line.length > 0 && line.charCodeAt(0) === 84) {
           // 'T' = tool_result
           currentRole = 'tool_result';
+        } else if (line.length > 0 && line.charCodeAt(0) === 87) {
+          // 'W' = assistant with tool_use
+          currentRole = 'assistant_tool';
         } else {
           currentRole = 'assistant';
         }
@@ -264,7 +301,42 @@ function buildRequestBody(fileContent: string, systemPrompt: string, includeStre
         if (firstMsg < 1) body += ',';
         firstMsg = 0;
 
-        if (currentRole.length === 11) {
+        if (currentRole.length === 14) {
+          // assistant_tool — assistant message with tool_use content block
+          // Format: text\x01toolId\x01toolName\x01toolArgsJson (split on SOH=1)
+          let soh1 = -1; let soh2 = -1; let soh3 = -1;
+          for (let s = 0; s < decoded.length; s++) {
+            if (decoded.charCodeAt(s) === 1) {
+              if (soh1 < 0) soh1 = s;
+              else if (soh2 < 0) soh2 = s;
+              else if (soh3 < 0) { soh3 = s; break; }
+            }
+          }
+          if (soh1 > -1 && soh2 > 0 && soh3 > 0) {
+            const aText = decoded.slice(0, soh1);
+            const aToolId = decoded.slice(soh1 + 1, soh2);
+            const aToolName = decoded.slice(soh2 + 1, soh3);
+            const aToolArgs = decoded.slice(soh3 + 1);
+            body += '{"role":"assistant","content":[';
+            if (aText.length > 0) {
+              body += '{"type":"text","text":"';
+              body += jsonEscape(aText);
+              body += '"},';
+            }
+            body += '{"type":"tool_use","id":"';
+            body += jsonEscape(aToolId);
+            body += '","name":"';
+            body += jsonEscape(aToolName);
+            body += '","input":';
+            // toolArgs is raw JSON, don't escape it
+            if (aToolArgs.length > 1) {
+              body += aToolArgs;
+            } else {
+              body += '{}';
+            }
+            body += '}]}';
+          }
+        } else if (currentRole.length === 11) {
           // tool_result — special format
           // Content is: toolId|toolName|result
           let pipePos1 = -1;
@@ -306,8 +378,12 @@ function buildRequestBody(fileContent: string, systemPrompt: string, includeStre
 // ---------------------------------------------------------------------------
 
 function startStream(requestBody: string): void {
+  // Re-load key (Perry: module var may be stale in callback context)
   if (chatApiKey.length < 5) {
-    appendMessage(0, 'No API key found. Set ANTHROPIC_API_KEY or add "anthropicApiKey" to ~/.hone/settings.json');
+    chatApiKey = loadApiKeyValue();
+  }
+  if (chatApiKey.length < 5) {
+    appendMessage(0, 'No API key found. Set API Key in Settings (Cmd+,) or set ANTHROPIC_API_KEY env var.');
     updateMessages();
     return;
   }
@@ -340,8 +416,6 @@ let currentSSELine: string = '';
 function pollStreamTick(): void {
   if (streamActive < 1) return;
 
-  const status = streamStatus(streamHandle);
-
   // Drain all pending lines
   for (let drain = 0; drain < 50; drain++) {
     const line = streamPoll(streamHandle);
@@ -350,8 +424,18 @@ function pollStreamTick(): void {
     processCurrentLine();
   }
 
+  // Re-check status after drain (avoid race with Rust tokio task)
+  const statusAfter = streamStatus(streamHandle);
+
   // Check if done or error
-  if (status >= 2) {
+  if (statusAfter >= 2) {
+    // Final drain pass — get any remaining lines
+    for (let drain2 = 0; drain2 < 50; drain2++) {
+      const line2 = streamPoll(streamHandle);
+      if (line2.length < 1) break;
+      currentSSELine = '' + line2;
+      processCurrentLine();
+    }
     finishStream();
   }
 }
@@ -363,18 +447,17 @@ let sseExtractedText: string = '';
 
 function inlineCheckData(): void {
   // Check if currentSSELine starts with "data: " (d=100,a=97,t=116,a=97,:=58,space=32)
+  // NOTE: Perry has a bug with long && chains — use nested ifs instead
   sseLineIsData = 0;
   if (currentSSELine.length < 6) return;
-  const c0 = currentSSELine.charCodeAt(0);
-  const c1 = currentSSELine.charCodeAt(1);
-  const c2 = currentSSELine.charCodeAt(2);
-  const c3 = currentSSELine.charCodeAt(3);
-  const c4 = currentSSELine.charCodeAt(4);
-  const c5 = currentSSELine.charCodeAt(5);
-  if (c0 === 100 && c1 === 97 && c2 === 116 && c3 === 97 && c4 === 58 && c5 === 32) {
-    sseLineIsData = 1;
-    sseDataPayload = currentSSELine.slice(6);
-  }
+  if (currentSSELine.charCodeAt(0) !== 100) return; // d
+  if (currentSSELine.charCodeAt(1) !== 97) return;  // a
+  if (currentSSELine.charCodeAt(2) !== 116) return; // t
+  if (currentSSELine.charCodeAt(3) !== 97) return;  // a
+  if (currentSSELine.charCodeAt(4) !== 58) return;  // :
+  if (currentSSELine.charCodeAt(5) !== 32) return;  // space
+  sseLineIsData = 1;
+  sseDataPayload = currentSSELine.slice(6);
 }
 
 function inlineCheckDone(): number {
@@ -436,9 +519,29 @@ function inlineExtractText(): void {
 
 let streamDisplayLabel: unknown = null;
 
+function isDataLine(): number {
+  // Inline check: does currentSSELine start with "data: "?
+  if (currentSSELine.length < 6) return 0;
+  if (currentSSELine.charCodeAt(0) !== 100) return 0;
+  if (currentSSELine.charCodeAt(1) !== 97) return 0;
+  if (currentSSELine.charCodeAt(2) !== 116) return 0;
+  if (currentSSELine.charCodeAt(3) !== 97) return 0;
+  if (currentSSELine.charCodeAt(4) !== 58) return 0;
+  if (currentSSELine.charCodeAt(5) !== 32) return 0;
+  return 1;
+}
+
 function processCurrentLine(): void {
-  inlineCheckData();
-  if (sseLineIsData < 1) return;
+  const isDL = isDataLine();
+  if (isDL < 1) return;
+  sseDataPayload = currentSSELine.slice(6);
+
+  if (panelMode > 0) {
+    processAgentSSELine(currentSSELine);
+    return;
+  }
+
+  // Chat mode — simple text extraction
   if (inlineCheckDone() > 0) return;
   inlineExtractText();
   if (sseExtractedText.length > 0) {
@@ -453,6 +556,7 @@ function updateStreamingDisplay(): void {
   if (!streamDisplayLabel) {
     streamDisplayLabel = Text(streamAccumulated);
     textSetFontSize(streamDisplayLabel, 12);
+    textSetWraps(streamDisplayLabel, 320);
     if (panelColors) setFg(streamDisplayLabel, panelColors.sideBarForeground);
     widgetAddChild(chatMessagesContainer, streamDisplayLabel);
   } else {
@@ -469,6 +573,21 @@ function finishStream(): void {
   streamClose(streamHandle);
   streamHandle = 0;
   stopThinking();
+
+  // In agent/plan mode, check if we need to continue the loop
+  if (panelMode > 0) {
+    const agentSt = getAgentStatus();
+    if (agentSt === 5) {
+      // NEEDS_CONTINUE — tool executed, send tool result and continue
+      continueAgentLoop();
+      return;
+    }
+    if (agentSt === 3) {
+      // AWAITING_APPROVAL — show approval UI, don't finalize yet
+      // streamDisplayLabel stays so user sees partial text
+      return;
+    }
+  }
 
   if (streamAccumulated.length > 0) {
     appendMessage(0, streamAccumulated);
@@ -554,6 +673,7 @@ function onAgentToolResult(name: string, result: string): void {
   const resultText = Text(displayResult);
   textSetFontSize(resultText, 10);
   textSetFontFamily(resultText, 10, 'Menlo');
+  textSetWraps(resultText, 300);
   if (panelColors) setFg(resultText, panelColors.sideBarForeground);
   widgetAddChild(toolDisplayContainer, resultText);
   toolDisplayContainer = null;
@@ -660,10 +780,8 @@ function continueAgentLoop(): void {
   const toolId = getLastToolId();
   const iterCount = getAgentIterationCount();
 
-  // Append assistant message (with tool use) and tool result to conversation
-  if (streamAccumulated.length > 0) {
-    appendMessage(0, streamAccumulated);
-  }
+  // Append assistant message with tool_use metadata for API continuation
+  appendAssistantWithTool(streamAccumulated, toolId, toolName, getPendingToolArgs());
 
   // Append tool result as special 'T' message type
   let toolMsg = toolId;
@@ -687,8 +805,9 @@ function continueAgentLoop(): void {
   resetAgentState();
 
   // Build and send next request
+  const cPath = getCurrentMsgFilePath();
   let fileContent = '';
-  try { fileContent = readFileSync(msgFilePath); } catch (e) {}
+  try { fileContent = readFileSync(cPath); } catch (e) {}
 
   let systemPrompt = '';
   let toolsJson = '';
@@ -710,12 +829,13 @@ function continueAgentLoop(): void {
 }
 
 function appendToolResultMessage(content: string): void {
+  const fp = getCurrentMsgFilePath();
   let existing = '';
-  try { existing = readFileSync(msgFilePath); } catch (e) {}
+  try { existing = readFileSync(fp); } catch (e) {}
   if (existing.length > 0) existing += '\n';
   existing += 'T\n'; // Tool result role marker
   existing += encodeContent(content);
-  try { writeFileSync(msgFilePath, existing); } catch (e) {}
+  try { writeFileSync(fp, existing); } catch (e) {}
   msgCount += 1;
 }
 
@@ -998,18 +1118,35 @@ function onChatInput(text: string): void {
   chatInputText = text;
 }
 
+/** Called when user presses Enter/Return in the text field. */
+function onSubmitFromField(text: string): void {
+  chatInputText = text;
+  onSend();
+}
+
 function onSend(): void {
+  // Read text directly from widget (Perry: module vars stale in callbacks)
+  if (chatInput) {
+    let raw = textfieldGetString(chatInput);
+    // Strip trailing newline from Enter key
+    if (raw.length > 0 && raw.charCodeAt(raw.length - 1) === 10) {
+      raw = raw.slice(0, raw.length - 1);
+    }
+    chatInputText = raw;
+  }
   if (chatInputText.length < 1) return;
   if (streamActive > 0) return;
 
-  appendMessage(1, chatInputText);
+  const sendText = chatInputText;
+  appendMessage(1, sendText);
   chatInputText = '';
   if (chatInput) textfieldSetString(chatInput, '');
   updateMessages();
 
-  // Build request
+  // Build request — use fresh path (Perry: module vars stale in callbacks)
+  const currentPath = getCurrentMsgFilePath();
   let fileContent = '';
-  try { fileContent = readFileSync(msgFilePath); } catch (e) {}
+  try { fileContent = readFileSync(currentPath); } catch (e) {}
 
   let systemPrompt = 'You are Hone, an AI coding assistant built into the Hone IDE. Be concise and helpful.';
   let toolsJson = '';
@@ -1059,50 +1196,41 @@ function onModeChat(): void {
   panelMode = 0;
   updateSessionMode(getActiveSessionId(), 0);
   updateModeTabStyles();
+  updateMessages();
 }
 
 function onModeAgent(): void {
   panelMode = 1;
   updateSessionMode(getActiveSessionId(), 1);
   updateModeTabStyles();
+  updateMessages();
 }
 
 function onModePlan(): void {
   panelMode = 2;
   updateSessionMode(getActiveSessionId(), 2);
   updateModeTabStyles();
+  updateMessages();
+}
+
+function styleModeBtn(btn: unknown, active: number): void {
+  if (!btn || !panelColors) return;
+  if (active > 0) {
+    // Active: bright text + visible background
+    setBtnFg(btn, '#ffffff');
+    widgetSetBackgroundColor(btn, 0.3, 0.35, 0.55, 1.0);
+  } else {
+    // Inactive: dimmed text, transparent
+    setBtnFg(btn, '#808080');
+    widgetSetBackgroundColor(btn, 0.0, 0.0, 0.0, 0.0);
+  }
 }
 
 function updateModeTabStyles(): void {
   if (!panelColors) return;
-  // Active tab gets brighter text
-  if (modeChatBtn) {
-    if (panelMode === 0) {
-      setBtnFg(modeChatBtn, panelColors.sideBarForeground);
-      widgetSetBackgroundColor(modeChatBtn, 0.25, 0.25, 0.3, 1.0);
-    } else {
-      setBtnFg(modeChatBtn, panelColors.sideBarForeground);
-      widgetSetBackgroundColor(modeChatBtn, 0.0, 0.0, 0.0, 0.0);
-    }
-  }
-  if (modeAgentBtn) {
-    if (panelMode === 1) {
-      setBtnFg(modeAgentBtn, panelColors.sideBarForeground);
-      widgetSetBackgroundColor(modeAgentBtn, 0.25, 0.25, 0.3, 1.0);
-    } else {
-      setBtnFg(modeAgentBtn, panelColors.sideBarForeground);
-      widgetSetBackgroundColor(modeAgentBtn, 0.0, 0.0, 0.0, 0.0);
-    }
-  }
-  if (modePlanBtn) {
-    if (panelMode === 2) {
-      setBtnFg(modePlanBtn, panelColors.sideBarForeground);
-      widgetSetBackgroundColor(modePlanBtn, 0.25, 0.25, 0.3, 1.0);
-    } else {
-      setBtnFg(modePlanBtn, panelColors.sideBarForeground);
-      widgetSetBackgroundColor(modePlanBtn, 0.0, 0.0, 0.0, 0.0);
-    }
-  }
+  styleModeBtn(modeChatBtn, panelMode === 0 ? 1 : 0);
+  styleModeBtn(modeAgentBtn, panelMode === 1 ? 1 : 0);
+  styleModeBtn(modePlanBtn, panelMode === 2 ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1146,8 +1274,9 @@ function updateMessages(): void {
   if (chatPanelReady < 1) return;
   widgetClearChildren(chatMessagesContainer);
 
+  const fp = getCurrentMsgFilePath();
   let fileContent = '';
-  try { fileContent = readFileSync(msgFilePath); } catch (e) {}
+  try { fileContent = readFileSync(fp); } catch (e) {}
 
   if (fileContent.length < 2) {
     let hintText = 'Ask a question about your code';
@@ -1165,16 +1294,28 @@ function updateMessages(): void {
   let lineIdx = 0;
   let isUser: number = 0;
   let isTool: number = 0;
+  let isWithTool: number = 0;
   for (let i = 0; i <= fileContent.length; i++) {
     if (i === fileContent.length || fileContent.charCodeAt(i) === 10) {
       const line = fileContent.slice(lineStart, i);
       if (lineIdx % 2 === 0) {
         isUser = 0;
         isTool = 0;
+        isWithTool = 0;
         if (line.length > 0 && line.charCodeAt(0) === 85) { isUser = 1; }
         if (line.length > 0 && line.charCodeAt(0) === 84) { isTool = 1; }
+        if (line.length > 0 && line.charCodeAt(0) === 87) { isWithTool = 1; }
       } else {
-        const content = decodeContent(line);
+        let content = decodeContent(line);
+        // 'W' messages: extract text before first SOH (\x01)
+        if (isWithTool > 0) {
+          for (let s = 0; s < content.length; s++) {
+            if (content.charCodeAt(s) === 1) {
+              content = content.slice(0, s);
+              break;
+            }
+          }
+        }
 
         if (isTool > 0) {
           // Tool result message — show compact
@@ -1214,7 +1355,7 @@ function updateMessages(): void {
           widgetAddChild(msgBlock, roleLabel);
 
           // Use markdown rendering for all messages
-          renderMarkdownBlock(content, msgBlock, panelColors);
+          renderMarkdownBlock(content, msgBlock, panelColors, 320);
 
           if (isUser > 0 && panelColors) {
             widgetSetBackgroundColor(msgBlock, 0.18, 0.18, 0.22, 1.0);
@@ -1230,14 +1371,36 @@ function updateMessages(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+function doFocusTick(): void {
+  if (chatFocusCountdown < 1) return;
+  chatFocusCountdown = chatFocusCountdown - 1;
+  if (chatInput) textfieldFocus(chatInput);
+}
+
+export function focusChatInput(): void {
+  chatFocusCountdown = 5;
+}
+
+export function getChatInputHandle(): unknown {
+  return chatInput;
+}
+
+// ---------------------------------------------------------------------------
 // Public render function
 // ---------------------------------------------------------------------------
 
-export function renderChatPanel(container: unknown, colors: ResolvedUIColors): void {
+export function renderChatPanel(container: unknown, colors: ResolvedUIColors): unknown {
   panelColors = colors;
   chatPanelReady = 0;
 
-  loadApiKey();
+  // Load API key — assign in this function (Perry: sub-function writes to module vars are stale in caller)
+  if (chatApiKeyLoaded < 1) {
+    chatApiKey = loadApiKeyValue();
+    chatApiKeyLoaded = 1;
+  }
 
   // --- Session persistence init ---
   ensureChatsDir();
@@ -1335,12 +1498,12 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): v
     setFg(hintTitle, colors.sideBarForeground);
     widgetAddChild(hintBlock, hintTitle);
 
-    const hint1 = Text('Set the ANTHROPIC_API_KEY environment variable,');
+    const hint1 = Text('Set the API Key in Settings (Cmd+,),');
     textSetFontSize(hint1, 11);
     setFg(hint1, colors.sideBarForeground);
     widgetAddChild(hintBlock, hint1);
 
-    const hint2 = Text('or add "anthropicApiKey" to ~/.hone/settings.json');
+    const hint2 = Text('or set ANTHROPIC_API_KEY environment variable.');
     textSetFontSize(hint2, 11);
     setFg(hint2, colors.sideBarForeground);
     widgetAddChild(hintBlock, hint2);
@@ -1369,7 +1532,9 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): v
   widgetAddChild(container, attachRow);
 
   // --- Input ---
-  chatInput = TextField('Ask a question...', (text: string) => { onChatInput(text); });
+  chatInput = TextField('', (text: string) => { onChatInput(text); });
+  // Enter/Return key triggers onSubmit
+  textfieldSetOnSubmit(chatInput, (text: string) => { onSubmitFromField(text); });
   widgetAddChild(container, chatInput);
 
   const sendBtn = Button('Send', () => { onSend(); });
@@ -1379,5 +1544,9 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): v
   const sendRow = HStack(4, [sendBtn, Spacer()]);
   widgetAddChild(container, sendRow);
 
-  textfieldFocus(chatInput);
+  // Auto-focus the chat input after a delay (within same module so chatInput is fresh)
+  chatFocusCountdown = 3;
+  setInterval(() => { doFocusTick(); }, 100);
+
+  return chatInput;
 }

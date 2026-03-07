@@ -70,6 +70,8 @@ export interface WorkbenchSettings {
   searchFollowSymlinks: boolean;
   /** Last opened folder path */
   lastOpenFolder: string;
+  /** AI API key (Anthropic) */
+  aiApiKey: string;
 }
 
 type SettingsChangeListener = (settings: WorkbenchSettings) => void;
@@ -128,6 +130,7 @@ let _settings_aiInlineCompletionDelay: number = 300;
 let _settings_searchUseIgnoreFiles: number = 1;
 let _settings_searchFollowSymlinks: number = 1;
 let _settings_lastOpenFolder: string = '';
+let _settings_aiApiKey: string = '';
 let _settingsLoaded: number = 0;
 
 const _listeners: SettingsChangeListener[] = [];
@@ -190,6 +193,7 @@ export function initSettings(): void {
     if (key === 'searchUseIgnoreFiles') _settings_searchUseIgnoreFiles = val === '1' ? 1 : 0;
     if (key === 'searchFollowSymlinks') _settings_searchFollowSymlinks = val === '1' ? 1 : 0;
     if (key === 'lastOpenFolder') _settings_lastOpenFolder = val;
+    if (key === 'aiApiKey') _settings_aiApiKey = val;
   }
 }
 
@@ -224,6 +228,7 @@ function buildSnapshot(): WorkbenchSettings {
     searchUseIgnoreFiles: _settings_searchUseIgnoreFiles > 0,
     searchFollowSymlinks: _settings_searchFollowSymlinks > 0,
     lastOpenFolder: _settings_lastOpenFolder,
+    aiApiKey: _settings_aiApiKey,
   };
 }
 
@@ -342,6 +347,9 @@ function serializeFromVars(): string {
   out += 'lastOpenFolder=';
   out += _settings_lastOpenFolder;
   out += '\n';
+  out += 'aiApiKey=';
+  out += _settings_aiApiKey;
+  out += '\n';
   return out;
 }
 
@@ -366,6 +374,7 @@ export function setStringSetting(key: string, value: string): void {
   if (key === 'filesAutoSave') _settings_filesAutoSave = value;
   if (key === 'terminalCursorStyle') _settings_terminalCursorStyle = value;
   if (key === 'lastOpenFolder') _settings_lastOpenFolder = value;
+  if (key === 'aiApiKey') _settings_aiApiKey = value;
   persistToDisk();
   notifyListeners();
 }
@@ -433,6 +442,7 @@ export function updateSettings(patch: Partial<WorkbenchSettings>): void {
     if (k === 'searchUseIgnoreFiles') _settings_searchUseIgnoreFiles = (patch as any).searchUseIgnoreFiles ? 1 : 0;
     if (k === 'searchFollowSymlinks') _settings_searchFollowSymlinks = (patch as any).searchFollowSymlinks ? 1 : 0;
     if (k === 'lastOpenFolder') _settings_lastOpenFolder = (patch as any).lastOpenFolder;
+    if (k === 'aiApiKey') _settings_aiApiKey = (patch as any).aiApiKey;
   }
   persistToDisk();
   notifyListeners();

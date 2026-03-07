@@ -283,18 +283,30 @@ curl -s http://127.0.0.1:7677/screenshot --output /tmp/after.png
 - [ ] **Cmd+G** → go to line panel opens
 - [ ] **Cmd+,** → settings panel opens
 
-### A17. Core Tests
+### A17. AI Chat Session History
+
+- [ ] Click AI Chat icon → verify "History" and "+ New" buttons exist via `accessibility/elements?role=AXButton&title=History`
+- [ ] Click "+ New" → verify `accessibility/elements?role=AXButton&title=+ New` creates a new session
+- [ ] Click "History" → session list appears (new buttons visible in accessibility tree)
+- [ ] Click "History" again → session list hides
+- [ ] Send a message → verify `~/.hone/chats/index.txt` has a session entry with auto-generated title
+- [ ] Send a message → verify `~/.hone/chats/<id>.txt` message file exists
+- [ ] Click "+ New" twice → verify 2 new sessions in list (check accessibility tree for multiple session buttons)
+- [ ] Click a non-active session button → messages update (different content in chat area)
+- [ ] Mode tabs (Chat/Agent/Plan) still visible alongside History/+ New
+
+### A18. Core Tests
 
 - [ ] `cd hone-core && bun test` — all 819+ tests pass, 0 failures
 
-### A18. Relay Server
+### A19. Relay Server
 
 - [ ] **Health check** — `curl https://sync.hone.codes/health` returns `{"status":"ok",...}`
 - [ ] **WebSocket connects** — `wss://sync.hone.codes/ws` accepts connections
 - [ ] **Join protocol** — first message `{"type":"join","room":"...","device":"..."}` accepted
 - [ ] **Rate limiting** — >100 msgs/sec from one IP gets throttled
 
-### A19. Relay Tests
+### A20. Relay Tests
 
 - [ ] `cd hone-relay && bun test` — all 48 tests pass, 0 failures
 
@@ -332,10 +344,21 @@ These require visual judgment, subjective quality assessment, or interactions th
 - [ ] **Chat mode** — simple Q&A works
 - [ ] **Agent mode** — agent uses tools (file_read, search, etc.), approval dialog appears for destructive tools
 - [ ] **Plan mode** — generates a plan response (read-only tools)
-- [ ] **Clear button** — clears conversation history
+- [ ] **+ New button** — creates a new chat session, clears messages
 - [ ] **+ File button** — attaches current file as context chip
 - [ ] **Streaming indicator** — "Thinking..." animation shows during API calls
 - [ ] **Markdown rendering** — code blocks, headers, bullets render distinctly
+- [ ] **History button** — toggles session list panel (collapsible, max 180px)
+- [ ] **Session list** — shows past sessions with mode badge (C/A/P), title, and delete button
+- [ ] **Session switching** — click a session in the list, messages load correctly
+- [ ] **Session switching blocked during streaming** — can't switch while AI is responding
+- [ ] **Auto-titling** — first user message auto-generates session title (first 40 chars)
+- [ ] **Active session highlight** — current session has darker background in list
+- [ ] **Session delete** — click X on a session, it's removed from list and disk
+- [ ] **Delete active session** — deleting active session switches to most recent remaining
+- [ ] **Session persistence** — quit and relaunch, sessions persist in `~/.hone/chats/`
+- [ ] **Mode persistence** — switch to Agent mode, quit, relaunch, session restores in Agent mode
+- [ ] **Empty first launch** — no `~/.hone/chats/` dir, app creates it and starts a fresh session
 
 ### B4. Terminal Experience
 

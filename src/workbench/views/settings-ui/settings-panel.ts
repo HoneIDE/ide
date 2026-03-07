@@ -335,6 +335,11 @@ function onAiModelChange(text: string): void {
   if (text.length > 0) setStringSetting('aiModel', text);
 }
 
+function onAiApiKeyChange(text: string): void {
+  // Only save keys that look like real API keys (at least 20 chars, starts with 'sk-')
+  if (text.length > 20) setStringSetting('aiApiKey', text);
+}
+
 // ---------------------------------------------------------------------------
 // Search helpers
 // ---------------------------------------------------------------------------
@@ -666,6 +671,7 @@ function buildContent(ctr: unknown, colors: ResolvedUIColors): void {
 
   // ---- AI ----
   if (matchesSearch('AI Provider', 'The AI provider to use for completions') > 0) hasAi = 1;
+  if (matchesSearch('API Key', 'API key for the AI provider') > 0) hasAi = 1;
   if (matchesSearch('AI Chat Model', 'The model to use for AI chat') > 0) hasAi = 1;
   if (matchesSearch('Inline Completion', 'Enable AI inline code completions') > 0) hasAi = 1;
   if (matchesSearch('Inline Completion Delay', 'Delay in ms before showing completions') > 0) hasAi = 1;
@@ -674,6 +680,8 @@ function buildContent(ctr: unknown, colors: ResolvedUIColors): void {
     makeSection(ctr, colors, 'AI');
     if (matchesSearch('AI Provider', 'The AI provider to use for completions') > 0)
       _hAiProviderBtn = makeCycleRow(ctr, colors, 'Provider', 'The AI provider to use for completions', s.aiProvider, () => { onAiProviderCycle(); });
+    if (matchesSearch('API Key', 'API key for the AI provider') > 0)
+      makeTextRow(ctr, colors, 'API Key', 'API key for the AI provider (paste full key to update)', s.aiApiKey.length > 8 ? 'sk-...set' : '', onAiApiKeyChange);
     if (matchesSearch('AI Chat Model', 'The model to use for AI chat') > 0)
       makeTextRow(ctr, colors, 'Chat Model', 'The model to use for AI chat', s.aiModel, onAiModelChange);
     if (matchesSearch('Inline Completion', 'Enable AI inline code completions') > 0)

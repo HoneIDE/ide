@@ -197,7 +197,7 @@ function refreshSidebar(): void {
   textSetFontWeight(explorerLabel, 11, 0.4);
   if (panelColors) setFg(explorerLabel, panelColors.sideBarTitleForeground);
   const explorerRow = HStackWithInsets(0, 0, 4, 0, 4);
-  widgetSetHeight(explorerRow, 22);
+  widgetSetHeight(explorerRow, 24);
   widgetAddChild(explorerRow, explorerLabel);
   widgetAddChild(explorerRow, Spacer());
   widgetAddChild(sidebarContainer, explorerRow);
@@ -214,7 +214,7 @@ function refreshSidebar(): void {
   textSetFontSize(dotsBtn, 10);
   if (panelColors) setBtnTint(dotsBtn, panelColors.sideBarForeground);
   const foldersRow = HStackWithInsets(0, 0, 4, 0, 4);
-  widgetSetHeight(foldersRow, 22);
+  widgetSetHeight(foldersRow, 24);
   if (panelColors) setBg(foldersRow, panelColors.sideBarSectionHeaderBackground);
   widgetAddChild(foldersRow, foldersLabel);
   widgetAddChild(foldersRow, Spacer());
@@ -265,7 +265,7 @@ function refreshSidebar(): void {
   if (panelColors) setBtnTint(collapseBtn, panelColors.sideBarForeground);
 
   const rootRow = HStackWithInsets(2, 0, 4, 0, 4);
-  widgetSetHeight(rootRow, 22);
+  widgetSetHeight(rootRow, 24);
   widgetAddChild(rootRow, rootChevron);
   widgetAddChild(rootRow, rootLabel);
   widgetAddChild(rootRow, Spacer());
@@ -341,7 +341,7 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     const id = pathId(full);
 
     const row = HStack(2, []);
-    widgetSetHeight(row, 22);
+    widgetSetHeight(row, 24);
 
     // Indent
     const indentPx = depth * 20;
@@ -415,7 +415,7 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     fileEntryCount = fileEntryCount + 1;
 
     const row = HStack(2, []);
-    widgetSetHeight(row, 22);
+    widgetSetHeight(row, 24);
 
     // Indent (depth*20 + 16 for chevron space)
     const indentPx = depth * 20 + 16;
