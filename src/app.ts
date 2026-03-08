@@ -12,7 +12,9 @@ import { App } from 'perry/ui';
 import {
   getPlatformContext,
   onPlatformContextChange,
+  getLayoutModeNum,
   type PlatformContext,
+  type LayoutMode,
 } from './platform';
 import { createDefaultLayout, type GridNode } from './workbench/layout/grid';
 import { TabManager } from './workbench/layout/tab-manager';
@@ -24,6 +26,7 @@ import { registerBuiltinCommands } from './commands';
 import { getDefaultKeybindings, type Keybinding } from './keybindings';
 import { loadTheme, setActiveTheme, type ThemeData } from './workbench/theme/theme-loader';
 import { HONE_DARK } from './workbench/theme/builtin-themes';
+import { loadBuiltinThemes } from './workbench/theme/load-builtin-themes';
 import { renderWorkbench } from './workbench/render';
 import { setupNativeMenuBar } from './workbench/native-menu';
 
@@ -53,11 +56,18 @@ export function getAppState(): AppState | null {
 // Perry app entry point
 // ---------------------------------------------------------------------------
 
+// 2. Detect platform — use numeric getter (cross-module string returns broken in Perry iOS)
+const _layoutNum = getLayoutModeNum();
+
+// Map number to string in same module (strings created locally work)
+let _layoutMode: LayoutMode = 'full';
+if (_layoutNum === 0) _layoutMode = 'compact';
+if (_layoutNum === 1) _layoutMode = 'split';
+
 setupNativeMenuBar();
 
-App({
-  title: 'Hone',
-  width: 1280,
-  height: 800,
-  body: renderWorkbench('full'),
-});
+// 4. Render the workbench
+const body = renderWorkbench(_layoutMode);
+
+// 5. Run
+App({ title: 'Hone', width: 1200, height: 800, body: body });

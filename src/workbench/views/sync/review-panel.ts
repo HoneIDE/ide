@@ -59,8 +59,8 @@ export function buildReviewPanel(colors: ResolvedUIColors): unknown {
 
   const title = Text('Changes Queue');
   textSetFontSize(title, 11);
-  textSetFontWeight(title, 600);
-  setFg(title, colors.sidebarForeground);
+  textSetFontWeight(title, 11, 0.6);
+  setFg(title, colors.sideBarForeground);
 
   // Batch action buttons
   const acceptAllBtn = Button('Accept All', () => { _acceptAllCallback(); });
@@ -165,7 +165,7 @@ function refreshReviewPanel(): void {
   if (conflictCount > 0) {
     const conflictHeader = Text('Undo Conflicts');
     textSetFontSize(conflictHeader, 11);
-    textSetFontWeight(conflictHeader, 600);
+    textSetFontWeight(conflictHeader, 11, 0.6);
     textSetColor(conflictHeader, 0.9, 0.6, 0.2, 1.0); // orange
     widgetAddChild(reviewContainer, conflictHeader);
 
@@ -241,7 +241,7 @@ function buildGroupCard(groupId: string): unknown {
   // Group header
   const groupLabel = Text('Group: ' + groupId);
   textSetFontSize(groupLabel, 11);
-  textSetFontWeight(groupLabel, 600);
+  textSetFontWeight(groupLabel, 11, 0.6);
   if (reviewColors) textSetColor(groupLabel, 0.4, 0.7, 1.0, 1.0); // blue accent
 
   const metaLabel = Text(indices.length + ' proposal(s), ' + totalFiles + ' file(s) | From: ' + firstSource);
@@ -253,7 +253,7 @@ function buildGroupCard(groupId: string): unknown {
   for (let i = 0; i < indices.length; i++) {
     const desc = Text('- ' + propDescriptions[indices[i]]);
     textSetFontSize(desc, 11);
-    if (reviewColors) setFg(desc, reviewColors.sidebarForeground);
+    if (reviewColors) setFg(desc, reviewColors.sideBarForeground);
     widgetAddChild(descContainer, desc);
   }
 
@@ -288,8 +288,8 @@ function buildProposalCard(idx: number): unknown {
   // Description
   const descLabel = Text(desc);
   textSetFontSize(descLabel, 12);
-  textSetFontWeight(descLabel, 600);
-  if (reviewColors) setFg(descLabel, reviewColors.sidebarForeground);
+  textSetFontWeight(descLabel, 12, 0.6);
+  if (reviewColors) setFg(descLabel, reviewColors.sideBarForeground);
 
   // Source + file count
   const metaLabel = Text('From: ' + source + ' | ' + fileCount + ' file(s)');

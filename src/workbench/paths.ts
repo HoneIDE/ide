@@ -8,7 +8,7 @@
  *   0 = macOS, 1 = iOS, 2 = Android, 3 = Windows, 4 = Linux, 5 = Web
  */
 
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { execSync } from 'child_process';
 
 declare const __platform__: number;
@@ -207,6 +207,44 @@ export function getCwd(): string {
  */
 export function canRunShellCommands(): boolean {
   return __platform__ === 0 || __platform__ === 3 || __platform__ === 4;
+}
+
+/**
+ * Get or create a persistent device ID (16 hex chars).
+ * Stored in ~/.hone/device-id.
+ */
+let _deviceId = '';
+const HEX = '0123456789abcdef';
+
+export function getOrCreateDeviceId(): string {
+  if (_deviceId.length > 0) return _deviceId;
+
+  let path = getAppDataDir();
+  path += '/device-id';
+
+  try {
+    if (existsSync(path)) {
+      const stored = readFileSync(path);
+      if (stored.length >= 16) {
+        _deviceId = stored.slice(0, 16);
+        return _deviceId;
+      }
+    }
+  } catch (e: any) { /* ignore */ }
+
+  // Generate new 16-char hex ID
+  let id = '';
+  for (let i = 0; i < 16; i++) {
+    const idx = Math.floor(Math.random() * 16);
+    id += HEX[idx];
+  }
+  _deviceId = id;
+
+  try {
+    writeFileSync(path, id);
+  } catch (e: any) { /* ignore */ }
+
+  return _deviceId;
 }
 
 /**

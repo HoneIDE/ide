@@ -19,10 +19,12 @@ import {
   buttonSetBordered, buttonSetImage, buttonSetImagePosition,
   widgetAddChild, widgetClearChildren, widgetRemoveChild,
   widgetSetWidth, widgetSetHeight, widgetSetHugging, widgetSetHidden, widgetSetBackgroundColor,
-  stackSetDetachesHidden, widgetMatchParentHeight,
+  stackSetDetachesHidden, stackSetDistribution,
+  widgetMatchParentHeight, widgetMatchParentWidth,
   embedNSView,
   openFolderDialog, openFileDialog, saveFileDialog,
   textfieldFocus,
+  frameSplitCreate, frameSplitAddChild,
 } from 'perry/ui';
 import { Editor } from '@honeide/editor/perry';
 import { getActiveTheme, setActiveTheme } from './theme/theme-loader';
@@ -95,6 +97,14 @@ import { initNotifications, showNotification } from './views/notifications/notif
 import { setLspWorkspaceRoot, initLspBridge, triggerDiagnostics, getCompletions, setDiagnosticsStatusUpdater } from './views/lsp/lsp-bridge';
 import { setDiagnosticsFileOpener } from './views/lsp/diagnostics-panel';
 import { createAutocompletePopup, setAutocompleteAcceptHandler } from './views/lsp/autocomplete-popup';
+import { buildSyncPanel, refreshSyncPanel, setSyncPanelColors, setSyncStatusText, setSyncPairCallback, setSyncPairingCode, addSyncDevice, removeSyncDevice } from './views/sync/sync-panel';
+import { initSyncHost, setOnGuestConnected, setOnGuestDisconnected, getHostRoomId, getHostRelayUrl, generateHostPairingCode } from './sync-host';
+import { initSyncGuest } from './sync-guest';
+import { getOrCreateDeviceId } from './paths';
+import {
+  connectToRelay, setOnRelayConnected, setOnRelayDisconnected,
+  setOnRelayMessage, isRelayConnected,
+} from './sync-transport';
 
 // Compile-time platform ID injected by Perry codegen:
 // 0 = macOS, 1 = iOS, 2 = Android, 3 = Windows, 4 = Linux, 5 = Web
@@ -106,6 +116,12 @@ declare function hone_editor_nsview(handle: number): number;
 
 // Dynamic file tree — loaded from opened folder
 let workspaceRoot = '';
+
+// DEBUG info from app.ts
+let _debugInfo = '';
+export function setDebugInfo(info: string): void {
+  _debugInfo = info;
+}
 
 // ---------------------------------------------------------------------------
 // Data
@@ -140,7 +156,12 @@ let sidebarToggleReady: number = 0;
 // Compact layout panel toggling
 let compactEditorPane: unknown = null;
 let compactExplorerPane: unknown = null;
+let compactChatPane: unknown = null;
 let compactShowingExplorer: number = 0;
+let compactShowingChat: number = 0;
+let compactChatRendered: number = 0;
+let compactShell: unknown = null;
+let compactContentContainer: unknown = null;
 
 // Breadcrumb bar
 let breadcrumbContainer: unknown = null;
@@ -897,8 +918,8 @@ function onActivityClickDeferred(): void {
   const idx = pendingActivityIdx;
   if (idx < 0) return;
   pendingActivityIdx = -1;
-  // AI Chat (idx=3) toggles the right panel instead of the sidebar
-  if (idx === 3) {
+  // AI Chat (idx=4) toggles the right panel instead of the sidebar
+  if (idx === 4) {
     toggleRightPanel();
     return;
   }
@@ -906,7 +927,7 @@ function onActivityClickDeferred(): void {
   updateActivityBar();
   switchSidebarPanel(idx);
   // Persist active panel (only for sidebar panels, not settings gear)
-  if (idx >= 0 && idx <= 2) {
+  if (idx >= 0 && idx <= 3) {
     updateSettings({ activePanelIndex: idx });
   }
 }
@@ -933,7 +954,14 @@ function switchSidebarPanel(idx: number): void {
     return;
   }
 
-  // idx===3 (AI Chat) handled by toggleRightPanel, not here
+  if (idx === 3) {
+    widgetClearChildren(sidebarContainer);
+    const panel = buildSyncPanel(themeColors as ResolvedUIColors);
+    widgetAddChild(sidebarContainer, panel);
+    return;
+  }
+
+  // idx===4 (AI Chat) handled by toggleRightPanel, not here
 }
 
 // ---------------------------------------------------------------------------
@@ -944,10 +972,10 @@ function renderActivityBarDesktop(): unknown {
   activityButtons = [];
   activityIndicators = [];
 
-  // Icons: 0=Files, 1=Search, 2=Git, 3=AI Chat
-  const icons = ['doc.on.doc', 'magnifyingglass', 'arrow.triangle.branch', 'sparkles'];
+  // Icons: 0=Files, 1=Search, 2=Git, 3=Sync, 4=AI Chat
+  const icons = ['doc.on.doc', 'magnifyingglass', 'arrow.triangle.branch', 'arrow.triangle.2.circlepath', 'sparkles'];
 
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 5; i++) {
     const idx = i;
     const btn = Button('', () => { onActivityClick(idx); });
     buttonSetBordered(btn, 0);
@@ -974,7 +1002,10 @@ function renderActivityBarDesktop(): unknown {
   const bar = VStackWithInsets(4, 0, 0, 0, 0);
   setBg(bar, getActivityBarBackground());
   for (let i = 0; i < activityButtons.length; i++) {
-    const row = HStack(0, [activityIndicators[i], activityButtons[i]]);
+    // 2px indicator | 10px gap | button (centered) | fill
+    const gap = VStack(0, []);
+    widgetSetWidth(gap, 10);
+    const row = HStack(0, [activityIndicators[i], gap, activityButtons[i], Spacer()]);
     widgetSetHeight(row, 48);
     widgetAddChild(bar, row);
   }
@@ -1015,6 +1046,60 @@ function renderActivityBarCompact(): unknown {
   for (let i = 0; i < activityButtons.length; i++) {
     widgetAddChild(bar, activityButtons[i]);
   }
+  return bar;
+}
+
+// ---------------------------------------------------------------------------
+// iPad top activity bar — horizontal icons with safe area inset
+// ---------------------------------------------------------------------------
+
+function initSplitSidebarExplorer(): void {
+  if (!sidebarContainer) return;
+  const colors = getActiveTheme();
+  if (!colors) return;
+  renderExplorerPanel(sidebarContainer, colors);
+}
+
+function renderIPadTopBar(colors: ResolvedUIColors): unknown {
+  // Create buttons using same handlers as bottom toolbar
+  const filesBtn = Button('', () => { onBottomBarFiles(); });
+  const searchBtn = Button('', () => { onBottomBarSearch(); });
+  const aiBtn = Button('', () => { onBottomBarAI(); });
+  const syncBtn = Button('', () => { onBottomBarSync(); });
+  const settingsBtn = Button('', () => { onBottomBarSettings(); });
+
+  buttonSetImage(filesBtn, 'folder');
+  buttonSetImage(searchBtn, 'magnifyingglass');
+  buttonSetImage(aiBtn, 'sparkles');
+  buttonSetImage(syncBtn, 'arrow.triangle.2.circlepath');
+  buttonSetImage(settingsBtn, 'gearshape');
+
+  const allBtns = [filesBtn, searchBtn, aiBtn, syncBtn, settingsBtn];
+  for (let i = 0; i < allBtns.length; i++) {
+    buttonSetBordered(allBtns[i], 0);
+    buttonSetImagePosition(allBtns[i], 1);
+    setBtnTint(allBtns[i], colors.activityBarForeground);
+    widgetSetWidth(allBtns[i], 48);
+    widgetSetHeight(allBtns[i], 40);
+  }
+
+  // Icon row — EqualSpacing distribution spreads icons across the full width
+  const iconRow = HStack(0, [filesBtn, searchBtn, aiBtn, syncBtn, settingsBtn]);
+  stackSetDistribution(iconRow, 3); // 3 = EqualSpacing
+
+  // Safe area spacer (iPad top inset ~24px for status bar area)
+  const safeArea = Text('');
+  widgetSetHeight(safeArea, 24);
+
+  // 1px bottom border
+  const border = Text('');
+  widgetSetHeight(border, 1);
+  setBg(border, colors.panelBorder);
+
+  const bar = VStack(0, [safeArea, iconRow, border]);
+  setBg(bar, colors.activityBarBackground);
+
+  activityBarWidget = bar;
   return bar;
 }
 
@@ -1073,7 +1158,9 @@ function renderEditorArea(): unknown {
 
   const editorPane = VStack(0, [tbc, breadcrumbContainer, editorWidget]);
   setBg(editorPane, getEditorBackground());
-  widgetSetHugging(editorPane, 1);
+  widgetSetHugging(editorPane, 1); // editor pane stretches in mainRow
+  // Embedded NSView has no intrinsic width — pin it to fill the VStack's width
+  widgetMatchParentWidth(editorWidget);
   editorPaneWidget = editorPane;
 
   return editorPane;
@@ -1083,16 +1170,46 @@ function renderEditorArea(): unknown {
 // Compact layout — panel toggling
 // ---------------------------------------------------------------------------
 
+function swapCompactPanel(panel: unknown): void {
+  if (!compactContentContainer) return;
+  widgetClearChildren(compactContentContainer);
+  widgetAddChild(compactContentContainer, panel);
+}
+
 function showExplorer(): void {
   compactShowingExplorer = 1;
-  widgetSetHidden(compactEditorPane, 1);
-  widgetSetHidden(compactExplorerPane, 0);
+  compactShowingChat = 0;
+  swapCompactPanel(compactExplorerPane);
 }
 
 function hideExplorer(): void {
   compactShowingExplorer = 0;
-  widgetSetHidden(compactEditorPane, 0);
-  widgetSetHidden(compactExplorerPane, 1);
+  compactShowingChat = 0;
+  swapCompactPanel(compactEditorPane);
+}
+
+function showChat(): void {
+  compactShowingChat = 1;
+  compactShowingExplorer = 0;
+  // Lazy-create chat pane
+  if (!compactChatPane) {
+    const chatPane = VStackWithInsets(0, 8, 8, 8, 8);
+    setBg(chatPane, (themeColors as ResolvedUIColors).sideBarBackground);
+    compactChatPane = chatPane;
+  }
+  swapCompactPanel(compactChatPane);
+  // Render chat panel on first show (deferred to avoid GC pressure)
+  if (compactChatRendered < 1) {
+    compactChatRendered = 1;
+    setTimeout(() => { doCompactChatRender(); }, 0);
+  } else {
+    focusChatInput();
+  }
+}
+
+function doCompactChatRender(): void {
+  if (!compactChatPane) return;
+  chatInputWidget = renderChatPanel(compactChatPane, themeColors as ResolvedUIColors);
 }
 
 function onBottomBarFiles(): void {
@@ -1107,17 +1224,31 @@ function onBottomBarEditor(): void {
   hideExplorer();
 }
 
-function onBottomBarAI(): void {
-  // Toggle AI chat in compact mode — switch sidebar to chat panel
-  if (compactShowingExplorer > 0) {
-    hideExplorer();
-  }
-  // Signal to render AI chat overlay (handled by chat-panel)
+function onBottomBarSearch(): void {
+  // Show search panel in sidebar, then show sidebar
+  if (!sidebarContainer) return;
+  widgetClearChildren(sidebarContainer);
+  resetSearchPanelReady();
+  renderSearchPanelImpl(sidebarContainer, themeColors as ResolvedUIColors);
+  showExplorer();
 }
 
-function onBottomBarTerm(): void {
-  // Toggle terminal in compact mode
-  toggleTerminalAction();
+function onBottomBarAI(): void {
+  // Toggle AI chat in compact mode
+  if (compactShowingChat > 0) {
+    hideExplorer(); // hideExplorer resets both flags and shows editor
+  } else {
+    showChat();
+  }
+}
+
+function onBottomBarSync(): void {
+  // Show sync panel in sidebar, then show sidebar
+  if (!sidebarContainer) return;
+  widgetClearChildren(sidebarContainer);
+  const panel = buildSyncPanel(themeColors as ResolvedUIColors);
+  widgetAddChild(sidebarContainer, panel);
+  showExplorer();
 }
 
 function onBottomBarSettings(): void {
@@ -1128,23 +1259,23 @@ function onBottomBarSettings(): void {
 
 function renderBottomToolbar(): unknown {
   const filesBtn = Button('', () => { onBottomBarFiles(); });
-  const editorBtn = Button('', () => { onBottomBarEditor(); });
+  const searchBtn = Button('', () => { onBottomBarSearch(); });
   const aiBtn = Button('', () => { onBottomBarAI(); });
-  const termBtn = Button('', () => { onBottomBarTerm(); });
+  const syncBtn = Button('', () => { onBottomBarSync(); });
   const settingsBtn = Button('', () => { onBottomBarSettings(); });
 
   buttonSetImage(filesBtn, 'folder');
-  buttonSetImage(editorBtn, 'doc.text');
+  buttonSetImage(searchBtn, 'magnifyingglass');
   buttonSetImage(aiBtn, 'sparkles');
-  buttonSetImage(termBtn, 'terminal');
+  buttonSetImage(syncBtn, 'arrow.triangle.2.circlepath');
   buttonSetImage(settingsBtn, 'gearshape');
   buttonSetImagePosition(filesBtn, 1);
-  buttonSetImagePosition(editorBtn, 1);
+  buttonSetImagePosition(searchBtn, 1);
   buttonSetImagePosition(aiBtn, 1);
-  buttonSetImagePosition(termBtn, 1);
+  buttonSetImagePosition(syncBtn, 1);
   buttonSetImagePosition(settingsBtn, 1);
 
-  const allBtns = [filesBtn, editorBtn, aiBtn, termBtn, settingsBtn];
+  const allBtns = [filesBtn, searchBtn, aiBtn, syncBtn, settingsBtn];
   for (let i = 0; i < allBtns.length; i++) {
     buttonSetBordered(allBtns[i], 0);
     setBtnTint(allBtns[i], getActivityBarForeground());
@@ -1153,7 +1284,7 @@ function renderBottomToolbar(): unknown {
     widgetSetHeight(allBtns[i], 44);
   }
 
-  const bar = HStack(0, [filesBtn, Spacer(), editorBtn, Spacer(), aiBtn, Spacer(), termBtn, Spacer(), settingsBtn]);
+  const bar = HStack(0, [filesBtn, Spacer(), searchBtn, Spacer(), aiBtn, Spacer(), syncBtn, Spacer(), settingsBtn]);
   setBg(bar, getActivityBarBackground());
   widgetSetHeight(bar, 49); // 44pt buttons + 5pt padding
   return bar;
@@ -1183,6 +1314,9 @@ function recolorUI(): void {
 
   // Right panel (AI Chat)
   if (rightPanelWidget) setBg(rightPanelWidget, getSideBarBackground());
+
+  // Sync panel colors
+  setSyncPanelColors(c);
 
   // Activity bar icon colors
   for (let i = 0; i < activityButtons.length; i++) {
@@ -1253,6 +1387,102 @@ function onSettingsChanged(): void {
   if (setActiveTheme(newTheme)) {
     recolorUI();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Sync system initialization
+// ---------------------------------------------------------------------------
+
+function initSyncSystem(layoutMode: LayoutMode): void {
+  const deviceId = getOrCreateDeviceId();
+  const ctx = getPlatformContext();
+
+  // Wire pair button callback
+  setSyncPairCallback(onSyncPairClicked);
+
+  if (ctx.deviceClass === 'desktop') {
+    // Desktop is the sync host
+    initSyncHost(deviceId, 'Hone Desktop');
+    setOnGuestConnected(onSyncGuestConnected);
+    setOnGuestDisconnected(onSyncGuestDisconnected);
+  } else {
+    // Mobile/tablet is the sync guest
+    let deviceName = 'Hone Mobile';
+    if (ctx.deviceClass === 'tablet') {
+      deviceName = 'Hone iPad';
+    }
+    let platform = 'unknown';
+    if (__platform__ === 0) platform = 'macOS';
+    if (__platform__ === 1) platform = 'iOS';
+    if (__platform__ === 2) platform = 'Android';
+    if (__platform__ === 3) platform = 'Windows';
+    initSyncGuest(deviceId, deviceName, platform);
+  }
+
+  // Wire relay event callbacks
+  setOnRelayConnected(onRelayConnectedImpl);
+  setOnRelayDisconnected(onRelayDisconnectedImpl);
+  setOnRelayMessage(onRelayMessageImpl);
+
+  // Connect to relay (desktop hosts immediately; guests connect after pairing)
+  if (ctx.deviceClass === 'desktop') {
+    const relayUrl = getHostRelayUrl();
+    const roomId = getHostRoomId();
+    connectToRelay(relayUrl, roomId, deviceId);
+  }
+
+  // Poll sync panel refresh every 5s
+  setInterval(() => { refreshSyncPanelDeferred(); }, 5000);
+}
+
+function onSyncPairClicked(): void {
+  const code = generateHostPairingCode();
+  setSyncPairingCode(code);
+  let msg = 'Code: ';
+  msg += code;
+  msg += ' — Waiting for guest...';
+  syncStatusOverride = msg;
+  setSyncStatusText(msg);
+}
+
+function onSyncGuestConnected(deviceId: string, deviceName: string): void {
+  addSyncDevice(deviceName, 'connected');
+  syncStatusOverride = '';
+  setSyncStatusText('Guest connected');
+  refreshSyncPanelDeferred();
+}
+
+function onSyncGuestDisconnected(deviceId: string): void {
+  // For now just refresh — could remove device by id
+  refreshSyncPanelDeferred();
+}
+
+function onRelayConnectedImpl(): void {
+  setSyncStatusText('Connected to relay');
+  refreshSyncPanelDeferred();
+}
+
+function onRelayDisconnectedImpl(): void {
+  setSyncStatusText('Disconnected from relay');
+  refreshSyncPanelDeferred();
+}
+
+function onRelayMessageImpl(data: string): void {
+  // Messages from relay will be processed here
+  // For now, just refresh the panel to show activity
+  refreshSyncPanelDeferred();
+}
+
+let syncStatusOverride = '';
+
+function refreshSyncPanelDeferred(): void {
+  // Check relay connection state and update status if no user-initiated override
+  if (isRelayConnected() > 0) {
+    if (syncStatusOverride.length === 0) {
+      setSyncStatusText('Connected to relay');
+    }
+  }
+  refreshSyncPanel();
 }
 
 // ---------------------------------------------------------------------------
@@ -1334,6 +1564,71 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   refreshGitState();
   updateStatusBarBranch();
 
+  // Initialize sync system
+  initSyncSystem(layoutMode);
+
+  if (layoutMode === 'compact') {
+    const editorArea = renderEditorArea(themeColors);
+    const explorerPanel = renderSidebar(themeColors);
+    const statusBar = renderStatusBarImpl(themeColors);
+    const bottomBar = renderBottomToolbar(themeColors);
+
+    compactEditorPane = editorArea;
+    compactExplorerPane = explorerPanel;
+
+    // Content container holds the active panel (editor, explorer, or chat).
+    // On iOS, hidden views in UIStackView break layout — so we swap children
+    // dynamically instead of using widgetSetHidden.
+    const contentCtr = VStack(0, [editorArea]);
+    widgetSetHugging(contentCtr, 1);
+    compactContentContainer = contentCtr;
+
+    widgetSetHugging(statusBar, 750);
+    widgetSetHugging(bottomBar, 750);
+
+    const shell = VStack(0, [contentCtr, statusBar, bottomBar]);
+    setBg(shell, themeColors.editorBackground);
+    compactShell = shell;
+    return shell;
+  }
+
+  if (layoutMode === 'split') {
+    // Full iPad split layout using frame-based split
+    // renderSidebar() can't be used directly because renderExplorerPanel triggers
+    // a layout crash in frame-based containers. Build sidebar inline instead.
+    const sidebarInner = VStackWithInsets(0, 0, 0, 0, 0);
+    setBg(sidebarInner, themeColors.sideBarBackground);
+    sidebarContainer = sidebarInner;
+    // Defer explorer panel init to after layout is established
+    const sideScroll = ScrollView();
+    scrollViewSetChild(sideScroll, sidebarInner);
+    const leftBox = sideScroll;
+    const rightBox = renderEditorArea(themeColors);
+
+    const statusBar = renderStatusBarImpl(themeColors);
+    const topBar = renderIPadTopBar(themeColors);
+    widgetSetHugging(topBar, 750);
+
+    const splitContainer = frameSplitCreate(280);
+    frameSplitAddChild(splitContainer, leftBox);
+    frameSplitAddChild(splitContainer, rightBox);
+    widgetSetHugging(splitContainer, 1);
+
+    widgetSetHugging(statusBar, 750);
+
+    const shell = VStack(0, [topBar, splitContainer, statusBar]);
+    setBg(shell, themeColors.editorBackground);
+
+    // Defer explorer panel init — calling it synchronously during layout setup
+    // causes the frame split container to black-screen on iOS.
+    setTimeout(() => { initSplitSidebarExplorer(); }, 100);
+
+    _lastThemeName = getWorkbenchSettings().colorTheme;
+    onSettingsChange(() => { onSettingsChanged(); });
+
+    return shell;
+  }
+
   // Desktop (full) layout
   const settings = getWorkbenchSettings();
 
@@ -1365,7 +1660,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   }
 
   // Apply persisted active panel
-  if (settings.activePanelIndex > 0 && settings.activePanelIndex <= 2) {
+  if (settings.activePanelIndex > 0 && settings.activePanelIndex <= 3) {
     activeActivityIdx = settings.activePanelIndex;
     updateActivityBar();
     switchSidebarPanel(settings.activePanelIndex);
@@ -1420,8 +1715,12 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   // Left content area: mainRow + terminal + status bar
   const leftContent = VStack(0, [mainRow, termPanel, statusBar]);
   setBg(leftContent, getEditorBackground());
-  widgetSetHugging(leftContent, 1);
-  stackSetDetachesHidden(leftContent, 1);
+  widgetSetHugging(leftContent, 1); // stretch to fill
+  stackSetDetachesHidden(leftContent, 1); // hidden terminal doesn't take up space
+  // VStack alignment=Leading doesn't stretch children to fill cross-axis width.
+  // Pin arranged subviews' widths to the VStack so they fill horizontally.
+  widgetMatchParentWidth(mainRow);
+  widgetMatchParentWidth(statusBar);
   leftContentWidget = leftContent;
 
   // Right panel for AI Chat

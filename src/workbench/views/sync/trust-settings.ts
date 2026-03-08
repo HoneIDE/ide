@@ -49,8 +49,8 @@ export function buildTrustSettings(colors: ResolvedUIColors): unknown {
 
   const title = Text('Trust Settings');
   textSetFontSize(title, 11);
-  textSetFontWeight(title, 600);
-  setFg(title, colors.sidebarForeground);
+  textSetFontWeight(title, 11, 0.6);
+  setFg(title, colors.sideBarForeground);
 
   const desc = Text('Configure how changes from each source are handled');
   textSetFontSize(desc, 10);
@@ -102,12 +102,12 @@ function refreshTrustPanel(): void {
   // Default trust level row
   const defaultLabel = Text('Default trust level:');
   textSetFontSize(defaultLabel, 11);
-  if (trustColors) setFg(defaultLabel, trustColors.sidebarForeground);
+  if (trustColors) setFg(defaultLabel, trustColors.sideBarForeground);
 
   const defaultValueLabel = Text(getDisplayForLevel(defaultTrustLevel));
   textSetFontSize(defaultValueLabel, 11);
-  textSetFontWeight(defaultValueLabel, 600);
-  if (trustColors) setFg(defaultValueLabel, trustColors.sidebarForeground);
+  textSetFontWeight(defaultValueLabel, 11, 0.6);
+  if (trustColors) setFg(defaultValueLabel, trustColors.sideBarForeground);
 
   const cycleDefaultBtn = Button('Change', () => { cycleDefaultTrust(); });
   buttonSetBordered(cycleDefaultBtn, 0);
@@ -137,7 +137,7 @@ function buildTrustRow(idx: number): unknown {
 
   const nameLabel = Text(name);
   textSetFontSize(nameLabel, 12);
-  if (trustColors) setFg(nameLabel, trustColors.sidebarForeground);
+  if (trustColors) setFg(nameLabel, trustColors.sideBarForeground);
 
   const levelLabel = Text(getDisplayForLevel(level));
   textSetFontSize(levelLabel, 10);
