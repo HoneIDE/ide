@@ -1178,6 +1178,8 @@ function swapCompactPanel(panel: unknown): void {
   if (!compactContentContainer) return;
   widgetClearChildren(compactContentContainer);
   widgetAddChild(compactContentContainer, panel);
+  // On iOS, swapped panels must pin width to parent VStack for full-screen width
+  widgetMatchParentWidth(panel);
 }
 
 function showExplorer(): void {
@@ -1256,14 +1258,14 @@ function onBottomBarSync(): void {
 }
 
 function onBottomBarSettings(): void {
-  // Render settings panel into sidebar container, then show it
-  if (!sidebarContainer) return;
-  widgetClearChildren(sidebarContainer);
+  // Render settings as a standalone panel directly into content container
+  // (not inside the sidebar ScrollView — nested ScrollViews break on iOS)
+  compactShowingExplorer = 1;
+  compactShowingChat = 0;
   const settingsCtr = VStack(0, []);
   widgetSetHugging(settingsCtr, 1);
   renderSettingsTab(settingsCtr, null as any);
-  widgetAddChild(sidebarContainer, settingsCtr);
-  showExplorer();
+  swapCompactPanel(settingsCtr);
 }
 
 function renderBottomToolbar(): unknown {
@@ -1584,9 +1586,6 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
 
     compactEditorPane = editorArea;
     compactExplorerPane = explorerPanel;
-    // On iOS, sidebar ScrollView + inner VStack must stretch to full width
-    widgetMatchParentWidth(explorerPanel);
-    widgetMatchParentWidth(sidebarContainer);
 
     // Content container holds the active panel (editor, explorer, or chat).
     // On iOS, hidden views in UIStackView break layout — so we swap children

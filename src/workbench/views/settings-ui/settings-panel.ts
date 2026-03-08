@@ -732,7 +732,8 @@ export function renderSettingsTab(container: unknown, colors: ResolvedUIColors):
   buildContent(content, colors);
 
   const scroll = ScrollView();
-  scrollViewSetChild(scroll, content);
+  // Perry: scrollViewSetChild compiles to no-op, use widgetAddChild workaround
+  widgetAddChild(scroll, content);
   widgetSetHugging(scroll, 1);
 
   // Outer container
