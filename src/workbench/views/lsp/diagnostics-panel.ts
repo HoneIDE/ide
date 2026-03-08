@@ -10,6 +10,7 @@ import {
 } from 'perry/ui';
 import { setFg, setBtnFg, getFileName } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
+import { getSideBarForeground } from '../../theme/theme-colors';
 
 let diagContainer: unknown = null;
 let diagColors: ResolvedUIColors = null as any;
@@ -30,12 +31,12 @@ export function renderDiagnosticsPanel(container: unknown, colors: ResolvedUICol
   const title = Text('PROBLEMS');
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.7);
-  setFg(title, colors.sideBarForeground);
+  setFg(title, getSideBarForeground());
   widgetAddChild(container, title);
 
   const hint = Text('No problems detected');
   textSetFontSize(hint, 12);
-  setFg(hint, colors.sideBarForeground);
+  setFg(hint, getSideBarForeground());
   widgetAddChild(container, hint);
 
   widgetAddChild(container, Spacer());
@@ -84,13 +85,13 @@ function refreshDiagnosticsUI(): void {
   const title = Text('PROBLEMS');
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.7);
-  if (diagColors) setFg(title, diagColors.sideBarForeground);
+  if (diagColors) setFg(title, getSideBarForeground());
   widgetAddChild(diagContainer, title);
 
   if (_dCount < 1) {
     const hint = Text('No problems detected');
     textSetFontSize(hint, 12);
-    if (diagColors) setFg(hint, diagColors.sideBarForeground);
+    if (diagColors) setFg(hint, getSideBarForeground());
     widgetAddChild(diagContainer, hint);
     return;
   }
@@ -128,7 +129,7 @@ function refreshDiagnosticsUI(): void {
     });
     buttonSetBordered(msgBtn, 0);
     textSetFontSize(msgBtn, 11);
-    if (diagColors) setBtnFg(msgBtn, diagColors.sideBarForeground);
+    if (diagColors) setBtnFg(msgBtn, getSideBarForeground());
 
     const row = HStack(4, [severityLabel, msgBtn]);
     widgetAddChild(diagContainer, row);

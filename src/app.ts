@@ -53,28 +53,11 @@ export function getAppState(): AppState | null {
 // Perry app entry point
 // ---------------------------------------------------------------------------
 
-// Load the default theme (embedded — no filesystem reads)
-loadTheme(HONE_DARK);
-setActiveTheme('Hone Dark');
-
-// Initialize core systems
-const ctx = getPlatformContext();
-registerBuiltinCommands();
-for (let i = 0; i < BUILTIN_PANELS.length; i = i + 1) {
-  registerPanel(BUILTIN_PANELS[i]);
-}
-
-// Set up native menu bar (before App() so it's ready when window appears)
-// On macOS, always set up the menu bar regardless of layout mode
 setupNativeMenuBar();
 
-// Build the visual workbench
-const workbench = renderWorkbench(ctx.layoutMode);
-
-// Launch the Perry native app
 App({
   title: 'Hone',
   width: 1280,
   height: 800,
-  body: workbench,
+  body: renderWorkbench('full'),
 });

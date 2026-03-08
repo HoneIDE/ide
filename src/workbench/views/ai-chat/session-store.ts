@@ -43,7 +43,9 @@ export function ensureChatsDir(): void {
   // getChatsDir() handles creating ~/.hone/ and ~/.hone/chats/ on all platforms
   chatsDir = getChatsDir();
 
-  indexPath = chatsDir;
+  // Build indexPath as a fresh string (Perry: += on aliased string can modify source)
+  indexPath = '';
+  indexPath += chatsDir;
   indexPath += '/index.txt';
 
   // Create index if missing
@@ -59,7 +61,9 @@ export function ensureChatsDir(): void {
 // ---------------------------------------------------------------------------
 
 export function getSessionFilePath(id: string): string {
-  let p = chatsDir;
+  // Build fresh string (Perry: += on aliased string can modify source)
+  let p = '';
+  p += chatsDir;
   p += '/';
   p += id;
   p += '.txt';

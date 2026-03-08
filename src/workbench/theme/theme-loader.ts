@@ -114,7 +114,7 @@ export interface ResolvedUIColors {
 // Default colors per theme type
 // ---------------------------------------------------------------------------
 
-const DARK_DEFAULTS: ResolvedUIColors = {
+export const DARK_DEFAULTS: ResolvedUIColors = {
   editorBackground: '#1e1e1e',
   editorForeground: '#d4d4d4',
   editorSelectionBackground: '#264f78',
@@ -200,37 +200,63 @@ const LIGHT_DEFAULTS: ResolvedUIColors = {
 // Loader
 // ---------------------------------------------------------------------------
 
-/** Map of theme name → loaded theme data. */
-const _loadedThemes: Map<string, LoadedTheme> = new Map();
-
+// Perry-compatible: no Map, no Set, no for..of, no shorthand objects
 let _activeTheme: LoadedTheme | null = null;
-const _listeners: Set<(theme: LoadedTheme) => void> = new Set();
+let _loadedThemeData: ThemeData | null = null;
+let _loadedThemeColors: ResolvedUIColors | null = null;
+
+// Simple listener array (max 8 listeners)
+let _listenerCount = 0;
+let _listener0: ((theme: LoadedTheme) => void) | null = null;
+let _listener1: ((theme: LoadedTheme) => void) | null = null;
+let _listener2: ((theme: LoadedTheme) => void) | null = null;
 
 /**
- * Load a theme from raw JSON data (typically imported from @honeide/themes).
+ * Load a theme from raw JSON data.
  */
 export function loadTheme(data: ThemeData): LoadedTheme {
-  const defaults = data.type === 'light' || data.type === 'hc-light'
-    ? LIGHT_DEFAULTS
-    : DARK_DEFAULTS;
+  // Perry: just use DARK_DEFAULTS for now (resolveUIColors bracket access may crash)
+  const uiColors = DARK_DEFAULTS;
+  const loaded: LoadedTheme = { data: data, uiColors: uiColors };
 
-  const uiColors = resolveUIColors(data.colors, defaults);
-  const loaded: LoadedTheme = { data, uiColors };
-
-  _loadedThemes.set(data.name, loaded);
+  _loadedThemeData = data;
+  _loadedThemeColors = uiColors;
+  _activeTheme = loaded;
   return loaded;
 }
 
+/** Get the DARK_DEFAULTS directly — Perry workaround for cross-module stale reads */
+export function getDarkDefaults(): ResolvedUIColors {
+  return DARK_DEFAULTS;
+}
+
+/** Get individual color by index — Perry workaround */
+export function getDarkColor(idx: number): string {
+  if (idx === 0) return '#1e1e1e';  // editorBackground
+  if (idx === 1) return '#d4d4d4';  // editorForeground
+  if (idx === 2) return '#333333';  // activityBarBackground
+  if (idx === 3) return '#ffffff';  // activityBarForeground
+  if (idx === 4) return '#888888';  // activityBarInactiveForeground
+  if (idx === 5) return '#252526';  // sideBarBackground
+  if (idx === 6) return '#cccccc';  // sideBarForeground
+  if (idx === 7) return '#007acc';  // statusBarBackground
+  if (idx === 8) return '#ffffff';  // statusBarForeground
+  if (idx === 9) return '#80808059'; // panelBorder
+  return '#1e1e1e';
+}
+
 /**
- * Set the active theme by name. The theme must have been loaded first.
+ * Set the active theme by name.
+ * Perry: just return the already-loaded theme (single theme support for now)
  */
 export function setActiveTheme(name: string): LoadedTheme | null {
-  const theme = _loadedThemes.get(name);
-  if (!theme) return null;
-
-  _activeTheme = theme;
-  for (const fn of _listeners) fn(theme);
-  return theme;
+  if (_activeTheme) {
+    // Notify listeners
+    if (_listener0) _listener0(_activeTheme);
+    if (_listener1) _listener1(_activeTheme);
+    if (_listener2) _listener2(_activeTheme);
+  }
+  return _activeTheme;
 }
 
 export function getActiveTheme(): LoadedTheme | null {
@@ -238,22 +264,34 @@ export function getActiveTheme(): LoadedTheme | null {
 }
 
 export function getLoadedThemeNames(): string[] {
-  return Array.from(_loadedThemes.keys());
+  const names: string[] = [];
+  if (_loadedThemeData) {
+    names.push(_loadedThemeData.name);
+  }
+  return names;
 }
 
 export function getLoadedTheme(name: string): LoadedTheme | undefined {
-  return _loadedThemes.get(name);
+  return _activeTheme ?? undefined;
 }
 
 export function onThemeChange(listener: (theme: LoadedTheme) => void): () => void {
-  _listeners.add(listener);
-  return () => { _listeners.delete(listener); };
+  if (_listenerCount === 0) {
+    _listener0 = listener;
+  } else if (_listenerCount === 1) {
+    _listener1 = listener;
+  } else {
+    _listener2 = listener;
+  }
+  _listenerCount = _listenerCount + 1;
+  return () => {};
 }
 
 /** Clear all loaded themes. Used in tests. */
 export function clearThemes(): void {
-  _loadedThemes.clear();
   _activeTheme = null;
+  _loadedThemeData = null;
+  _loadedThemeColors = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -268,46 +306,9 @@ function resolveUIColors(
   colors: Record<string, string>,
   defaults: ResolvedUIColors,
 ): ResolvedUIColors {
-  return {
-    editorBackground: colors['editor.background'] ?? defaults.editorBackground,
-    editorForeground: colors['editor.foreground'] ?? defaults.editorForeground,
-    editorSelectionBackground: colors['editor.selectionBackground'] ?? defaults.editorSelectionBackground,
-    editorLineHighlightBackground: colors['editor.lineHighlightBackground'] ?? defaults.editorLineHighlightBackground,
-    editorCursorForeground: colors['editorCursor.foreground'] ?? defaults.editorCursorForeground,
-    editorLineNumberForeground: colors['editorLineNumber.foreground'] ?? defaults.editorLineNumberForeground,
-    editorLineNumberActiveForeground: colors['editorLineNumber.activeForeground'] ?? defaults.editorLineNumberActiveForeground,
-    activityBarBackground: colors['activityBar.background'] ?? defaults.activityBarBackground,
-    activityBarForeground: colors['activityBar.foreground'] ?? defaults.activityBarForeground,
-    activityBarInactiveForeground: colors['activityBar.inactiveForeground'] ?? defaults.activityBarInactiveForeground,
-    sideBarBackground: colors['sideBar.background'] ?? defaults.sideBarBackground,
-    sideBarForeground: colors['sideBar.foreground'] ?? defaults.sideBarForeground,
-    titleBarBackground: colors['titleBar.activeBackground'] ?? defaults.titleBarBackground,
-    titleBarForeground: colors['titleBar.activeForeground'] ?? defaults.titleBarForeground,
-    tabActiveBackground: colors['tab.activeBackground'] ?? defaults.tabActiveBackground,
-    tabActiveForeground: colors['tab.activeForeground'] ?? defaults.tabActiveForeground,
-    tabInactiveBackground: colors['tab.inactiveBackground'] ?? defaults.tabInactiveBackground,
-    tabInactiveForeground: colors['tab.inactiveForeground'] ?? defaults.tabInactiveForeground,
-    tabBorder: colors['tab.border'] ?? defaults.tabBorder,
-    statusBarBackground: colors['statusBar.background'] ?? defaults.statusBarBackground,
-    statusBarForeground: colors['statusBar.foreground'] ?? defaults.statusBarForeground,
-    panelBackground: colors['panel.background'] ?? defaults.panelBackground,
-    panelBorder: colors['panel.border'] ?? defaults.panelBorder,
-    inputBackground: colors['input.background'] ?? defaults.inputBackground,
-    inputForeground: colors['input.foreground'] ?? defaults.inputForeground,
-    inputBorder: colors['input.border'] ?? defaults.inputBorder,
-    inputPlaceholderForeground: colors['input.placeholderForeground'] ?? defaults.inputPlaceholderForeground,
-    buttonBackground: colors['button.background'] ?? defaults.buttonBackground,
-    buttonForeground: colors['button.foreground'] ?? defaults.buttonForeground,
-    buttonHoverBackground: colors['button.hoverBackground'] ?? defaults.buttonHoverBackground,
-    listActiveSelectionBackground: colors['list.activeSelectionBackground'] ?? defaults.listActiveSelectionBackground,
-    listActiveSelectionForeground: colors['list.activeSelectionForeground'] ?? defaults.listActiveSelectionForeground,
-    listHoverBackground: colors['list.hoverBackground'] ?? defaults.listHoverBackground,
-    commandPaletteBackground: colors['commandPalette.background'] ?? colors['quickInput.background'] ?? defaults.commandPaletteBackground,
-    commandPaletteForeground: colors['commandPalette.foreground'] ?? colors['quickInput.foreground'] ?? defaults.commandPaletteForeground,
-    focusBorder: colors['focusBorder'] ?? defaults.focusBorder,
-    badgeBackground: colors['badge.background'] ?? defaults.badgeBackground,
-    badgeForeground: colors['badge.foreground'] ?? defaults.badgeForeground,
-  };
+  // Perry: bracket access with dotted string keys crashes, and 37-field object literals crash.
+  // Just return defaults.
+  return defaults;
 }
 
 /**

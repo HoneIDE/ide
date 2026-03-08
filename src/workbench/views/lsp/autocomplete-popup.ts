@@ -9,6 +9,7 @@ import {
 } from 'perry/ui';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
+import { getEditorBackground, getEditorForeground } from '../../theme/theme-colors';
 
 let popupWidget: unknown = null;
 let popupReady: number = 0;
@@ -28,7 +29,7 @@ function onItemClick(text: string): void {
 export function createAutocompletePopup(colors: ResolvedUIColors): unknown {
   popupColors = colors;
   const popup = VStack(1, []);
-  setBg(popup, colors.editorBackground);
+  setBg(popup, getEditorBackground());
   widgetSetWidth(popup, 250);
   widgetSetHidden(popup, 1);
   popupWidget = popup;
@@ -45,7 +46,7 @@ export function showAutocomplete(items: string[]): void {
     buttonSetBordered(btn, 0);
     textSetFontSize(btn, 12);
     textSetFontFamily(btn, 12, 'Menlo');
-    if (popupColors) setBtnFg(btn, popupColors.editorForeground);
+    if (popupColors) setBtnFg(btn, getEditorForeground());
     widgetAddChild(popupWidget, btn);
   }
   widgetSetHidden(popupWidget, 0);

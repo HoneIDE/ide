@@ -11,6 +11,7 @@ import {
 import { setFg, setBtnFg } from '../../ui-helpers';
 import { jsonEscape } from './sse-parser';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
+import { getSideBarForeground } from '../../theme/theme-colors';
 
 // Module-level state — 8 context slots (avoid arrays-of-strings in Perry)
 let ctx0Path = ''; let ctx0Content = '';
@@ -181,13 +182,13 @@ export function renderChips(container: unknown, colors: ResolvedUIColors): void 
     const chipLabel = Text(label);
     textSetFontSize(chipLabel, 10);
     textSetFontFamily(chipLabel, 10, 'Menlo');
-    setFg(chipLabel, colors.sideBarForeground);
+    setFg(chipLabel, getSideBarForeground());
 
     const removeFn = getRemoveFn(i);
     const xBtn = Button('\u00D7', () => { removeFn(); });
     buttonSetBordered(xBtn, 0);
     textSetFontSize(xBtn, 10);
-    setBtnFg(xBtn, colors.sideBarForeground);
+    setBtnFg(xBtn, getSideBarForeground());
 
     const chip = HStack(4, [chipLabel, xBtn]);
     widgetSetBackgroundColor(chip, 0.2, 0.2, 0.25, 1.0);
@@ -202,7 +203,7 @@ export function renderChips(container: unknown, colors: ResolvedUIColors): void 
     estLabel += ' tokens';
     const estText = Text(estLabel);
     textSetFontSize(estText, 9);
-    setFg(estText, colors.sideBarForeground);
+    setFg(estText, getSideBarForeground());
     widgetAddChild(container, estText);
   }
 }

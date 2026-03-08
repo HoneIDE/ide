@@ -137,29 +137,68 @@ export function getTempDir(): string {
  * - Windows: %USERPROFILE%/.hone/
  */
 export function getAppDataDir(): string {
-  if (_appDataDir.length > 0) return _appDataDir;
+  if (_appDataDir.length > 0) {
+    // Return a copy to prevent callers from mutating _appDataDir via +=
+    let copy = '';
+    copy += _appDataDir;
+    return copy;
+  }
 
   let dir = getHomeDir();
   dir += '/.hone';
   ensureDirExists(dir);
   _appDataDir = dir;
-  return _appDataDir;
+  // Return a copy
+  let copy = '';
+  copy += _appDataDir;
+  return copy;
 }
 
 /**
  * Get the chats directory (~/.hone/chats/).
  */
+let _chatsDir = '';
 export function getChatsDir(): string {
-  let dir = getAppDataDir();
+  if (_chatsDir.length > 0) return _chatsDir;
+  const base = getAppDataDir();
+  let dir = '';
+  dir += base;
   dir += '/chats';
   ensureDirExists(dir);
-  return dir;
+  _chatsDir = dir;
+  return _chatsDir;
 }
 
 function ensureDirExists(dir: string): void {
   if (!existsSync(dir)) {
     try { mkdirSync(dir); } catch (e: any) { /* ignore */ }
   }
+}
+
+/**
+ * Get the current working directory. Platform-aware:
+ * - macOS/Linux/Windows: process.cwd() (Perry native support)
+ * - iOS/Android: falls back to home directory
+ */
+export function getCwd(): string {
+  // iOS and Android don't have a meaningful cwd
+  if (__platform__ === 1 || __platform__ === 2) {
+    return getHomeDir();
+  }
+
+  try {
+    const dir = process.cwd();
+    if (dir.length > 0) return dir;
+  } catch (e: any) {}
+
+  // Fallback: try execSync('pwd')
+  try {
+    const result = execSync('pwd') as unknown as string;
+    const dir = trimNewline(result);
+    if (dir.length > 0) return dir;
+  } catch (e: any) {}
+
+  return '';
 }
 
 /**

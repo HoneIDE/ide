@@ -22,6 +22,7 @@ import { execSync } from 'child_process';
 import { parseDiffOutput, countLines } from './diff-parser';
 import { setBg, setFg } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
+import { getEditorBackground, getEditorForeground } from '../../theme/theme-colors';
 
 // FFI function from @honeide/editor — returns raw NSView* for an EditorView
 declare function hone_editor_nsview(handle: number): number;
@@ -150,17 +151,17 @@ export function openDiffForFile(filePath: string, relPath: string, wsRoot: strin
   widgetClearChildren(diffContainer);
 
   const headerRow = HStack(8, []);
-  if (panelColors) setBg(headerRow, panelColors.editorBackground);
+  if (panelColors) setBg(headerRow, getEditorBackground());
 
   const leftLabel = Text(relPath + ' (HEAD)');
   textSetFontSize(leftLabel, 11);
   textSetFontWeight(leftLabel, 11, 0.5);
-  if (panelColors) setFg(leftLabel, panelColors.editorForeground);
+  if (panelColors) setFg(leftLabel, getEditorForeground());
 
   const rightLabel = Text(relPath + ' (Working Copy)');
   textSetFontSize(rightLabel, 11);
   textSetFontWeight(rightLabel, 11, 0.5);
-  if (panelColors) setFg(rightLabel, panelColors.editorForeground);
+  if (panelColors) setFg(rightLabel, getEditorForeground());
 
   widgetAddChild(headerRow, leftLabel);
   widgetAddChild(headerRow, Spacer());

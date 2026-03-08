@@ -115,12 +115,14 @@ export function jsonEscape(s: string): string {
 function startsWithData(line: string): number {
   if (line.length < 6) return 0;
   // "data: " = 100 97 116 97 58 32
-  if (line.charCodeAt(0) === 100 && line.charCodeAt(1) === 97 &&
-      line.charCodeAt(2) === 116 && line.charCodeAt(3) === 97 &&
-      line.charCodeAt(4) === 58 && line.charCodeAt(5) === 32) {
-    return 1;
-  }
-  return 0;
+  // NOTE: Perry has a bug with long && chains — use nested ifs
+  if (line.charCodeAt(0) !== 100) return 0;
+  if (line.charCodeAt(1) !== 97) return 0;
+  if (line.charCodeAt(2) !== 116) return 0;
+  if (line.charCodeAt(3) !== 97) return 0;
+  if (line.charCodeAt(4) !== 58) return 0;
+  if (line.charCodeAt(5) !== 32) return 0;
+  return 1;
 }
 
 /** Get the data payload after "data: " prefix. */
@@ -135,23 +137,24 @@ export function getSSEData(line: string): string {
 export function isSSEDone(line: string): number {
   const data = getSSEData(line);
   if (data.length < 2) return 0;
-  // [DONE]
-  if (data.charCodeAt(0) === 91 && data.length >= 6) {
-    if (data.charCodeAt(1) === 68 && data.charCodeAt(2) === 79 &&
-        data.charCodeAt(3) === 78 && data.charCodeAt(4) === 69) {
-      return 1;
-    }
+  // [DONE] = 91 68 79 78 69
+  if (data.charCodeAt(0) === 91) {
+    if (data.length < 6) return 0;
+    if (data.charCodeAt(1) !== 68) return 0;
+    if (data.charCodeAt(2) !== 79) return 0;
+    if (data.charCodeAt(3) !== 78) return 0;
+    if (data.charCodeAt(4) !== 69) return 0;
+    return 1;
   }
-  // Check for message_stop
+  // Check for message_stop via JSON type field
+  // "message_stop": m(0)e(1)s(2)s(3)a(4)g(5)e(6)_(7)s(8)t(9)o(10)p(11)
   const evtType = extractJsonString(data, 'type');
-  if (evtType.length >= 12) {
-    // "message_stop"
-    if (evtType.charCodeAt(0) === 109 && evtType.charCodeAt(7) === 115 &&
-        evtType.charCodeAt(8) === 116 && evtType.charCodeAt(11) === 112) {
-      return 1;
-    }
-  }
-  return 0;
+  if (evtType.length < 12) return 0;
+  if (evtType.charCodeAt(0) !== 109) return 0; // m
+  if (evtType.charCodeAt(8) !== 115) return 0;  // s
+  if (evtType.charCodeAt(10) !== 111) return 0; // o (distinguishes from "message_start" which has 'r')
+  if (evtType.charCodeAt(11) !== 112) return 0; // p
+  return 1;
 }
 
 /** Extract text delta from a content_block_delta SSE line. */
@@ -172,14 +175,25 @@ export function parseSSETextDelta(line: string): string {
 export function parseSSEToolUse(line: string): string {
   const data = getSSEData(line);
   if (data.length < 20) return '';
-  const evtType = extractJsonString(data, 'type');
-  // "content_block_start"
-  if (evtType.length < 15) return '';
-  if (evtType.charCodeAt(0) !== 99 || evtType.charCodeAt(8) !== 98) return '';
-  // Check for tool_use in content_block
-  const blockType = extractJsonString(data, 'type');
-  // We need a second-level check: "content_block" contains nested "type":"tool_use"
-  // Look for "tool_use" after the first "type" value
+  // Quick check: does data contain "tool_use" at all?
+  let hasToolUse: number = 0;
+  for (let t = 0; t < data.length - 8; t++) {
+    if (data.charCodeAt(t) === 116) {       // 't'
+      if (data.charCodeAt(t + 1) === 111) { // 'o'
+        if (data.charCodeAt(t + 2) === 111) { // 'o'
+          if (data.charCodeAt(t + 3) === 108) { // 'l'
+            if (data.charCodeAt(t + 4) === 95) {  // '_'
+              if (data.charCodeAt(t + 5) === 117) { // 'u'
+                hasToolUse = 1;
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  if (hasToolUse < 1) return '';
   const name = extractJsonString(data, 'name');
   if (name.length > 0) return name;
   return '';

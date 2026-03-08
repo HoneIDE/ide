@@ -18,6 +18,7 @@ import {
   getWorkbenchSettings, setStringSetting, setNumberSetting, setBoolSetting,
 } from '../../settings';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
+import { getEditorForeground, getEditorBackground, getPanelBorder, getButtonBackground, getInputPlaceholderForeground } from '../../theme/theme-colors';
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -335,6 +336,11 @@ function onAiModelChange(text: string): void {
   if (text.length > 0) setStringSetting('aiModel', text);
 }
 
+function onAiApiKeyChange(text: string): void {
+  // Only save keys that look like real API keys (at least 20 chars, starts with 'sk-')
+  if (text.length > 20) setStringSetting('aiApiKey', text);
+}
+
 // ---------------------------------------------------------------------------
 // Search helpers
 // ---------------------------------------------------------------------------
@@ -381,12 +387,12 @@ function makeSection(ctr: unknown, colors: ResolvedUIColors, title: string): voi
   const header = Text(title);
   textSetFontSize(header, 13);
   textSetFontWeight(header, 13, 0.7);
-  setFg(header, colors.editorForeground);
+  setFg(header, getEditorForeground());
   widgetAddChild(ctr, header);
 
   const sep = VStack(0, []);
   widgetSetHeight(sep, 1);
-  setBg(sep, colors.panelBorder);
+  setBg(sep, getPanelBorder());
   widgetAddChild(ctr, sep);
 }
 
@@ -398,19 +404,19 @@ function makeToggleRow(
   const lbl = Text(label);
   textSetFontSize(lbl, 13);
   textSetFontWeight(lbl, 13, 0.5);
-  setFg(lbl, colors.editorForeground);
+  setFg(lbl, getEditorForeground());
 
   const btn = Button(currentOn > 0 ? 'On' : 'Off', onClick);
   buttonSetBordered(btn, 0);
   textSetFontSize(btn, 12);
-  setBtnFg(btn, colors.buttonBackground);
+  setBtnFg(btn, getButtonBackground());
   widgetSetWidth(btn, 70);
 
   const topRow = HStack(8, [lbl, Spacer(), btn]);
 
   const descText = Text(desc);
   textSetFontSize(descText, 11);
-  setFg(descText, colors.inputPlaceholderForeground);
+  setFg(descText, getInputPlaceholderForeground());
 
   const row = VStackWithInsets(2, 4, 0, 4, 0);
   widgetAddChild(row, topRow);
@@ -427,19 +433,19 @@ function makeToggleRowAlt(
   const lbl = Text(label);
   textSetFontSize(lbl, 13);
   textSetFontWeight(lbl, 13, 0.5);
-  setFg(lbl, colors.editorForeground);
+  setFg(lbl, getEditorForeground());
 
   const btn = Button(currentOn > 0 ? onLabel : offLabel, onClick);
   buttonSetBordered(btn, 0);
   textSetFontSize(btn, 12);
-  setBtnFg(btn, colors.buttonBackground);
+  setBtnFg(btn, getButtonBackground());
   widgetSetWidth(btn, 70);
 
   const topRow = HStack(8, [lbl, Spacer(), btn]);
 
   const descText = Text(desc);
   textSetFontSize(descText, 11);
-  setFg(descText, colors.inputPlaceholderForeground);
+  setFg(descText, getInputPlaceholderForeground());
 
   const row = VStackWithInsets(2, 4, 0, 4, 0);
   widgetAddChild(row, topRow);
@@ -456,19 +462,19 @@ function makeCycleRow(
   const lbl = Text(label);
   textSetFontSize(lbl, 13);
   textSetFontWeight(lbl, 13, 0.5);
-  setFg(lbl, colors.editorForeground);
+  setFg(lbl, getEditorForeground());
 
   const btn = Button(currentValue, onClick);
   buttonSetBordered(btn, 0);
   textSetFontSize(btn, 12);
-  setBtnFg(btn, colors.buttonBackground);
+  setBtnFg(btn, getButtonBackground());
   widgetSetWidth(btn, 130);
 
   const topRow = HStack(8, [lbl, Spacer(), btn]);
 
   const descText = Text(desc);
   textSetFontSize(descText, 11);
-  setFg(descText, colors.inputPlaceholderForeground);
+  setFg(descText, getInputPlaceholderForeground());
 
   const row = VStackWithInsets(2, 4, 0, 4, 0);
   widgetAddChild(row, topRow);
@@ -485,29 +491,29 @@ function makeStepperRow(
   const lbl = Text(label);
   textSetFontSize(lbl, 13);
   textSetFontWeight(lbl, 13, 0.5);
-  setFg(lbl, colors.editorForeground);
+  setFg(lbl, getEditorForeground());
 
   const downBtn = Button('-', onDown);
   buttonSetBordered(downBtn, 0);
   textSetFontSize(downBtn, 13);
-  setBtnFg(downBtn, colors.editorForeground);
+  setBtnFg(downBtn, getEditorForeground());
 
   const valLabel = Text(currentValue.toString());
   textSetFontSize(valLabel, 12);
-  setFg(valLabel, colors.editorForeground);
+  setFg(valLabel, getEditorForeground());
   widgetSetWidth(valLabel, 40);
 
   const upBtn = Button('+', onUp);
   buttonSetBordered(upBtn, 0);
   textSetFontSize(upBtn, 13);
-  setBtnFg(upBtn, colors.editorForeground);
+  setBtnFg(upBtn, getEditorForeground());
 
   const controls = HStack(4, [downBtn, valLabel, upBtn]);
   const topRow = HStack(8, [lbl, Spacer(), controls]);
 
   const descText = Text(desc);
   textSetFontSize(descText, 11);
-  setFg(descText, colors.inputPlaceholderForeground);
+  setFg(descText, getInputPlaceholderForeground());
 
   const row = VStackWithInsets(2, 4, 0, 4, 0);
   widgetAddChild(row, topRow);
@@ -524,7 +530,7 @@ function makeTextRow(
   const lbl = Text(label);
   textSetFontSize(lbl, 13);
   textSetFontWeight(lbl, 13, 0.5);
-  setFg(lbl, colors.editorForeground);
+  setFg(lbl, getEditorForeground());
 
   const field = TextField(value, onChange);
   widgetSetWidth(field, 160);
@@ -533,7 +539,7 @@ function makeTextRow(
 
   const descText = Text(desc);
   textSetFontSize(descText, 11);
-  setFg(descText, colors.inputPlaceholderForeground);
+  setFg(descText, getInputPlaceholderForeground());
 
   const row = VStackWithInsets(2, 4, 0, 4, 0);
   widgetAddChild(row, topRow);
@@ -666,6 +672,7 @@ function buildContent(ctr: unknown, colors: ResolvedUIColors): void {
 
   // ---- AI ----
   if (matchesSearch('AI Provider', 'The AI provider to use for completions') > 0) hasAi = 1;
+  if (matchesSearch('API Key', 'API key for the AI provider') > 0) hasAi = 1;
   if (matchesSearch('AI Chat Model', 'The model to use for AI chat') > 0) hasAi = 1;
   if (matchesSearch('Inline Completion', 'Enable AI inline code completions') > 0) hasAi = 1;
   if (matchesSearch('Inline Completion Delay', 'Delay in ms before showing completions') > 0) hasAi = 1;
@@ -674,6 +681,8 @@ function buildContent(ctr: unknown, colors: ResolvedUIColors): void {
     makeSection(ctr, colors, 'AI');
     if (matchesSearch('AI Provider', 'The AI provider to use for completions') > 0)
       _hAiProviderBtn = makeCycleRow(ctr, colors, 'Provider', 'The AI provider to use for completions', s.aiProvider, () => { onAiProviderCycle(); });
+    if (matchesSearch('API Key', 'API key for the AI provider') > 0)
+      makeTextRow(ctr, colors, 'API Key', 'API key for the AI provider (paste full key to update)', s.aiApiKey.length > 8 ? 'sk-...set' : '', onAiApiKeyChange);
     if (matchesSearch('AI Chat Model', 'The model to use for AI chat') > 0)
       makeTextRow(ctr, colors, 'Chat Model', 'The model to use for AI chat', s.aiModel, onAiModelChange);
     if (matchesSearch('Inline Completion', 'Enable AI inline code completions') > 0)
@@ -707,7 +716,7 @@ export function renderSettingsTab(container: unknown, colors: ResolvedUIColors):
   const titleText = Text('Settings');
   textSetFontSize(titleText, 18);
   textSetFontWeight(titleText, 18, 0.6);
-  setFg(titleText, colors.editorForeground);
+  setFg(titleText, getEditorForeground());
 
   const searchField = TextField('Search settings...', onSearchChange);
   widgetSetWidth(searchField, 220);
@@ -728,7 +737,7 @@ export function renderSettingsTab(container: unknown, colors: ResolvedUIColors):
 
   // Outer container
   const outer = VStack(0, [header, scroll]);
-  setBg(outer, colors.editorBackground);
+  setBg(outer, getEditorBackground());
   widgetSetHugging(outer, 1);
   widgetAddChild(container, outer);
 }

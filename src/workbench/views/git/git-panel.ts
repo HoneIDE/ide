@@ -17,6 +17,7 @@ import { execSync } from 'child_process';
 import { join } from 'path';
 import { setFg, setBtnFg, getFileName } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
+import { getSideBarForeground } from '../../theme/theme-colors';
 
 // ---------------------------------------------------------------------------
 // Module-level state (must be declared BEFORE any function — Perry no-hoist)
@@ -314,7 +315,7 @@ function updateGitResultsUI(): void {
   if (totalChanges < 1) {
     const clean = Text('No changes');
     textSetFontSize(clean, 12);
-    if (panelColors) setFg(clean, panelColors.sideBarForeground);
+    if (panelColors) setFg(clean, getSideBarForeground());
     widgetAddChild(gitResultsContainer, clean);
     return;
   }
@@ -324,7 +325,7 @@ function updateGitResultsUI(): void {
     const header = Text('STAGED CHANGES');
     textSetFontSize(header, 10);
     textSetFontWeight(header, 10, 0.6);
-    if (panelColors) setFg(header, panelColors.sideBarForeground);
+    if (panelColors) setFg(header, getSideBarForeground());
     widgetAddChild(gitResultsContainer, header);
 
     for (let i = 0; i < gitStagedCount; i++) {
@@ -350,11 +351,11 @@ function updateGitResultsUI(): void {
       const fileBtn = Button(fname, () => { onGitFileClick(fpath); });
       buttonSetBordered(fileBtn, 0);
       textSetFontSize(fileBtn, 12);
-      if (panelColors) setBtnFg(fileBtn, panelColors.sideBarForeground);
+      if (panelColors) setBtnFg(fileBtn, getSideBarForeground());
       const unstageBtn = Button('-', () => { gitUnstageFile(fpath); });
       buttonSetBordered(unstageBtn, 0);
       textSetFontSize(unstageBtn, 11);
-      if (panelColors) setBtnFg(unstageBtn, panelColors.sideBarForeground);
+      if (panelColors) setBtnFg(unstageBtn, getSideBarForeground());
       widgetAddChild(row, statusLabel);
       widgetAddChild(row, fileBtn);
       widgetAddChild(row, Spacer());
@@ -368,7 +369,7 @@ function updateGitResultsUI(): void {
     const header = Text('CHANGES');
     textSetFontSize(header, 10);
     textSetFontWeight(header, 10, 0.6);
-    if (panelColors) setFg(header, panelColors.sideBarForeground);
+    if (panelColors) setFg(header, getSideBarForeground());
     widgetAddChild(gitResultsContainer, header);
 
     for (let i = 0; i < gitModifiedCount; i++) {
@@ -391,15 +392,15 @@ function updateGitResultsUI(): void {
       const fileBtn = Button(fname, () => { onGitFileClick(fpath); });
       buttonSetBordered(fileBtn, 0);
       textSetFontSize(fileBtn, 12);
-      if (panelColors) setBtnFg(fileBtn, panelColors.sideBarForeground);
+      if (panelColors) setBtnFg(fileBtn, getSideBarForeground());
       const stageBtn = Button('+', () => { gitStageFile(fpath); });
       buttonSetBordered(stageBtn, 0);
       textSetFontSize(stageBtn, 11);
-      if (panelColors) setBtnFg(stageBtn, panelColors.sideBarForeground);
+      if (panelColors) setBtnFg(stageBtn, getSideBarForeground());
       const discardBtn = Button('x', () => { gitDiscardFile(fpath); });
       buttonSetBordered(discardBtn, 0);
       textSetFontSize(discardBtn, 11);
-      if (panelColors) setBtnFg(discardBtn, panelColors.sideBarForeground);
+      if (panelColors) setBtnFg(discardBtn, getSideBarForeground());
       widgetAddChild(row, statusLabel);
       widgetAddChild(row, fileBtn);
       widgetAddChild(row, Spacer());
@@ -414,7 +415,7 @@ function updateGitResultsUI(): void {
     const header = Text('UNTRACKED');
     textSetFontSize(header, 10);
     textSetFontWeight(header, 10, 0.6);
-    if (panelColors) setFg(header, panelColors.sideBarForeground);
+    if (panelColors) setFg(header, getSideBarForeground());
     widgetAddChild(gitResultsContainer, header);
 
     for (let i = 0; i < gitUntrackedCount; i++) {
@@ -428,11 +429,11 @@ function updateGitResultsUI(): void {
       const fileBtn = Button(fname, () => { onGitFileClick(fpath); });
       buttonSetBordered(fileBtn, 0);
       textSetFontSize(fileBtn, 12);
-      if (panelColors) setBtnFg(fileBtn, panelColors.sideBarForeground);
+      if (panelColors) setBtnFg(fileBtn, getSideBarForeground());
       const stageBtn = Button('+', () => { gitStageFile(fpath); });
       buttonSetBordered(stageBtn, 0);
       textSetFontSize(stageBtn, 11);
-      if (panelColors) setBtnFg(stageBtn, panelColors.sideBarForeground);
+      if (panelColors) setBtnFg(stageBtn, getSideBarForeground());
       widgetAddChild(row, statusLabel);
       widgetAddChild(row, fileBtn);
       widgetAddChild(row, Spacer());
@@ -492,7 +493,7 @@ export function renderGitPanel(container: unknown, colors: ResolvedUIColors): vo
   const title = Text('SOURCE CONTROL');
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.7);
-  if (colors) setFg(title, colors.sideBarForeground);
+  if (colors) setFg(title, getSideBarForeground());
   widgetAddChild(container, title);
 
   refreshGitState();
@@ -500,7 +501,7 @@ export function renderGitPanel(container: unknown, colors: ResolvedUIColors): vo
   if (gitIsRepo < 1) {
     const noRepo = Text('Not a git repository');
     textSetFontSize(noRepo, 12);
-    if (colors) setFg(noRepo, colors.sideBarForeground);
+    if (colors) setFg(noRepo, getSideBarForeground());
     widgetAddChild(container, noRepo);
     widgetAddChild(container, Spacer());
     return;
@@ -510,11 +511,11 @@ export function renderGitPanel(container: unknown, colors: ResolvedUIColors): vo
   gitBranchLabel = Text(gitBranch);
   textSetFontSize(gitBranchLabel, 12);
   textSetFontWeight(gitBranchLabel, 12, 0.5);
-  if (colors) setFg(gitBranchLabel, colors.sideBarForeground);
+  if (colors) setFg(gitBranchLabel, getSideBarForeground());
   const branchRow = HStack(4, []);
   const branchIcon = Text('*');
   textSetFontSize(branchIcon, 12);
-  if (colors) setFg(branchIcon, colors.sideBarForeground);
+  if (colors) setFg(branchIcon, getSideBarForeground());
   widgetAddChild(branchRow, branchIcon);
   widgetAddChild(branchRow, gitBranchLabel);
   widgetAddChild(container, branchRow);
@@ -527,12 +528,12 @@ export function renderGitPanel(container: unknown, colors: ResolvedUIColors): vo
   const commitBtn = Button('Commit', () => { gitCommit(); });
   buttonSetBordered(commitBtn, 0);
   textSetFontSize(commitBtn, 12);
-  if (colors) setBtnFg(commitBtn, colors.sideBarForeground);
+  if (colors) setBtnFg(commitBtn, getSideBarForeground());
   // Refresh button
   const refreshBtn = Button('Refresh', () => { onGitRefresh(); });
   buttonSetBordered(refreshBtn, 0);
   textSetFontSize(refreshBtn, 12);
-  if (colors) setBtnFg(refreshBtn, colors.sideBarForeground);
+  if (colors) setBtnFg(refreshBtn, getSideBarForeground());
   const actionRow = HStack(8, [commitBtn, refreshBtn]);
   widgetAddChild(container, actionRow);
 

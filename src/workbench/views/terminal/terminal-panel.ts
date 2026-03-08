@@ -25,6 +25,7 @@ import {
   onDiagnosticsUpdate,
 } from '../lsp/diagnostics-panel';
 import { getFileName } from '../../ui-helpers';
+import { getEditorForeground, getSideBarForeground, getPanelBackground, getPanelBorder } from '../../theme/theme-colors';
 
 // FFI declarations — LiveTerminal API
 declare function hone_terminal_open(rows: number, cols: number, shell: number, cwd: number): number;
@@ -98,9 +99,9 @@ function updateTabStyles(): void {
   if (!panelColors) return;
   for (let i = 0; i < 2; i++) {
     if (i === activeHeaderTab) {
-      setBtnFg(headerTabBtns[i], panelColors.editorForeground);
+      setBtnFg(headerTabBtns[i], getEditorForeground());
     } else {
-      let dimColor = panelColors.sideBarForeground;
+      let dimColor = getSideBarForeground();
       dimColor += '80';
       setBtnFg(headerTabBtns[i], dimColor);
     }
@@ -115,7 +116,7 @@ function refreshProblemsView(): void {
   if (count < 1) {
     const hint = Text('No problems detected');
     textSetFontSize(hint, 12);
-    setFg(hint, panelColors.sideBarForeground);
+    setFg(hint, getSideBarForeground());
     widgetAddChild(problemsScrollContent, hint);
     return;
   }
@@ -173,11 +174,11 @@ function refreshProblemsView(): void {
     const msgBtn = Button(locLabel, () => { openProblemFile(filePath, fname); });
     buttonSetBordered(msgBtn, 0);
     textSetFontSize(msgBtn, 11);
-    setBtnFg(msgBtn, panelColors.sideBarForeground);
+    setBtnFg(msgBtn, getSideBarForeground());
 
     const msgText = Text(messages[i]);
     textSetFontSize(msgText, 11);
-    setFg(msgText, panelColors.sideBarForeground);
+    setFg(msgText, getSideBarForeground());
 
     const row = HStack(4, [sevLabel, msgBtn, msgText]);
     widgetAddChild(problemsScrollContent, row);
@@ -222,7 +223,7 @@ function buildTerminalHeader(colors: any): unknown {
   panelColors = colors;
 
   const row = HStack(0, []);
-  setBg(row, colors.panelBackground);
+  setBg(row, getPanelBackground());
 
   for (let i = 0; i < 2; i++) {
     const idx = i;
@@ -230,9 +231,9 @@ function buildTerminalHeader(colors: any): unknown {
     buttonSetBordered(btn, 0);
     textSetFontSize(btn, 11);
     if (i === activeHeaderTab) {
-      setBtnFg(btn, colors.editorForeground);
+      setBtnFg(btn, getEditorForeground());
     } else {
-      let dimColor = colors.sideBarForeground;
+      let dimColor = getSideBarForeground();
       dimColor += '80';
       setBtnFg(btn, dimColor);
     }
@@ -248,7 +249,7 @@ function buildTerminalHeader(colors: any): unknown {
   buttonSetImage(maxBtn, 'arrow.up.left.and.arrow.down.right');
   buttonSetImagePosition(maxBtn, 1);
   textSetFontSize(maxBtn, 10);
-  setBtnTint(maxBtn, colors.sideBarForeground);
+  setBtnTint(maxBtn, getSideBarForeground());
   widgetAddChild(row, maxBtn);
 
   // Close button
@@ -257,7 +258,7 @@ function buildTerminalHeader(colors: any): unknown {
   buttonSetImage(closeBtn, 'xmark');
   buttonSetImagePosition(closeBtn, 1);
   textSetFontSize(closeBtn, 10);
-  setBtnTint(closeBtn, colors.sideBarForeground);
+  setBtnTint(closeBtn, getSideBarForeground());
   widgetAddChild(row, closeBtn);
 
   widgetSetHeight(row, 32);
@@ -265,7 +266,7 @@ function buildTerminalHeader(colors: any): unknown {
 
   // Top border line
   const topBorder = HStack(0, []);
-  setBg(topBorder, colors.panelBorder);
+  setBg(topBorder, getPanelBorder());
   widgetSetHeight(topBorder, 1);
   widgetSetHugging(topBorder, 750);
 
@@ -318,7 +319,7 @@ export function renderTerminalPanel(container: unknown, colors: any): void {
   widgetAddChild(container, termView);
 
   // Poll every 16ms for PTY output
-  pollInterval = setInterval(doPoll, 16);
+  pollInterval = setInterval(() => { doPoll(); }, 16);
 }
 
 export function destroyTerminalPanel(): void {
