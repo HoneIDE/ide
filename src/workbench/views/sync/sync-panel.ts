@@ -15,12 +15,11 @@ import {
   widgetSetBackgroundColor, widgetSetWidth, widgetMatchParentWidth,
 } from 'perry/ui';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
-import type { ResolvedUIColors } from '../../theme/theme-loader';
+import { getSideBarForeground, getButtonForeground } from '../../theme/theme-colors';
 
 // --- Module-level state ---
 
 let syncPanelReady: number = 0;
-let syncColors: ResolvedUIColors = null as any;
 let syncContainer: unknown = null;
 
 // Status text
@@ -55,14 +54,12 @@ function _noopCode(c: string): void {}
 
 // --- Public API ---
 
-export function buildSyncPanel(colors: ResolvedUIColors): unknown {
-  syncColors = colors;
-
+export function buildSyncPanel(): unknown {
   // Title
   const title = Text('Sync');
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.7);
-  setFg(title, colors.sideBarForeground);
+  setFg(title, getSideBarForeground());
 
   // Status
   statusLabel = Text(statusText);
@@ -72,7 +69,7 @@ export function buildSyncPanel(colors: ResolvedUIColors): unknown {
   // Pairing section
   const pairBtn = Button('Pair Device', () => { onPairClicked(); });
   buttonSetBordered(pairBtn, 0);
-  setBtnFg(pairBtn, colors.buttonForeground);
+  setBtnFg(pairBtn, getButtonForeground());
 
   let codeInitial = '------';
   if (currentCode.length > 0) {
@@ -81,7 +78,7 @@ export function buildSyncPanel(colors: ResolvedUIColors): unknown {
   codeLabel = Text(codeInitial);
   textSetFontSize(codeLabel, 18);
   textSetFontWeight(codeLabel, 18, 0.7);
-  setFg(codeLabel, colors.sideBarForeground);
+  setFg(codeLabel, getSideBarForeground());
 
   const codeHint = Text('Share this code with your mobile device');
   textSetFontSize(codeHint, 9);
@@ -93,7 +90,7 @@ export function buildSyncPanel(colors: ResolvedUIColors): unknown {
   const devHeader = Text('Connected Devices');
   textSetFontSize(devHeader, 10);
   textSetFontWeight(devHeader, 10, 0.6);
-  setFg(devHeader, colors.sideBarForeground);
+  setFg(devHeader, getSideBarForeground());
 
   deviceContainer = VStack(2, []);
 
@@ -104,14 +101,14 @@ export function buildSyncPanel(colors: ResolvedUIColors): unknown {
   const joinHeader = Text('Join Session');
   textSetFontSize(joinHeader, 10);
   textSetFontWeight(joinHeader, 10, 0.6);
-  setFg(joinHeader, colors.sideBarForeground);
+  setFg(joinHeader, getSideBarForeground());
 
   const joinInput = TextField('Enter 6-char code', onJoinTextInput);
   widgetSetWidth(joinInput, 180);
 
   const joinBtn = Button('Join', () => { onJoinClicked(); });
   buttonSetBordered(joinBtn, 0);
-  setBtnFg(joinBtn, colors.buttonForeground);
+  setBtnFg(joinBtn, getButtonForeground());
 
   const joinRow = HStack(8, [joinInput, joinBtn]);
   const joinSection = VStack(4, [joinHeader, joinRow]);
@@ -149,10 +146,6 @@ export function refreshSyncPanel(): void {
     }
   }
   rebuildDeviceList();
-}
-
-export function setSyncPanelColors(colors: ResolvedUIColors): void {
-  syncColors = colors;
 }
 
 export function setSyncStatusText(text: string): void {
@@ -263,7 +256,7 @@ function buildDeviceRow(idx: number): unknown {
 
   const nameLabel = Text(name);
   textSetFontSize(nameLabel, 11);
-  if (syncColors) setFg(nameLabel, syncColors.sideBarForeground);
+  setFg(nameLabel, getSideBarForeground());
 
   const statusDot = Text(status);
   textSetFontSize(statusDot, 10);

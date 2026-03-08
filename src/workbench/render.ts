@@ -97,7 +97,7 @@ import { initNotifications, showNotification } from './views/notifications/notif
 import { setLspWorkspaceRoot, initLspBridge, triggerDiagnostics, getCompletions, setDiagnosticsStatusUpdater } from './views/lsp/lsp-bridge';
 import { setDiagnosticsFileOpener } from './views/lsp/diagnostics-panel';
 import { createAutocompletePopup, setAutocompleteAcceptHandler } from './views/lsp/autocomplete-popup';
-import { buildSyncPanel, refreshSyncPanel, setSyncPanelColors, setSyncStatusText, setSyncPairCallback, setSyncJoinCallback, setSyncPairingCode, addSyncDevice, removeSyncDevice } from './views/sync/sync-panel';
+import { buildSyncPanel, refreshSyncPanel, setSyncStatusText, setSyncPairCallback, setSyncJoinCallback, setSyncPairingCode, addSyncDevice, removeSyncDevice } from './views/sync/sync-panel';
 import { initSyncHost, setOnGuestConnected, setOnGuestDisconnected, getHostRoomId, getHostRelayUrl, generateHostPairingCode, validatePairingAttempt, addGuest } from './sync-host';
 import { initSyncGuest } from './sync-guest';
 import { getOrCreateDeviceId } from './paths';
@@ -959,7 +959,7 @@ function switchSidebarPanel(idx: number): void {
 
   if (idx === 3) {
     widgetClearChildren(sidebarContainer);
-    const panel = buildSyncPanel(themeColors as ResolvedUIColors);
+    const panel = buildSyncPanel();
     widgetAddChild(sidebarContainer, panel);
     return;
   }
@@ -1063,7 +1063,7 @@ function initSplitSidebarExplorer(): void {
   renderExplorerPanel(sidebarContainer, colors);
 }
 
-function renderIPadTopBar(colors: ResolvedUIColors): unknown {
+function renderIPadTopBar(): unknown {
   // Create buttons using same handlers as bottom toolbar
   const filesBtn = Button('', () => { onBottomBarFiles(); });
   const searchBtn = Button('', () => { onBottomBarSearch(); });
@@ -1081,7 +1081,7 @@ function renderIPadTopBar(colors: ResolvedUIColors): unknown {
   for (let i = 0; i < allBtns.length; i++) {
     buttonSetBordered(allBtns[i], 0);
     buttonSetImagePosition(allBtns[i], 1);
-    setBtnTint(allBtns[i], colors.activityBarForeground);
+    setBtnTint(allBtns[i], getActivityBarForeground());
     widgetSetWidth(allBtns[i], 48);
     widgetSetHeight(allBtns[i], 40);
   }
@@ -1097,10 +1097,10 @@ function renderIPadTopBar(colors: ResolvedUIColors): unknown {
   // 1px bottom border
   const border = Text('');
   widgetSetHeight(border, 1);
-  setBg(border, colors.panelBorder);
+  setBg(border, getPanelBorder());
 
   const bar = VStack(0, [safeArea, iconRow, border]);
-  setBg(bar, colors.activityBarBackground);
+  setBg(bar, getActivityBarBackground());
 
   activityBarWidget = bar;
   return bar;
@@ -1205,7 +1205,7 @@ function showChat(): void {
   // Lazy-create chat pane
   if (!compactChatPane) {
     const chatPane = VStackWithInsets(0, 8, 8, 8, 8);
-    setBg(chatPane, (themeColors as ResolvedUIColors).sideBarBackground);
+    setBg(chatPane, getSideBarBackground());
     compactChatPane = chatPane;
   }
   swapCompactPanel(compactChatPane);
@@ -1220,7 +1220,7 @@ function showChat(): void {
 
 function doCompactChatRender(): void {
   if (!compactChatPane) return;
-  chatInputWidget = renderChatPanel(compactChatPane, themeColors as ResolvedUIColors);
+  chatInputWidget = renderChatPanel(compactChatPane, null as any);
 }
 
 function onBottomBarFiles(): void {
@@ -1248,7 +1248,7 @@ function onBottomBarSearch(): void {
   if (!sidebarContainer) return;
   widgetClearChildren(sidebarContainer);
   resetSearchPanelReady();
-  renderSearchPanelImpl(sidebarContainer, themeColors as ResolvedUIColors);
+  renderSearchPanelImpl(sidebarContainer, null as any);
   showExplorer();
   compactActivePanel = 2;
 }
@@ -1266,7 +1266,7 @@ function onBottomBarAI(): void {
 function onBottomBarSync(): void {
   if (!sidebarContainer) return;
   widgetClearChildren(sidebarContainer);
-  const panel = buildSyncPanel(themeColors as ResolvedUIColors);
+  const panel = buildSyncPanel();
   widgetAddChild(sidebarContainer, panel);
   showExplorer();
   compactActivePanel = 3;
@@ -1698,10 +1698,10 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   initSyncSystem(layoutMode);
 
   if (layoutMode === 'compact') {
-    const editorArea = renderEditorArea(themeColors);
-    const explorerPanel = renderSidebar(themeColors);
-    const statusBar = renderStatusBarImpl(themeColors);
-    const bottomBar = renderBottomToolbar(themeColors);
+    const editorArea = renderEditorArea();
+    const explorerPanel = renderSidebar();
+    const statusBar = renderStatusBarImpl(null as any);
+    const bottomBar = renderBottomToolbar();
 
     compactEditorPane = editorArea;
     compactExplorerPane = explorerPanel;
@@ -1717,7 +1717,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
     widgetSetHugging(bottomBar, 750);
 
     const shell = VStack(0, [contentCtr, statusBar, bottomBar]);
-    setBg(shell, themeColors.editorBackground);
+    setBg(shell, getEditorBackground());
     compactShell = shell;
     return shell;
   }
@@ -1727,16 +1727,16 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
     // renderSidebar() can't be used directly because renderExplorerPanel triggers
     // a layout crash in frame-based containers. Build sidebar inline instead.
     const sidebarInner = VStackWithInsets(0, 0, 0, 0, 0);
-    setBg(sidebarInner, themeColors.sideBarBackground);
+    setBg(sidebarInner, getSideBarBackground());
     sidebarContainer = sidebarInner;
     // Defer explorer panel init to after layout is established
     const sideScroll = ScrollView();
     scrollViewSetChild(sideScroll, sidebarInner);
     const leftBox = sideScroll;
-    const rightBox = renderEditorArea(themeColors);
+    const rightBox = renderEditorArea();
 
-    const statusBar = renderStatusBarImpl(themeColors);
-    const topBar = renderIPadTopBar(themeColors);
+    const statusBar = renderStatusBarImpl(null as any);
+    const topBar = renderIPadTopBar();
     widgetSetHugging(topBar, 750);
 
     const splitContainer = frameSplitCreate(280);
@@ -1747,7 +1747,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
     widgetSetHugging(statusBar, 750);
 
     const shell = VStack(0, [topBar, splitContainer, statusBar]);
-    setBg(shell, themeColors.editorBackground);
+    setBg(shell, getEditorBackground());
 
     // Defer explorer panel init — calling it synchronously during layout setup
     // causes the frame split container to black-screen on iOS.
