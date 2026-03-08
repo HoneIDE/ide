@@ -7,7 +7,7 @@
  * All state is module-level (Perry closures capture by value).
  */
 import {
-  VStack, HStack, VStackWithInsets, Text, Button, Spacer,
+  VStack, HStack, VStackWithInsets, Text, Button, Spacer, TextField,
   textSetFontSize, textSetFontWeight,
   textSetString, textSetColor,
   buttonSetBordered, buttonSetTitle,
@@ -42,11 +42,16 @@ let devNames: string[] = [];
 let devStatuses: string[] = [];
 let devCount: number = 0;
 
+// Join code text input
+let joinCodeText = '';
+
 // Callbacks
 let _pairCallback: () => void = _noopVoid;
+let _joinCallback: (code: string) => void = _noopCode;
 let _disconnectCallback: () => void = _noopVoid;
 
 function _noopVoid(): void {}
+function _noopCode(c: string): void {}
 
 // --- Public API ---
 
@@ -95,10 +100,33 @@ export function buildSyncPanel(colors: ResolvedUIColors): unknown {
   // Build device rows for any already-known devices
   rebuildDeviceList();
 
+  // Join session section (enter code from another device)
+  const joinHeader = Text('Join Session');
+  textSetFontSize(joinHeader, 10);
+  textSetFontWeight(joinHeader, 10, 0.6);
+  setFg(joinHeader, colors.sideBarForeground);
+
+  const joinInput = TextField('Enter 6-char code', onJoinTextInput);
+  widgetSetWidth(joinInput, 180);
+
+  const joinBtn = Button('Join', () => { onJoinClicked(); });
+  buttonSetBordered(joinBtn, 0);
+  setBtnFg(joinBtn, colors.buttonForeground);
+
+  const joinRow = HStack(8, [joinInput, joinBtn]);
+  const joinSection = VStack(4, [joinHeader, joinRow]);
+
+  // Divider
+  const divider = Text('— or —');
+  textSetFontSize(divider, 9);
+  textSetColor(divider, 0.4, 0.4, 0.4, 1.0);
+
   syncContainer = VStackWithInsets(12, 8, 8, 8, 8);
   widgetAddChild(syncContainer, title);
   widgetAddChild(syncContainer, statusLabel);
   widgetAddChild(syncContainer, pairSection);
+  widgetAddChild(syncContainer, divider);
+  widgetAddChild(syncContainer, joinSection);
   widgetAddChild(syncContainer, devHeader);
   widgetAddChild(syncContainer, deviceContainer);
 
@@ -149,6 +177,10 @@ export function setSyncPairCallback(fn: () => void): void {
   _pairCallback = fn;
 }
 
+export function setSyncJoinCallback(fn: (code: string) => void): void {
+  _joinCallback = fn;
+}
+
 export function setSyncDisconnectCallback(fn: () => void): void {
   _disconnectCallback = fn;
 }
@@ -193,6 +225,18 @@ export function clearSyncDevices(): void {
 
 function onPairClicked(): void {
   _pairCallback();
+}
+
+function onJoinTextInput(text: string): void {
+  joinCodeText = text;
+}
+
+function onJoinClicked(): void {
+  _joinCallback(joinCodeText);
+}
+
+export function setJoinCodeText(text: string): void {
+  joinCodeText = text;
 }
 
 function rebuildDeviceList(): void {

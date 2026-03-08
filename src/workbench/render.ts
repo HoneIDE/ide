@@ -97,12 +97,13 @@ import { initNotifications, showNotification } from './views/notifications/notif
 import { setLspWorkspaceRoot, initLspBridge, triggerDiagnostics, getCompletions, setDiagnosticsStatusUpdater } from './views/lsp/lsp-bridge';
 import { setDiagnosticsFileOpener } from './views/lsp/diagnostics-panel';
 import { createAutocompletePopup, setAutocompleteAcceptHandler } from './views/lsp/autocomplete-popup';
-import { buildSyncPanel, refreshSyncPanel, setSyncPanelColors, setSyncStatusText, setSyncPairCallback, setSyncPairingCode, addSyncDevice, removeSyncDevice } from './views/sync/sync-panel';
-import { initSyncHost, setOnGuestConnected, setOnGuestDisconnected, getHostRoomId, getHostRelayUrl, generateHostPairingCode } from './sync-host';
+import { buildSyncPanel, refreshSyncPanel, setSyncPanelColors, setSyncStatusText, setSyncPairCallback, setSyncJoinCallback, setSyncPairingCode, addSyncDevice, removeSyncDevice } from './views/sync/sync-panel';
+import { initSyncHost, setOnGuestConnected, setOnGuestDisconnected, getHostRoomId, getHostRelayUrl, generateHostPairingCode, validatePairingAttempt, addGuest } from './sync-host';
 import { initSyncGuest } from './sync-guest';
 import { getOrCreateDeviceId } from './paths';
 import {
-  connectToRelay, setOnRelayConnected, setOnRelayDisconnected,
+  connectToRelay, disconnectFromRelay, sendToRelay,
+  setOnRelayConnected, setOnRelayDisconnected,
   setOnRelayMessage, isRelayConnected,
 } from './sync-transport';
 
@@ -159,6 +160,8 @@ let compactExplorerPane: unknown = null;
 let compactChatPane: unknown = null;
 let compactShowingExplorer: number = 0;
 let compactShowingChat: number = 0;
+// Track which compact panel is active: 0=editor, 1=files, 2=search, 3=sync, 4=settings, 5=chat
+let compactActivePanel: number = 0;
 let compactChatRendered: number = 0;
 let compactShell: unknown = null;
 let compactContentContainer: unknown = null;
@@ -1114,11 +1117,10 @@ function renderSidebar(): unknown {
 
   renderExplorerPanel(inner, null as any);
 
-  const scroll = ScrollView();
-  // Perry: scrollViewSetChild compiles to no-op, use widgetAddChild workaround
-  widgetAddChild(scroll, inner);
-
-  return scroll;
+  // On macOS, NSScrollView doesn't propagate width to documentView, causing
+  // the inner VStack to render at 0 width. Return the VStack directly instead
+  // (scrolling handled by macOS NSStackView's built-in clipping).
+  return inner;
 }
 
 // ---------------------------------------------------------------------------
@@ -1186,6 +1188,9 @@ function showExplorer(): void {
   compactShowingExplorer = 1;
   compactShowingChat = 0;
   swapCompactPanel(compactExplorerPane);
+  // On iOS, ScrollView doesn't propagate width to content — pin sidebarContainer
+  // to ScrollView width so explorer/sync/search panels fill the screen
+  if (sidebarContainer) widgetMatchParentWidth(sidebarContainer);
 }
 
 function hideExplorer(): void {
@@ -1219,42 +1224,52 @@ function doCompactChatRender(): void {
 }
 
 function onBottomBarFiles(): void {
-  if (compactShowingExplorer > 0) {
+  if (compactActivePanel === 1) {
+    // Already showing files — toggle back to editor
     hideExplorer();
+    compactActivePanel = 0;
   } else {
+    // Re-render explorer into sidebarContainer (sync/search may have replaced it)
+    if (sidebarContainer) {
+      resetSearchPanelReady();
+      renderExplorerPanel(sidebarContainer, null as any);
+    }
     showExplorer();
+    compactActivePanel = 1;
   }
 }
 
 function onBottomBarEditor(): void {
   hideExplorer();
+  compactActivePanel = 0;
 }
 
 function onBottomBarSearch(): void {
-  // Show search panel in sidebar, then show sidebar
   if (!sidebarContainer) return;
   widgetClearChildren(sidebarContainer);
   resetSearchPanelReady();
   renderSearchPanelImpl(sidebarContainer, themeColors as ResolvedUIColors);
   showExplorer();
+  compactActivePanel = 2;
 }
 
 function onBottomBarAI(): void {
-  // Toggle AI chat in compact mode
-  if (compactShowingChat > 0) {
-    hideExplorer(); // hideExplorer resets both flags and shows editor
+  if (compactActivePanel === 5) {
+    hideExplorer();
+    compactActivePanel = 0;
   } else {
     showChat();
+    compactActivePanel = 5;
   }
 }
 
 function onBottomBarSync(): void {
-  // Show sync panel in sidebar, then show sidebar
   if (!sidebarContainer) return;
   widgetClearChildren(sidebarContainer);
   const panel = buildSyncPanel(themeColors as ResolvedUIColors);
   widgetAddChild(sidebarContainer, panel);
   showExplorer();
+  compactActivePanel = 3;
 }
 
 function onBottomBarSettings(): void {
@@ -1266,6 +1281,7 @@ function onBottomBarSettings(): void {
   widgetSetHugging(settingsCtr, 1);
   renderSettingsTab(settingsCtr, null as any);
   swapCompactPanel(settingsCtr);
+  compactActivePanel = 4;
 }
 
 function renderBottomToolbar(): unknown {
@@ -1404,30 +1420,33 @@ function onSettingsChanged(): void {
 // Sync system initialization
 // ---------------------------------------------------------------------------
 
+let syncDeviceId = '';
+let syncDeviceName = 'Hone Desktop';
+let syncStatusOverride = '';
+
 function initSyncSystem(layoutMode: LayoutMode): void {
-  const deviceId = getOrCreateDeviceId();
+  syncDeviceId = getOrCreateDeviceId();
   const ctx = getPlatformContext();
 
-  // Wire pair button callback
+  // Wire pair + join button callbacks
   setSyncPairCallback(onSyncPairClicked);
+  setSyncJoinCallback(onSyncJoinClicked);
 
   if (ctx.deviceClass === 'desktop') {
-    // Desktop is the sync host
-    initSyncHost(deviceId, 'Hone Desktop');
+    initSyncHost(syncDeviceId, 'Hone Desktop');
     setOnGuestConnected(onSyncGuestConnected);
     setOnGuestDisconnected(onSyncGuestDisconnected);
   } else {
-    // Mobile/tablet is the sync guest
-    let deviceName = 'Hone Mobile';
+    syncDeviceName = 'Hone Mobile';
     if (ctx.deviceClass === 'tablet') {
-      deviceName = 'Hone iPad';
+      syncDeviceName = 'Hone iPad';
     }
     let platform = 'unknown';
     if (__platform__ === 0) platform = 'macOS';
     if (__platform__ === 1) platform = 'iOS';
     if (__platform__ === 2) platform = 'Android';
     if (__platform__ === 3) platform = 'Windows';
-    initSyncGuest(deviceId, deviceName, platform);
+    initSyncGuest(syncDeviceId, syncDeviceName, platform);
   }
 
   // Wire relay event callbacks
@@ -1435,25 +1454,54 @@ function initSyncSystem(layoutMode: LayoutMode): void {
   setOnRelayDisconnected(onRelayDisconnectedImpl);
   setOnRelayMessage(onRelayMessageImpl);
 
-  // Connect to relay (desktop hosts immediately; guests connect after pairing)
-  if (ctx.deviceClass === 'desktop') {
-    const relayUrl = getHostRelayUrl();
-    const roomId = getHostRoomId();
-    connectToRelay(relayUrl, roomId, deviceId);
-  }
-
+  // Don't auto-connect — wait for "Pair Device" or "Join" click
   // Poll sync panel refresh every 5s
   setInterval(() => { refreshSyncPanelDeferred(); }, 5000);
 }
 
 function onSyncPairClicked(): void {
+  // Generate code and use it as the relay room name
   const code = generateHostPairingCode();
   setSyncPairingCode(code);
-  let msg = 'Code: ';
+  let roomId = 'pair-';
+  roomId += code;
+
+  // Disconnect any existing connection, then connect with code-based room
+  disconnectFromRelay();
+  const relayUrl = getHostRelayUrl();
+  connectToRelay(relayUrl, roomId, syncDeviceId);
+
+  syncStatusOverride = 'Waiting for guest...';
+  setSyncStatusText('Waiting for guest...');
+}
+
+function onSyncJoinClicked(code: string): void {
+  if (code.length < 1) return;
+  const upper = code.toUpperCase();
+  let roomId = 'pair-';
+  roomId += upper;
+
+  // Connect to the same room as the host
+  disconnectFromRelay();
+  const relayUrl = getHostRelayUrl();
+  connectToRelay(relayUrl, roomId, syncDeviceId);
+
+  syncStatusOverride = 'Joining...';
+  setSyncStatusText('Joining...');
+
+  // Send pair request after a short delay (wait for WS connect)
+  setTimeout(() => { sendPairRequest(upper); }, 1500);
+}
+
+function sendPairRequest(code: string): void {
+  // Format: PAIR_REQ|code|deviceId|deviceName
+  let msg = 'PAIR_REQ|';
   msg += code;
-  msg += ' — Waiting for guest...';
-  syncStatusOverride = msg;
-  setSyncStatusText(msg);
+  msg += '|';
+  msg += syncDeviceId;
+  msg += '|';
+  msg += syncDeviceName;
+  sendToRelay(msg);
 }
 
 function onSyncGuestConnected(deviceId: string, deviceName: string): void {
@@ -1464,30 +1512,101 @@ function onSyncGuestConnected(deviceId: string, deviceName: string): void {
 }
 
 function onSyncGuestDisconnected(deviceId: string): void {
-  // For now just refresh — could remove device by id
   refreshSyncPanelDeferred();
 }
 
 function onRelayConnectedImpl(): void {
-  setSyncStatusText('Connected to relay');
+  if (syncStatusOverride.length === 0) {
+    setSyncStatusText('Connected to relay');
+  }
   refreshSyncPanelDeferred();
 }
 
 function onRelayDisconnectedImpl(): void {
-  setSyncStatusText('Disconnected from relay');
+  setSyncStatusText('Disconnected');
+  syncStatusOverride = '';
   refreshSyncPanelDeferred();
 }
 
 function onRelayMessageImpl(data: string): void {
-  // Messages from relay will be processed here
-  // For now, just refresh the panel to show activity
+  // Extract payload from relay envelope: find "payload":" and read value
+  const payloadKey = '"payload":"';
+  const pkIdx = data.indexOf(payloadKey);
+  if (pkIdx < 0) return;
+  const pStart = pkIdx + payloadKey.length;
+  // Find closing unescaped quote
+  let pEnd = pStart;
+  for (let i = pStart; i < data.length; i++) {
+    if (data.charCodeAt(i) === 92) { // backslash — skip next char
+      i = i + 1;
+    } else if (data.charCodeAt(i) === 34) { // quote — end of payload
+      pEnd = i;
+      break;
+    }
+  }
+  const payload = data.substring(pStart, pEnd);
+
+  // Handle PAIR_REQ|code|deviceId|deviceName
+  if (payload.indexOf('PAIR_REQ|') === 0) {
+    handlePairRequest(payload);
+    return;
+  }
+  // Handle PAIR_OK|deviceId|deviceName
+  if (payload.indexOf('PAIR_OK|') === 0) {
+    handlePairAccepted(payload);
+    return;
+  }
+
   refreshSyncPanelDeferred();
 }
 
-let syncStatusOverride = '';
+function handlePairRequest(payload: string): void {
+  // Parse: PAIR_REQ|code|deviceId|deviceName
+  const sep1 = payload.indexOf('|');
+  const rest1 = payload.substring(sep1 + 1);
+  const sep2 = rest1.indexOf('|');
+  const code = rest1.substring(0, sep2);
+  const rest2 = rest1.substring(sep2 + 1);
+  const sep3 = rest2.indexOf('|');
+  const guestDeviceId = rest2.substring(0, sep3);
+  const guestName = rest2.substring(sep3 + 1);
+
+  // Validate the code
+  if (validatePairingAttempt(code) > 0) {
+    // Accept — add guest and send confirmation
+    addGuest(guestDeviceId, guestName);
+    addSyncDevice(guestName, 'connected');
+    syncStatusOverride = '';
+    setSyncStatusText('Paired!');
+    setSyncPairingCode('');
+
+    // Send acceptance: PAIR_OK|deviceId|deviceName
+    let msg = 'PAIR_OK|';
+    msg += syncDeviceId;
+    msg += '|Hone Desktop';
+    sendToRelay(msg);
+    refreshSyncPanelDeferred();
+  } else {
+    // Reject
+    sendToRelay('PAIR_NO|invalid code');
+  }
+}
+
+function handlePairAccepted(payload: string): void {
+  // Parse: PAIR_OK|deviceId|deviceName
+  const sep1 = payload.indexOf('|');
+  const rest1 = payload.substring(sep1 + 1);
+  const sep2 = rest1.indexOf('|');
+  const hostDeviceId = rest1.substring(0, sep2);
+  const hostName = rest1.substring(sep2 + 1);
+
+  addSyncDevice(hostName, 'connected');
+  syncStatusOverride = '';
+  setSyncStatusText('Paired!');
+  refreshSyncPanelDeferred();
+}
 
 function refreshSyncPanelDeferred(): void {
-  // Check relay connection state and update status if no user-initiated override
   if (isRelayConnected() > 0) {
     if (syncStatusOverride.length === 0) {
       setSyncStatusText('Connected to relay');
