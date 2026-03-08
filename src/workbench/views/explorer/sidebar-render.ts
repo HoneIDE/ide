@@ -337,25 +337,18 @@ function renderTreeLevel(dirPath: string, depth: number): void {
   const dirCount = dirNames.length;
   const fileCount = fileNames.length;
 
-  // Render directories first — chevron + name only (no folder icon)
+  // Render directories first — chevron + name (fewer widgets per row for speed)
   for (let i = 0; i < dirCount; i++) {
     const name = dirNames[i];
     const full = join(dirPath, name);
     const expanded = isDirExpanded(full);
     const id = pathId(full);
 
-    const row = HStack(2, []);
-    widgetSetHeight(row, 24);
+    const indentPx = depth * 16 + 4;
+    const row = HStackWithInsets(4, 0, indentPx, 0, 4);
+    widgetSetHeight(row, 22);
 
-    // Indent
-    const indentPx = depth * 20;
-    if (indentPx > 0) {
-      const indent = Text('');
-      widgetSetWidth(indent, indentPx);
-      widgetAddChild(row, indent);
-    }
-
-    // Chevron (16px wide, 9px font)
+    // Chevron (16px wide)
     const chevron = Button('', () => { onDirToggle(id); });
     buttonSetBordered(chevron, 0);
     if (expanded) {
@@ -363,13 +356,12 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     } else {
       buttonSetImage(chevron, 'chevron.right');
     }
-    buttonSetImagePosition(chevron, 1);
     textSetFontSize(chevron, 9);
-    widgetSetWidth(chevron, 16);
+    widgetSetWidth(chevron, 14);
     if (panelColors) setBtnTint(chevron, getSideBarForeground());
     widgetAddChild(row, chevron);
 
-    // Name button (13px, no icon)
+    // Name button
     const displayName = truncateName(name, 30);
     const btn = Button(displayName, () => { onDirToggle(id); });
     buttonSetBordered(btn, 0);
@@ -377,32 +369,7 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     if (panelColors) setBtnFg(btn, getSideBarForeground());
     widgetAddChild(row, btn);
 
-    // Spacer absorbs extra width — keeps content left-aligned
     widgetAddChild(row, Spacer());
-
-    // Git badge for directory
-    if (sidebarWorkspaceRoot.length > 0 && full.length > sidebarWorkspaceRoot.length + 1) {
-      const dirRelPath = full.slice(sidebarWorkspaceRoot.length + 1);
-      const dirGitStatus = getGitDirStatus(dirRelPath);
-      if (dirGitStatus > 0) {
-        let badgeLetter = 'M';
-        let badgeColor = '#E2C08D';
-        if (dirGitStatus === 2) { badgeLetter = 'U'; badgeColor = '#73C991'; }
-        if (dirGitStatus === 3) { badgeLetter = 'A'; badgeColor = '#73C991'; }
-        if (dirGitStatus === 4) { badgeLetter = 'D'; badgeColor = '#E57373'; }
-        const badge = Text(badgeLetter);
-        textSetFontSize(badge, 11);
-        textSetFontFamily(badge, 11, 'Menlo');
-        setFg(badge, badgeColor);
-        widgetAddChild(row, badge);
-      }
-    }
-
-    // Right padding
-    const rpad = Text('');
-    widgetSetWidth(rpad, 4);
-    widgetAddChild(row, rpad);
-
     widgetAddChild(sidebarContainer, row);
 
     if (expanded) {
@@ -410,7 +377,7 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     }
   }
 
-  // Render files — icon + name + git badge
+  // Render files — icon + name (fewer widgets per row for speed)
   for (let i = 0; i < fileCount; i++) {
     const name = fileNames[i];
     const full = join(dirPath, name);
@@ -419,22 +386,17 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     fileEntryLabels.push(name);
     fileEntryCount = fileEntryCount + 1;
 
-    const row = HStack(2, []);
-    widgetSetHeight(row, 24);
+    // Indent: depth*16 + 14 for chevron space + 4 base
+    const indentPx = depth * 16 + 18;
+    const row = HStackWithInsets(4, 0, indentPx, 0, 4);
+    widgetSetHeight(row, 22);
 
-    // Indent (depth*20 + 16 for chevron space)
-    const indentPx = depth * 20 + 16;
-    const indent = Text('');
-    widgetSetWidth(indent, indentPx);
-    widgetAddChild(row, indent);
-
-    // File icon (separate widget, image-only, 16px)
+    // File icon (16px wide)
     const fIcon = getFileIcon(name);
     const iconBtn = Button('', () => { onFileClick(idx); });
     buttonSetBordered(iconBtn, 0);
     buttonSetImage(iconBtn, fIcon);
-    buttonSetImagePosition(iconBtn, 1);
-    textSetFontSize(iconBtn, 12);
+    textSetFontSize(iconBtn, 11);
     widgetSetWidth(iconBtn, 16);
     if (panelColors) {
       const fColor = getFileIconColor(name);
@@ -446,23 +408,20 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     }
     widgetAddChild(row, iconBtn);
 
-    // Determine git status and color
+    // File name button
     let fileColor = '';
-    let gitLetter = '';
-    let gitColor = '';
     if (panelColors) {
       fileColor = getSideBarForeground();
     }
     if (sidebarWorkspaceRoot.length > 0 && full.length > sidebarWorkspaceRoot.length + 1) {
       const relPath = full.slice(sidebarWorkspaceRoot.length + 1);
       const gStatus = getGitFileStatus(relPath);
-      if (gStatus === 1) { fileColor = '#E2C08D'; gitLetter = 'M'; gitColor = '#E2C08D'; }
-      if (gStatus === 2) { fileColor = '#73C991'; gitLetter = 'U'; gitColor = '#73C991'; }
-      if (gStatus === 3) { fileColor = '#73C991'; gitLetter = 'A'; gitColor = '#73C991'; }
-      if (gStatus === 4) { fileColor = '#E57373'; gitLetter = 'D'; gitColor = '#E57373'; }
+      if (gStatus === 1) { fileColor = '#E2C08D'; }
+      if (gStatus === 2) { fileColor = '#73C991'; }
+      if (gStatus === 3) { fileColor = '#73C991'; }
+      if (gStatus === 4) { fileColor = '#E57373'; }
     }
 
-    // File name button (13px)
     const displayName = truncateName(name, 30);
     const nameBtn = Button(displayName, () => { onFileClick(idx); });
     buttonSetBordered(nameBtn, 0);
@@ -470,27 +429,12 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     if (fileColor.length > 0) setBtnFg(nameBtn, fileColor);
     widgetAddChild(row, nameBtn);
 
-    // Spacer absorbs extra width — keeps content left-aligned
     widgetAddChild(row, Spacer());
-
-    // Git badge
-    if (gitLetter.length > 0) {
-      const badge = Text(gitLetter);
-      textSetFontSize(badge, 11);
-      textSetFontFamily(badge, 11, 'Menlo');
-      setFg(badge, gitColor);
-      widgetAddChild(row, badge);
-    }
-
-    // Right padding
-    const rpad = Text('');
-    widgetSetWidth(rpad, 4);
-    widgetAddChild(row, rpad);
 
     fileTreeButtons.push(nameBtn);
     fileRowWidgets.push(row);
 
-    // Selection highlight (charCodeAt comparison — Perry === unreliable for strings)
+    // Selection highlight
     if (panelColors && sidebarCurrentEditorPath.length > 0 && full.length === sidebarCurrentEditorPath.length) {
       let selMatch = 1;
       for (let si = 0; si < full.length; si++) {
