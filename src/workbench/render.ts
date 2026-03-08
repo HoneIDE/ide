@@ -1128,7 +1128,11 @@ function renderSidebar(): unknown {
 function renderEditorArea(): unknown {
   let defaultFile = '';
   defaultFile += workspaceRoot;
-  defaultFile += '\\src\\app.ts';
+  if (__platform__ === 3) {
+    defaultFile += '\\src\\app.ts';
+  } else {
+    defaultFile += '/src/app.ts';
+  }
   const defaultName = 'app.ts';
 
   const tbc = HStack(0, []);
@@ -1252,8 +1256,13 @@ function onBottomBarSync(): void {
 }
 
 function onBottomBarSettings(): void {
-  // Switch sidebar to settings panel, then show it
-  switchSidebarPanel(5); // 5 = settings
+  // Render settings panel into sidebar container, then show it
+  if (!sidebarContainer) return;
+  widgetClearChildren(sidebarContainer);
+  const settingsCtr = VStack(0, []);
+  widgetSetHugging(settingsCtr, 1);
+  renderSettingsTab(settingsCtr, null as any);
+  widgetAddChild(sidebarContainer, settingsCtr);
   showExplorer();
 }
 
@@ -1575,6 +1584,9 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
 
     compactEditorPane = editorArea;
     compactExplorerPane = explorerPanel;
+    // On iOS, sidebar ScrollView + inner VStack must stretch to full width
+    widgetMatchParentWidth(explorerPanel);
+    widgetMatchParentWidth(sidebarContainer);
 
     // Content container holds the active panel (editor, explorer, or chat).
     // On iOS, hidden views in UIStackView break layout — so we swap children

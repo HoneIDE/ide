@@ -384,7 +384,7 @@ function startStream(requestBody: string): void {
     chatApiKey = loadApiKeyValue();
   }
   if (chatApiKey.length < 5) {
-    appendMessage(0, 'No API key found. Set API Key in Settings (Cmd+,) or set ANTHROPIC_API_KEY env var.');
+    appendMessage(0, 'No API key found. Open Settings to configure your API key.');
     updateMessages();
     return;
   }
@@ -1499,15 +1499,10 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
     setFg(hintTitle, getSideBarForeground());
     widgetAddChild(hintBlock, hintTitle);
 
-    const hint1 = Text('Set the API Key in Settings (Cmd+,),');
+    const hint1 = Text('Open Settings to configure your API key.');
     textSetFontSize(hint1, 11);
     setFg(hint1, getSideBarForeground());
     widgetAddChild(hintBlock, hint1);
-
-    const hint2 = Text('or set ANTHROPIC_API_KEY environment variable.');
-    textSetFontSize(hint2, 11);
-    setFg(hint2, getSideBarForeground());
-    widgetAddChild(hintBlock, hint2);
 
     widgetAddChild(chatMessagesContainer, hintBlock);
   } else {

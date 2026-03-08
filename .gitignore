@@ -1,6 +1,25 @@
 node_modules/
 hone-ide
+hone-ide.exe
+Hone
+Hone.app/
 *.o
 *.a
+*.so
+*.lib
 dist/
 .DS_Store
+target/
+
+# Android build artifacts
+android-build/.gradle/
+android-build/build/
+android-build/app/build/
+android-build/app/src/main/jniLibs/
+android-build/local.properties
+
+# iOS build artifacts
+*.ipa
+
+# Project plans (local)
+PROJECT_PLAN.md
