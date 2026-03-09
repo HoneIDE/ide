@@ -16,7 +16,7 @@ let hostRoomId = '';
 let hostSecret = '';
 let hostPairingCode = '';
 let hostPairingExpiry: number = 0;
-let hostRelayUrl = 'wss://sync.hone.codes/ws';
+let hostRelayUrl = 'ws://localhost:8444';
 let hostPairingUrl = '';
 
 // Connected guest tracking (max 10 guests)

@@ -20,7 +20,7 @@ let guestPlatform = '';
 let guestToken = '';
 let guestHostUrl = '';
 let guestRoomId = '';
-let guestRelayUrl = 'wss://sync.hone.codes/ws';
+let guestRelayUrl = 'ws://localhost:8444';
 let guestConnected: number = 0;
 
 // Auto-reconnect state

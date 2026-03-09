@@ -73,6 +73,7 @@ import {
   renderExplorerPanel, refreshSidebarContent, updateSidebarSelection,
   setSidebarWorkspaceRoot, setSidebarFileClickCallback, setSidebarOpenFolderCallback,
   setSidebarNewFileCallback, setSidebarThemeColors, setSidebarCurrentEditorPath,
+  setRemoteFileTree, setRemoteFileClickCallback, isRemoteExplorerMode,
 } from './views/explorer/sidebar-render';
 import {
   initTabBar, setTabDisplayCallback, setTabThemeColors,
@@ -1423,6 +1424,22 @@ function onSettingsChanged(): void {
 let syncDeviceId = '';
 let syncDeviceName = 'Hone Desktop';
 let syncStatusOverride = '';
+let syncAutoJoinPending: number = 0;
+
+// Module-level storage for collectSyncTree
+// Use Map (not Array.push — broken cross-function) and Map.size (not scalar counter — invisible cross-function)
+let syncTreeEntries: Map<number, string> = new Map();
+
+function syncDebugLog(msg: string): void {
+  try {
+    let prev = '';
+    try { prev = readFileSync('/tmp/hone-sync-debug.log'); } catch (e: any) {}
+    let out = prev;
+    out += '\n';
+    out += msg;
+    writeFileSync('/tmp/hone-sync-debug.log', out);
+  } catch (e: any) {}
+}
 
 function initSyncSystem(layoutMode: LayoutMode): void {
   syncDeviceId = getOrCreateDeviceId();
@@ -1455,13 +1472,49 @@ function initSyncSystem(layoutMode: LayoutMode): void {
   setOnRelayMessage(onRelayMessageImpl);
   setOnTransportDebug(onTransportDebugImpl);
 
-  // Don't auto-connect — wait for "Pair Device" or "Join" click
+  // Wire remote file click callback (for sync guest)
+  setRemoteFileClickCallback(onRemoteFileClicked);
+
+  // --- DEBUG AUTO-CONNECT ---
+  // Defer connection to after renderWorkbench returns (Perry timer pump must be active)
+  if (ctx.deviceClass === 'desktop') {
+    syncStatusOverride = 'Auto-paired (debug)';
+    setSyncStatusText('Auto-paired (debug)');
+  } else {
+    syncAutoJoinPending = 1;
+    syncStatusOverride = 'Auto-joining (debug)';
+    setSyncStatusText('Auto-joining (debug)');
+  }
+  setTimeout(() => { autoConnectDebug(); }, 1000);
+
   // Poll sync panel refresh every 5s
   setInterval(() => { refreshSyncPanelDeferred(); }, 5000);
 }
 
+function autoConnectDebug(): void {
+  const debugRoom = 'pair-DEBUG2';
+  const relayUrl = getHostRelayUrl();
+  let dbg = 'autoConnectDebug: url=';
+  dbg += relayUrl;
+  dbg += ' room=';
+  dbg += debugRoom;
+  dbg += ' device=';
+  dbg += syncDeviceId;
+  // Write debug to file so we can read it from terminal
+  try { writeFileSync('/tmp/hone-sync-debug.log', dbg); } catch (e: any) {}
+  setSyncStatusText(dbg);
+  connectToRelay(relayUrl, debugRoom, syncDeviceId);
+}
+
+function sendAutoJoinDebug(): void {
+  // Auto-join: skip pairing, just request file tree directly
+  setSyncStatusText('Requesting file tree...');
+  sendToRelay('FILE_TREE_REQ');
+}
+
 function onTransportDebugImpl(msg: string): void {
   setSyncStatusText(msg);
+  syncDebugLog(msg);
 }
 
 function onSyncPairClicked(): void {
@@ -1536,7 +1589,14 @@ function onRelayConnectedImpl(): void {
   if (syncStatusOverride.length === 0) {
     setSyncStatusText('Connected to relay');
   }
+  syncDebugLog('onRelayConnectedImpl fired');
   refreshSyncPanelDeferred();
+  // If auto-join is pending (debug mode), request file tree now
+  if (syncAutoJoinPending > 0) {
+    syncAutoJoinPending = 0;
+    setSyncStatusText('Connected! Requesting files...');
+    setTimeout(() => { sendAutoJoinDebug(); }, 500);
+  }
 }
 
 function onRelayDisconnectedImpl(): void {
@@ -1546,11 +1606,24 @@ function onRelayDisconnectedImpl(): void {
 }
 
 function onRelayMessageImpl(data: string): void {
-  // Extract payload from relay envelope: find "payload":" and read value
-  const payloadKey = '"payload":"';
-  const pkIdx = data.indexOf(payloadKey);
+  syncDebugLog('RECV: ' + data.substring(0, 200));
+
+  // Extract payload from relay envelope: find "payload" key and its string value
+  const pkIdx = data.indexOf('"payload"');
   if (pkIdx < 0) return;
-  const pStart = pkIdx + payloadKey.length;
+  // Find the opening quote of the value (skip colon and optional whitespace)
+  let pStart = pkIdx + 9; // skip past "payload"
+  // Skip : and whitespace
+  while (pStart < data.length) {
+    const c = data.charCodeAt(pStart);
+    if (c === 58 || c === 32 || c === 9) { // : or space or tab
+      pStart = pStart + 1;
+    } else {
+      break;
+    }
+  }
+  if (pStart >= data.length || data.charCodeAt(pStart) !== 34) return; // must be opening "
+  pStart = pStart + 1; // skip past opening "
   // Find closing unescaped quote
   let pEnd = pStart;
   for (let i = pStart; i < data.length; i++) {
@@ -1561,7 +1634,21 @@ function onRelayMessageImpl(data: string): void {
       break;
     }
   }
-  const payload = data.substring(pStart, pEnd);
+  const rawPayload = data.substring(pStart, pEnd);
+  // Unescape JSON string escapes: \\n → \n, \\r → \r, \\" → ", \\\\ → backslash
+  let payload = '';
+  for (let ui = 0; ui < rawPayload.length; ui++) {
+    if (rawPayload.charCodeAt(ui) === 92 && ui + 1 < rawPayload.length) {
+      const nc = rawPayload.charCodeAt(ui + 1);
+      if (nc === 110) { payload += '\n'; ui = ui + 1; }
+      else if (nc === 114) { payload += '\r'; ui = ui + 1; }
+      else if (nc === 34) { payload += '"'; ui = ui + 1; }
+      else if (nc === 92) { payload += '\\'; ui = ui + 1; }
+      else { payload += rawPayload.charAt(ui); }
+    } else {
+      payload += rawPayload.charAt(ui);
+    }
+  }
 
   // Handle PAIR_REQ|code|deviceId|deviceName
   if (payload.indexOf('PAIR_REQ|') === 0) {
@@ -1571,6 +1658,26 @@ function onRelayMessageImpl(data: string): void {
   // Handle PAIR_OK|deviceId|deviceName
   if (payload.indexOf('PAIR_OK|') === 0) {
     handlePairAccepted(payload);
+    return;
+  }
+  // Handle FILE_TREE_REQ — guest asks host for file tree
+  if (payload.indexOf('FILE_TREE_REQ') === 0) {
+    handleFileTreeRequest();
+    return;
+  }
+  // Handle FILE_TREE|rootName\nD|dir\nF|file\n...
+  if (payload.indexOf('FILE_TREE|') === 0) {
+    handleFileTreeResponse(payload);
+    return;
+  }
+  // Handle FILE_REQ|relPath — guest asks host for file content
+  if (payload.indexOf('FILE_REQ|') === 0) {
+    handleFileContentRequest(payload);
+    return;
+  }
+  // Handle FILE_DATA|relPath|content — host sends file to guest
+  if (payload.indexOf('FILE_DATA|') === 0) {
+    handleFileContentResponse(payload);
     return;
   }
 
@@ -1621,6 +1728,230 @@ function handlePairAccepted(payload: string): void {
   syncStatusOverride = '';
   setSyncStatusText('Paired!');
   refreshSyncPanelDeferred();
+  // Guest: request file tree from host after pairing
+  setTimeout(() => { requestFileTreeFromHost(); }, 500);
+}
+
+// ---------------------------------------------------------------------------
+// File sync protocol
+// ---------------------------------------------------------------------------
+
+function requestFileTreeFromHost(): void {
+  sendToRelay('FILE_TREE_REQ');
+  setSyncStatusText('Requesting files...');
+}
+
+/** Host: scan workspace and send file tree to guest. */
+function handleFileTreeRequest(): void {
+  syncDebugLog('handleFileTreeRequest: root=' + workspaceRoot);
+  if (workspaceRoot.length < 1) {
+    sendToRelay('FILE_TREE|empty');
+    return;
+  }
+  // Reset module-level tree storage
+  syncTreeEntries = new Map();
+
+  // Collect files — writes to module-level syncTreeEntries Map
+  collectSyncTreeDir(workspaceRoot, '', 0);
+
+  const entryCount = syncTreeEntries.size;
+  syncDebugLog('collectSyncTree done: ' + String(entryCount) + ' entries');
+
+  // Get the root folder name
+  let rootName = getFileName(workspaceRoot);
+
+  // Build message: FILE_TREE|rootName;;D|dir;;F|file;;...
+  let msg = 'FILE_TREE|';
+  msg += rootName;
+  for (let i = 0; i < entryCount; i++) {
+    if (syncTreeEntries.has(i)) {
+      msg += ';;';
+      msg += syncTreeEntries.get(i);
+    }
+  }
+
+  syncDebugLog('msg len=' + String(msg.length) + ' first100=' + msg.substring(0, 100));
+
+  sendToRelay(msg);
+  setSyncStatusText('Sent file tree');
+}
+
+function collectSyncTreeDir(absDir: string, relPrefix: string, depth: number): void {
+  if (depth > 4) return;
+  if (syncTreeEntries.size > 200) return;
+  let names: string[] = [];
+  try { names = readdirSync(absDir); } catch (e) {
+    syncDebugLog('readdirSync FAILED: ' + absDir);
+    return;
+  }
+
+  // First pass: separate dirs and files, skip hidden + known large dirs
+  let dirCount = 0;
+  let fileCount = 0;
+  let dirMap: Map<number, string> = new Map();
+  let fileMap: Map<number, string> = new Map();
+  for (let i = 0; i < names.length; i++) {
+    const n = names[i];
+    if (n.length < 1) continue;
+    if (n.charCodeAt(0) === 46) continue; // skip .hidden
+    // Skip known large dirs using charCodeAt (Perry string === unreliable)
+    if (n.length === 12 && n.charCodeAt(0) === 110) continue; // node_modules
+    if (n.length === 6 && n.charCodeAt(0) === 116 && n.charCodeAt(1) === 97) continue; // target
+    if (n.length === 5 && n.charCodeAt(0) === 98 && n.charCodeAt(1) === 117) continue; // build
+    if (n.length === 4 && n.charCodeAt(0) === 100 && n.charCodeAt(1) === 105) continue; // dist
+    const full = join(absDir, n);
+    const isDirResult = isDirectory(full);
+    if (isDirResult) {
+      dirMap.set(dirCount, n);
+      dirCount = dirCount + 1;
+    } else {
+      fileMap.set(fileCount, n);
+      fileCount = fileCount + 1;
+    }
+  }
+
+  // Add dirs first (with recursion), then files
+  for (let i = 0; i < dirCount; i++) {
+    if (syncTreeEntries.size > 200) return;
+    if (!dirMap.has(i)) continue;
+    const dn = dirMap.get(i) as string;
+    let relPath = '';
+    if (relPrefix.length > 0) {
+      relPath = relPrefix;
+      relPath += '/';
+      relPath += dn;
+    } else {
+      relPath = dn;
+    }
+    let entry = 'D|';
+    entry += relPath;
+    syncTreeEntries.set(syncTreeEntries.size, entry);
+    // Recurse
+    const full = join(absDir, dn);
+    collectSyncTreeDir(full, relPath, depth + 1);
+  }
+  for (let i = 0; i < fileCount; i++) {
+    if (syncTreeEntries.size > 200) return;
+    if (!fileMap.has(i)) continue;
+    const fn_ = fileMap.get(i) as string;
+    let relPath = '';
+    if (relPrefix.length > 0) {
+      relPath = relPrefix;
+      relPath += '/';
+      relPath += fn_;
+    } else {
+      relPath = fn_;
+    }
+    let entry = 'F|';
+    entry += relPath;
+    syncTreeEntries.set(syncTreeEntries.size, entry);
+  }
+}
+
+/** Guest: receive file tree from host and populate explorer. */
+function handleFileTreeResponse(payload: string): void {
+  // Parse FILE_TREE|rootName;;D|dir;;F|file;;...
+  const prefixLen = 10; // "FILE_TREE|".length
+  const body = payload.substring(prefixLen);
+
+  // Split by ;; separator
+  let parts: string[] = [];
+  let partStart = 0;
+  for (let i = 0; i < body.length; i++) {
+    if (body.charCodeAt(i) === 59 && i + 1 < body.length && body.charCodeAt(i + 1) === 59) {
+      if (i > partStart) {
+        parts.push(body.substring(partStart, i));
+      }
+      partStart = i + 2;
+      i = i + 1; // skip second ;
+    }
+  }
+  // Last part
+  if (partStart < body.length) {
+    parts.push(body.substring(partStart));
+  }
+
+  if (parts.length < 1) return;
+  const rootName = parts[0];
+
+  // Remaining parts are entries
+  let entries: string[] = [];
+  for (let i = 1; i < parts.length; i++) {
+    entries.push(parts[i]);
+  }
+
+  let dbgMsg = 'Tree: ';
+  dbgMsg += String(entries.length);
+  dbgMsg += ' entries from ';
+  dbgMsg += rootName;
+  setSyncStatusText(dbgMsg);
+  syncDebugLog(dbgMsg);
+  setRemoteFileTree(rootName, entries, entries.length);
+  // Auto-switch to explorer panel to show the remote file tree
+  switchSidebarPanel(0);
+}
+
+/** Host: read file and send content to guest. */
+function handleFileContentRequest(payload: string): void {
+  // FILE_REQ|relPath
+  const relPath = payload.substring(9);
+  if (relPath.length < 1) return;
+  if (workspaceRoot.length < 1) return;
+  let fullPath = workspaceRoot;
+  fullPath += '/';
+  fullPath += relPath;
+  const content = safeReadFile(fullPath);
+  // Send FILE_DATA|relPath|content (content is base64-ish or raw)
+  // For simplicity: send as raw with pipe separator
+  // We need to escape pipes in content — use \n as separator since
+  // the relay envelope already escapes it
+  let msg = 'FILE_DATA|';
+  msg += relPath;
+  msg += '\n';
+  msg += content;
+  sendToRelay(msg);
+}
+
+/** Guest: receive file content from host and display in editor. */
+function handleFileContentResponse(payload: string): void {
+  // FILE_DATA|relPath\ncontent
+  const prefixLen = 10; // "FILE_DATA|".length
+  const body = payload.substring(prefixLen);
+  // Find first newline — separates relPath from content
+  let nlIdx = -1;
+  for (let i = 0; i < body.length; i++) {
+    if (body.charCodeAt(i) === 10) { nlIdx = i; break; }
+  }
+  if (nlIdx < 0) return;
+  const relPath = body.substring(0, nlIdx);
+  const content = body.substring(nlIdx + 1);
+
+  setSyncStatusText('Loaded: ' + relPath);
+  // Display in editor
+  currentEditorFilePath = relPath;
+  updateBreadcrumb();
+  if (editorReady > 0) {
+    const lang = detectLanguage(relPath);
+    editorInstance.setLanguage(lang);
+    editorInstance.setContent(content);
+    editorInstance.render();
+  }
+  // Open tab for remote file
+  let name = relPath;
+  let lastSlash = -1;
+  for (let ci = relPath.length - 1; ci >= 0; ci--) {
+    if (relPath.charCodeAt(ci) === 47) { lastSlash = ci; break; }
+  }
+  if (lastSlash >= 0) name = relPath.substring(lastSlash + 1);
+  openTab(relPath, name);
+}
+
+/** Guest clicked a remote file in the explorer. */
+function onRemoteFileClicked(relPath: string): void {
+  setSyncStatusText('Loading: ' + relPath);
+  let msg = 'FILE_REQ|';
+  msg += relPath;
+  sendToRelay(msg);
 }
 
 function refreshSyncPanelDeferred(): void {

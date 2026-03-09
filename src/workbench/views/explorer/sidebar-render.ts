@@ -174,6 +174,11 @@ export function updateSidebarSelection(): void {
 
 function refreshSidebar(): void {
   if (sidebarReady < 1) return;
+  // If remote mode is active, render the remote tree instead
+  if (isRemoteMode > 0 && remoteEntryCount > 0) {
+    refreshRemoteSidebar();
+    return;
+  }
   widgetClearChildren(sidebarContainer);
   fileTreeButtons = [];
   selectedFileIdx = -1;
@@ -185,12 +190,12 @@ function refreshSidebar(): void {
   if (sidebarWorkspaceRoot.length < 1) {
     const hint = Text('Open a folder to start');
     textSetFontSize(hint, 12);
-    if (panelColors) setFg(hint, getSideBarForeground());
+    setFg(hint, getSideBarForeground());
     widgetAddChild(sidebarContainer, hint);
     const openBtn = Button('Open Folder', () => { openFolderAction(); });
     buttonSetBordered(openBtn, 0);
     textSetFontSize(openBtn, 13);
-    if (panelColors) setBtnFg(openBtn, getSideBarForeground());
+    setBtnFg(openBtn, getSideBarForeground());
     widgetAddChild(sidebarContainer, openBtn);
     widgetAddChild(sidebarContainer, Spacer());
     return;
@@ -200,7 +205,7 @@ function refreshSidebar(): void {
   const explorerLabel = Text('EXPLORER');
   textSetFontSize(explorerLabel, 11);
   textSetFontWeight(explorerLabel, 11, 0.4);
-  if (panelColors) setFg(explorerLabel, getSideBarForeground());
+  setFg(explorerLabel, getSideBarForeground());
   const explorerRow = HStackWithInsets(0, 0, 4, 0, 4);
   widgetSetHeight(explorerRow, 24);
   widgetAddChild(explorerRow, explorerLabel);
@@ -211,16 +216,16 @@ function refreshSidebar(): void {
   const foldersLabel = Text('FOLDERS');
   textSetFontSize(foldersLabel, 11);
   textSetFontWeight(foldersLabel, 11, 0.7);
-  if (panelColors) setFg(foldersLabel, getSideBarForeground());
+  setFg(foldersLabel, getSideBarForeground());
   const dotsBtn = Button('', () => {});
   buttonSetBordered(dotsBtn, 0);
   buttonSetImage(dotsBtn, 'ellipsis');
   buttonSetImagePosition(dotsBtn, 1);
   textSetFontSize(dotsBtn, 10);
-  if (panelColors) setBtnTint(dotsBtn, getSideBarForeground());
+  setBtnTint(dotsBtn, getSideBarForeground());
   const foldersRow = HStackWithInsets(0, 0, 4, 0, 4);
   widgetSetHeight(foldersRow, 24);
-  if (panelColors) setBg(foldersRow, getSideBarBackground());
+  setBg(foldersRow, getSideBarBackground());
   widgetAddChild(foldersRow, foldersLabel);
   widgetAddChild(foldersRow, Spacer());
   widgetAddChild(foldersRow, dotsBtn);
@@ -239,11 +244,11 @@ function refreshSidebar(): void {
   }
   const rootChevron = Text('\u02C5');
   textSetFontSize(rootChevron, 9);
-  if (panelColors) setFg(rootChevron, getSideBarForeground());
+  setFg(rootChevron, getSideBarForeground());
   const rootLabel = Text(rootDisplay);
   textSetFontSize(rootLabel, 11);
   textSetFontWeight(rootLabel, 11, 0.7);
-  if (panelColors) setFg(rootLabel, getSideBarForeground());
+  setFg(rootLabel, getSideBarForeground());
 
   // New file button
   const newFileBtn = Button('', () => { newFileAction(); });
@@ -251,7 +256,7 @@ function refreshSidebar(): void {
   buttonSetImage(newFileBtn, 'doc.badge.plus');
   buttonSetImagePosition(newFileBtn, 1);
   textSetFontSize(newFileBtn, 10);
-  if (panelColors) setBtnTint(newFileBtn, getSideBarForeground());
+  setBtnTint(newFileBtn, getSideBarForeground());
 
   // New folder button
   const newFolderBtn = Button('', () => {});
@@ -259,7 +264,7 @@ function refreshSidebar(): void {
   buttonSetImage(newFolderBtn, 'folder.badge.plus');
   buttonSetImagePosition(newFolderBtn, 1);
   textSetFontSize(newFolderBtn, 10);
-  if (panelColors) setBtnTint(newFolderBtn, getSideBarForeground());
+  setBtnTint(newFolderBtn, getSideBarForeground());
 
   // Collapse all button
   const collapseBtn = Button('', () => { collapseAllDirs(); });
@@ -267,7 +272,7 @@ function refreshSidebar(): void {
   buttonSetImage(collapseBtn, 'arrow.down.right.and.arrow.up.left');
   buttonSetImagePosition(collapseBtn, 1);
   textSetFontSize(collapseBtn, 10);
-  if (panelColors) setBtnTint(collapseBtn, getSideBarForeground());
+  setBtnTint(collapseBtn, getSideBarForeground());
 
   const rootRow = HStackWithInsets(2, 0, 4, 0, 4);
   widgetSetHeight(rootRow, 24);
@@ -358,7 +363,7 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     }
     textSetFontSize(chevron, 9);
     widgetSetWidth(chevron, 14);
-    if (panelColors) setBtnTint(chevron, getSideBarForeground());
+    setBtnTint(chevron, getSideBarForeground());
     widgetAddChild(row, chevron);
 
     // Name button
@@ -366,7 +371,7 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     const btn = Button(displayName, () => { onDirToggle(id); });
     buttonSetBordered(btn, 0);
     textSetFontSize(btn, 13);
-    if (panelColors) setBtnFg(btn, getSideBarForeground());
+    setBtnFg(btn, getSideBarForeground());
     widgetAddChild(row, btn);
 
     widgetAddChild(row, Spacer());
@@ -398,21 +403,16 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     buttonSetImage(iconBtn, fIcon);
     textSetFontSize(iconBtn, 11);
     widgetSetWidth(iconBtn, 16);
-    if (panelColors) {
-      const fColor = getFileIconColor(name);
-      if (fColor.length > 0) {
-        setBtnTint(iconBtn, fColor);
-      } else {
-        setBtnTint(iconBtn, getSideBarForeground());
-      }
+    const fColor = getFileIconColor(name);
+    if (fColor.length > 0) {
+      setBtnTint(iconBtn, fColor);
+    } else {
+      setBtnTint(iconBtn, getSideBarForeground());
     }
     widgetAddChild(row, iconBtn);
 
     // File name button
-    let fileColor = '';
-    if (panelColors) {
-      fileColor = getSideBarForeground();
-    }
+    let fileColor = getSideBarForeground();
     if (sidebarWorkspaceRoot.length > 0 && full.length > sidebarWorkspaceRoot.length + 1) {
       const relPath = full.slice(sidebarWorkspaceRoot.length + 1);
       const gStatus = getGitFileStatus(relPath);
@@ -463,11 +463,211 @@ export function renderExplorerPanel(container: unknown, colors: ResolvedUIColors
   panelColors = colors;
   sidebarContainer = container;
   sidebarReady = 1;
-  refreshSidebar();
+  if (isRemoteMode > 0) {
+    refreshRemoteSidebar();
+  } else {
+    refreshSidebar();
+  }
 }
 
 /** Refresh the sidebar file tree (e.g. after opening a folder). */
 export function refreshSidebarContent(): void {
   refreshSidebar();
+}
+
+// ---------------------------------------------------------------------------
+// Remote file tree (for sync guest — renders files received from host)
+// ---------------------------------------------------------------------------
+
+// Remote entries: parallel arrays of relative paths + isDir flags
+let remoteEntryPaths: string[] = [];
+let remoteEntryIsDir: number[] = [];
+let remoteEntryCount: number = 0;
+let remoteRootName = '';
+let isRemoteMode: number = 0;
+
+// Callback for when guest clicks a remote file
+let _remoteFileClickCallback: (relPath: string) => void = _noopRemoteClick;
+function _noopRemoteClick(_p: string): void {}
+
+export function setRemoteFileClickCallback(cb: (relPath: string) => void): void {
+  _remoteFileClickCallback = cb;
+}
+
+/**
+ * Set remote file tree entries. Called when guest receives FILE_TREE from host.
+ * Each entry is "D|rel/path" (directory) or "F|rel/path" (file).
+ * Entries are newline-separated in the raw message.
+ */
+export function setRemoteFileTree(rootName: string, entries: string[], count: number): void {
+  remoteEntryPaths = [];
+  remoteEntryIsDir = [];
+  remoteEntryCount = 0;
+  remoteRootName = rootName;
+  isRemoteMode = 1;
+  for (let i = 0; i < count; i++) {
+    const entry = entries[i];
+    if (entry.length < 3) continue;
+    const typeChar = entry.charCodeAt(0);
+    const relPath = entry.substring(2);
+    remoteEntryPaths.push(relPath);
+    if (typeChar === 68) { // 'D'
+      remoteEntryIsDir.push(1);
+    } else {
+      remoteEntryIsDir.push(0);
+    }
+    remoteEntryCount = remoteEntryCount + 1;
+  }
+  // Set workspace root to a virtual name so sidebar renders
+  sidebarWorkspaceRoot = rootName;
+  refreshRemoteSidebar();
+}
+
+function refreshRemoteSidebar(): void {
+  if (sidebarReady < 1) return;
+  widgetClearChildren(sidebarContainer);
+  fileTreeButtons = [];
+  selectedFileIdx = -1;
+  fileEntryPaths = [];
+  fileEntryLabels = [];
+  fileEntryCount = 0;
+  fileRowWidgets = [];
+
+  // --- EXPLORER title ---
+  const explorerLabel = Text('EXPLORER');
+  textSetFontSize(explorerLabel, 11);
+  textSetFontWeight(explorerLabel, 11, 0.4);
+  setFg(explorerLabel, getSideBarForeground());
+  const explorerRow = HStackWithInsets(0, 0, 4, 0, 4);
+  widgetSetHeight(explorerRow, 24);
+  widgetAddChild(explorerRow, explorerLabel);
+  widgetAddChild(explorerRow, Spacer());
+  widgetAddChild(sidebarContainer, explorerRow);
+
+  // --- Root folder name ---
+  let rootDisplay = '';
+  for (let ci = 0; ci < remoteRootName.length; ci++) {
+    const cc = remoteRootName.charCodeAt(ci);
+    if (cc >= 97 && cc <= 122) {
+      rootDisplay += String.fromCharCode(cc - 32);
+    } else {
+      rootDisplay += remoteRootName.charAt(ci);
+    }
+  }
+  const syncBadge = Text('SYNCED');
+  textSetFontSize(syncBadge, 9);
+  textSetFontWeight(syncBadge, 9, 0.6);
+  setFg(syncBadge, '#569CD6');
+  const rootLabel = Text(rootDisplay);
+  textSetFontSize(rootLabel, 11);
+  textSetFontWeight(rootLabel, 11, 0.7);
+  setFg(rootLabel, getSideBarForeground());
+  const rootRow = HStackWithInsets(4, 0, 4, 0, 4);
+  widgetSetHeight(rootRow, 24);
+  widgetAddChild(rootRow, rootLabel);
+  widgetAddChild(rootRow, Spacer());
+  widgetAddChild(rootRow, syncBadge);
+  widgetAddChild(sidebarContainer, rootRow);
+
+  // --- Render remote entries ---
+  // Build a flat tree sorted by path. Dirs first at each level.
+  // For simplicity: just render flat list with indentation based on slash count.
+  for (let i = 0; i < remoteEntryCount; i++) {
+    const relPath = remoteEntryPaths[i];
+    const isDir = remoteEntryIsDir[i];
+
+    // Calculate depth from slash count
+    let depth = 0;
+    for (let ci = 0; ci < relPath.length; ci++) {
+      if (relPath.charCodeAt(ci) === 47) depth = depth + 1;
+    }
+
+    // Get filename (last segment)
+    let lastSlash = -1;
+    for (let ci = relPath.length - 1; ci >= 0; ci--) {
+      if (relPath.charCodeAt(ci) === 47) { lastSlash = ci; break; }
+    }
+    let name = relPath;
+    if (lastSlash >= 0) {
+      name = relPath.substring(lastSlash + 1);
+    }
+
+    if (isDir > 0) {
+      // Directory row
+      const indentPx = depth * 16 + 4;
+      const row = HStackWithInsets(4, 0, indentPx, 0, 4);
+      widgetSetHeight(row, 22);
+      const chevron = Text('\u02C5');
+      textSetFontSize(chevron, 9);
+      setFg(chevron, getSideBarForeground());
+      widgetAddChild(row, chevron);
+      const displayName = truncateName(name, 30);
+      const dirLabel = Text(displayName);
+      textSetFontSize(dirLabel, 13);
+      setFg(dirLabel, getSideBarForeground());
+      widgetAddChild(row, dirLabel);
+      widgetAddChild(row, Spacer());
+      widgetAddChild(sidebarContainer, row);
+    } else {
+      // File row — clickable
+      const idx = fileEntryCount;
+      fileEntryPaths.push(relPath);
+      fileEntryLabels.push(name);
+      fileEntryCount = fileEntryCount + 1;
+
+      const indentPx = depth * 16 + 18;
+      const row = HStackWithInsets(4, 0, indentPx, 0, 4);
+      widgetSetHeight(row, 22);
+
+      // File icon
+      const fIcon = getFileIcon(name);
+      const iconBtn = Button('', () => { onRemoteFileClick(idx); });
+      buttonSetBordered(iconBtn, 0);
+      buttonSetImage(iconBtn, fIcon);
+      textSetFontSize(iconBtn, 11);
+      widgetSetWidth(iconBtn, 16);
+      const fColor = getFileIconColor(name);
+      if (fColor.length > 0) {
+        setBtnTint(iconBtn, fColor);
+      } else {
+        setBtnTint(iconBtn, getSideBarForeground());
+      }
+      widgetAddChild(row, iconBtn);
+
+      // File name button
+      const displayName = truncateName(name, 30);
+      const nameBtn = Button(displayName, () => { onRemoteFileClick(idx); });
+      buttonSetBordered(nameBtn, 0);
+      textSetFontSize(nameBtn, 13);
+      setBtnFg(nameBtn, getSideBarForeground());
+      widgetAddChild(row, nameBtn);
+      widgetAddChild(row, Spacer());
+
+      fileTreeButtons.push(nameBtn);
+      fileRowWidgets.push(row);
+      widgetAddChild(sidebarContainer, row);
+    }
+  }
+
+  widgetAddChild(sidebarContainer, Spacer());
+}
+
+let pendingRemoteClickIdx: number = -1;
+
+function onRemoteFileClick(idx: number): void {
+  pendingRemoteClickIdx = idx;
+  setTimeout(() => { onRemoteFileClickDeferred(); }, 0);
+}
+
+function onRemoteFileClickDeferred(): void {
+  const idx = pendingRemoteClickIdx;
+  if (idx < 0 || idx >= fileEntryCount) return;
+  pendingRemoteClickIdx = -1;
+  const relPath = fileEntryPaths[idx];
+  _remoteFileClickCallback(relPath);
+}
+
+export function isRemoteExplorerMode(): number {
+  return isRemoteMode;
 }
 
