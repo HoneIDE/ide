@@ -13,6 +13,7 @@ import {
   buttonSetBordered, buttonSetTitle,
   widgetAddChild, widgetClearChildren,
   widgetSetBackgroundColor, widgetSetWidth, widgetMatchParentWidth,
+  textfieldGetString,
 } from 'perry/ui';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
 import { getSideBarForeground, getButtonForeground } from '../../theme/theme-colors';
@@ -43,6 +44,8 @@ let devCount: number = 0;
 
 // Join code text input
 let joinCodeText = '';
+let joinInputHandle: unknown = null;
+let joinInputReady: number = 0;
 
 // Callbacks
 let _pairCallback: () => void = _noopVoid;
@@ -104,6 +107,8 @@ export function buildSyncPanel(): unknown {
   setFg(joinHeader, getSideBarForeground());
 
   const joinInput = TextField('Enter 6-char code', onJoinTextInput);
+  joinInputHandle = joinInput;
+  joinInputReady = 1;
   widgetSetWidth(joinInput, 180);
 
   const joinBtn = Button('Join', () => { onJoinClicked(); });
@@ -225,6 +230,25 @@ function onJoinTextInput(text: string): void {
 }
 
 function onJoinClicked(): void {
+  setSyncStatusText('Join clicked...');
+  // Read text directly from the TextField handle (onChange callback may not fire on iOS)
+  if (joinInputReady > 0) {
+    const directText = textfieldGetString(joinInputHandle);
+    let dbg = 'Read: [';
+    dbg += directText;
+    dbg += '] len=';
+    dbg += String(directText.length);
+    setSyncStatusText(dbg);
+    if (directText.length > 0) {
+      joinCodeText = directText;
+    }
+  } else {
+    setSyncStatusText('No input handle');
+  }
+  let dbg2 = 'Joining with: [';
+  dbg2 += joinCodeText;
+  dbg2 += ']';
+  setSyncStatusText(dbg2);
   _joinCallback(joinCodeText);
 }
 

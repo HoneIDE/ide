@@ -12,7 +12,7 @@ APP_BUNDLE="$SCRIPT_DIR/Hone.app"
 # Signing config
 SIGN_IDENTITY="Apple Development: Ralph Kuepper (372EYFG3C5)"
 TEAM_ID="K6UW5YV9F7"
-BUNDLE_ID="com.perry.Hone"
+BUNDLE_ID="com.hone.ide"
 PROVISION_PROFILE="$HOME/Library/Developer/Xcode/DerivedData/HoneSigner-gwsadbjvejkvbcetbfuwksejbgav/Build/Products/Debug-iphoneos/Hone.app/embedded.mobileprovision"
 
 # Find connected iPhone

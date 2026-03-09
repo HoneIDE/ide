@@ -104,7 +104,7 @@ import { getOrCreateDeviceId } from './paths';
 import {
   connectToRelay, disconnectFromRelay, sendToRelay,
   setOnRelayConnected, setOnRelayDisconnected,
-  setOnRelayMessage, isRelayConnected,
+  setOnRelayMessage, isRelayConnected, setOnTransportDebug,
 } from './sync-transport';
 
 // Compile-time platform ID injected by Perry codegen:
@@ -1453,10 +1453,15 @@ function initSyncSystem(layoutMode: LayoutMode): void {
   setOnRelayConnected(onRelayConnectedImpl);
   setOnRelayDisconnected(onRelayDisconnectedImpl);
   setOnRelayMessage(onRelayMessageImpl);
+  setOnTransportDebug(onTransportDebugImpl);
 
   // Don't auto-connect — wait for "Pair Device" or "Join" click
   // Poll sync panel refresh every 5s
   setInterval(() => { refreshSyncPanelDeferred(); }, 5000);
+}
+
+function onTransportDebugImpl(msg: string): void {
+  setSyncStatusText(msg);
 }
 
 function onSyncPairClicked(): void {
@@ -1476,7 +1481,15 @@ function onSyncPairClicked(): void {
 }
 
 function onSyncJoinClicked(code: string): void {
-  if (code.length < 1) return;
+  let dbg = 'onSyncJoinClicked code=[';
+  dbg += code;
+  dbg += '] len=';
+  dbg += String(code.length);
+  setSyncStatusText(dbg);
+  if (code.length < 1) {
+    setSyncStatusText('EMPTY code, aborting');
+    return;
+  }
   const upper = code.toUpperCase();
   let roomId = 'pair-';
   roomId += upper;
@@ -1484,10 +1497,14 @@ function onSyncJoinClicked(code: string): void {
   // Connect to the same room as the host
   disconnectFromRelay();
   const relayUrl = getHostRelayUrl();
+  let dbg2 = 'Connecting to ';
+  dbg2 += relayUrl;
+  dbg2 += ' room=';
+  dbg2 += roomId;
+  setSyncStatusText(dbg2);
   connectToRelay(relayUrl, roomId, syncDeviceId);
 
   syncStatusOverride = 'Joining...';
-  setSyncStatusText('Joining...');
 
   // Send pair request after a short delay (wait for WS connect)
   setTimeout(() => { sendPairRequest(upper); }, 1500);

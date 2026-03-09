@@ -1,8 +1,8 @@
 /**
  * Sync Transport — WebSocket bridge to relay server.
  *
- * Uses new WebSocket(url) + .then() for connection, with isOpen() polling
- * as fallback for handle detection and message receiving.
+ * Uses Perry's built-in ws module on all platforms.
+ * On iOS, perry-stdlib delegates to native NSURLSessionWebSocketTask internally.
  *
  * All state is module-level (Perry closures capture by value).
  */
@@ -22,11 +22,13 @@ let pollTimerId: number = 0;
 let joinSent: number = 0;
 let nextHandleGuess: number = 1;
 let seqCounter: number = 0;
+let pollCount: number = 0;
 
 // Event callbacks
 let _onRelayConnected: () => void = _noopVoid;
 let _onRelayDisconnected: () => void = _noopVoid;
 let _onRelayMessage: (data: string) => void = _noopData;
+let _onDebug: (msg: string) => void = _noopData;
 
 function _noopVoid(): void {}
 function _noopData(d: string): void {}
@@ -34,18 +36,26 @@ function _noopData(d: string): void {}
 // --- Public API ---
 
 export function connectToRelay(url: string, roomId: string, deviceId: string): void {
-  if (wsConnected > 0 || wsConnecting > 0) return;
+  if (wsConnected > 0 || wsConnecting > 0) {
+    _onDebug('Already connected/connecting');
+    return;
+  }
 
   relayUrl = url;
   relayRoomId = roomId;
   relayDeviceId = deviceId;
   wsConnecting = 1;
   joinSent = 0;
+  pollCount = 0;
 
-  // new WebSocket(url) creates the connection (returns Promise)
-  // .then() gives us the handle — may or may not fire in Perry
+  let dbg = 'WS connecting to ';
+  dbg += url;
+  _onDebug(dbg);
+
+  // Use ws module on all platforms (perry-stdlib delegates to native on iOS)
   const wsPromise = new WebSocket(url);
-  wsPromise.then((ws: any) => { storeWsHandle(ws); });
+  wsPromise.then((ws: any) => { storeWsHandle(ws); }, (err: any) => { onWsError(err); });
+  _onDebug('WS created');
 
   // Start polling for connection + messages
   if (pollTimerId < 1) {
@@ -117,6 +127,10 @@ export function setOnRelayMessage(fn: (data: string) => void): void {
   _onRelayMessage = fn;
 }
 
+export function setOnTransportDebug(fn: (msg: string) => void): void {
+  _onDebug = fn;
+}
+
 export function getRelayRoomId(): string {
   return relayRoomId;
 }
@@ -131,11 +145,25 @@ function storeWsHandle(ws: any): void {
   wsHandle = ws as number;
   wsConnected = 1;
   wsConnecting = 0;
+  let dbg = 'WS .then() handle=';
+  dbg += String(wsHandle);
+  _onDebug(dbg);
   onConnectedToRelay();
+}
+
+function onWsError(err: any): void {
+  wsConnecting = 0;
+  let dbg = 'WS ERROR: ';
+  dbg += String(err);
+  _onDebug(dbg);
 }
 
 function pollRelay(): void {
   if (wsConnecting < 1 && wsConnected < 1) return;
+
+  pollCount = pollCount + 1;
+
+  // (poll debug removed — connection works)
 
   // If we don't have a handle yet, probe sequential IDs
   if (wsHandle < 1 && wsConnecting > 0) {
@@ -146,6 +174,9 @@ function pollRelay(): void {
         nextHandleGuess = probe + 1;
         wsConnected = 1;
         wsConnecting = 0;
+        let dbg = 'WS probe found handle=';
+        dbg += String(probe);
+        _onDebug(dbg);
         onConnectedToRelay();
         return;
       }
@@ -193,6 +224,9 @@ function onConnectedToRelay(): void {
     msg += '","device":"';
     msg += relayDeviceId;
     msg += '"}';
+    let dbg = 'Sending join: ';
+    dbg += msg;
+    _onDebug(dbg);
     sendToClient(wsHandle, msg);
   }
   _onRelayConnected();
