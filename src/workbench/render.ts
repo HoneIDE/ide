@@ -1425,6 +1425,8 @@ let syncDeviceId = '';
 let syncDeviceName = 'Hone Desktop';
 let syncStatusOverride = '';
 let syncAutoJoinPending: number = 0;
+let fileTreeReceived: number = 0;
+let fileTreeRetries: number = 0;
 
 // Module-level storage for collectSyncTree
 // Use Map (not Array.push — broken cross-function) and Map.size (not scalar counter — invisible cross-function)
@@ -1509,6 +1511,17 @@ function autoConnectDebug(): void {
 function sendAutoJoinDebug(): void {
   // Auto-join: skip pairing, just request file tree directly
   setSyncStatusText('Requesting file tree...');
+  sendToRelay('FILE_TREE_REQ');
+  fileTreeRetries = 0;
+  // Retry FILE_TREE_REQ every 3s until we get a response (host may not be connected yet)
+  setInterval(() => { retryFileTreeReq(); }, 3000);
+}
+
+function retryFileTreeReq(): void {
+  if (fileTreeReceived > 0) return;
+  fileTreeRetries = fileTreeRetries + 1;
+  if (fileTreeRetries > 10) return;
+  syncDebugLog('Retrying FILE_TREE_REQ attempt=' + String(fileTreeRetries));
   sendToRelay('FILE_TREE_REQ');
 }
 
@@ -1608,6 +1621,19 @@ function onRelayDisconnectedImpl(): void {
 function onRelayMessageImpl(data: string): void {
   syncDebugLog('RECV: ' + data.substring(0, 200));
 
+  // Extract "from" field to detect self-messages
+  let msgFrom = '';
+  const fromIdx = data.indexOf('"from"');
+  if (fromIdx >= 0) {
+    let fStart = fromIdx + 6;
+    while (fStart < data.length && data.charCodeAt(fStart) !== 34) fStart = fStart + 1;
+    fStart = fStart + 1; // skip opening "
+    let fEnd = fStart;
+    while (fEnd < data.length && data.charCodeAt(fEnd) !== 34) fEnd = fEnd + 1;
+    msgFrom = data.substring(fStart, fEnd);
+  }
+  const isSelf = (msgFrom === syncDeviceId) ? 1 : 0;
+
   // Extract payload from relay envelope: find "payload" key and its string value
   const pkIdx = data.indexOf('"payload"');
   if (pkIdx < 0) return;
@@ -1660,24 +1686,24 @@ function onRelayMessageImpl(data: string): void {
     handlePairAccepted(payload);
     return;
   }
-  // Handle FILE_TREE_REQ — guest asks host for file tree
+  // Handle FILE_TREE_REQ — guest asks host for file tree (only from others)
   if (payload.indexOf('FILE_TREE_REQ') === 0) {
-    handleFileTreeRequest();
+    if (isSelf < 1) handleFileTreeRequest();
     return;
   }
-  // Handle FILE_TREE|rootName\nD|dir\nF|file\n...
+  // Handle FILE_TREE|rootName;;D|dir;;F|file;;... (only from others)
   if (payload.indexOf('FILE_TREE|') === 0) {
-    handleFileTreeResponse(payload);
+    if (isSelf < 1) handleFileTreeResponse(payload);
     return;
   }
-  // Handle FILE_REQ|relPath — guest asks host for file content
+  // Handle FILE_REQ|relPath — guest asks host for file content (only from others)
   if (payload.indexOf('FILE_REQ|') === 0) {
-    handleFileContentRequest(payload);
+    if (isSelf < 1) handleFileContentRequest(payload);
     return;
   }
-  // Handle FILE_DATA|relPath|content — host sends file to guest
+  // Handle FILE_DATA|relPath|content — host sends file to guest (only from others)
   if (payload.indexOf('FILE_DATA|') === 0) {
-    handleFileContentResponse(payload);
+    if (isSelf < 1) handleFileContentResponse(payload);
     return;
   }
 
@@ -1771,7 +1797,6 @@ function handleFileTreeRequest(): void {
   }
 
   syncDebugLog('msg len=' + String(msg.length) + ' first100=' + msg.substring(0, 100));
-
   sendToRelay(msg);
   setSyncStatusText('Sent file tree');
 }
@@ -1799,6 +1824,8 @@ function collectSyncTreeDir(absDir: string, relPrefix: string, depth: number): v
     if (n.length === 6 && n.charCodeAt(0) === 116 && n.charCodeAt(1) === 97) continue; // target
     if (n.length === 5 && n.charCodeAt(0) === 98 && n.charCodeAt(1) === 117) continue; // build
     if (n.length === 4 && n.charCodeAt(0) === 100 && n.charCodeAt(1) === 105) continue; // dist
+    // Skip .app bundles (macOS app bundles look like directories)
+    if (n.length > 4 && n.charCodeAt(n.length - 4) === 46 && n.charCodeAt(n.length - 3) === 97 && n.charCodeAt(n.length - 2) === 112 && n.charCodeAt(n.length - 1) === 112) continue;
     const full = join(absDir, n);
     const isDirResult = isDirectory(full);
     if (isDirResult) {
@@ -1850,6 +1877,7 @@ function collectSyncTreeDir(absDir: string, relPrefix: string, depth: number): v
 
 /** Guest: receive file tree from host and populate explorer. */
 function handleFileTreeResponse(payload: string): void {
+  fileTreeReceived = 1;
   // Parse FILE_TREE|rootName;;D|dir;;F|file;;...
   const prefixLen = 10; // "FILE_TREE|".length
   const body = payload.substring(prefixLen);
@@ -1889,6 +1917,24 @@ function handleFileTreeResponse(payload: string): void {
   setRemoteFileTree(rootName, entries, entries.length);
   // Auto-switch to explorer panel to show the remote file tree
   switchSidebarPanel(0);
+
+  // Auto-open the first source file in the tree (prefer .ts, then any text file)
+  let firstFile = '';
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    if (e.length > 2 && e.charCodeAt(0) === 70) { // 'F' = file entry
+      const relPath = e.substring(2);
+      // Prefer .ts files
+      if (relPath.length > 3 && relPath.charCodeAt(relPath.length - 3) === 46 && relPath.charCodeAt(relPath.length - 2) === 116 && relPath.charCodeAt(relPath.length - 1) === 115) {
+        firstFile = relPath;
+        break;
+      }
+      if (firstFile.length === 0) firstFile = relPath;
+    }
+  }
+  if (firstFile.length > 0) {
+    onRemoteFileClicked(firstFile);
+  }
 }
 
 /** Host: read file and send content to guest. */
@@ -1944,6 +1990,11 @@ function handleFileContentResponse(payload: string): void {
   }
   if (lastSlash >= 0) name = relPath.substring(lastSlash + 1);
   openTab(relPath, name);
+  // In compact mode, switch from explorer back to editor pane
+  if (compactShowingExplorer > 0) {
+    hideExplorer();
+    compactActivePanel = 0;
+  }
 }
 
 /** Guest clicked a remote file in the explorer. */

@@ -79,6 +79,7 @@ export function sendToRelay(payload: string): void {
 }
 
 export function sendToRelayTarget(to: string, payload: string): void {
+  _onDebug('sendToRelayTarget: wsConn=' + String(wsConnected) + ' handle=' + String(wsHandle) + ' payloadLen=' + String(payload.length));
   if (wsConnected < 1 || wsHandle < 1) return;
   seqCounter = seqCounter + 1;
   let msg = '{"from":"';
@@ -92,23 +93,39 @@ export function sendToRelayTarget(to: string, payload: string): void {
   msg += ',"ts":';
   msg += String(Date.now());
   msg += ',"encrypted":false,"payload":"';
-  // Escape double quotes in payload
+  // Check if payload needs escaping (contains " \ \n \r)
+  let needsEscape = 0;
   for (let i = 0; i < payload.length; i++) {
     const ch = payload.charCodeAt(i);
-    if (ch === 34) { // "
-      msg += '\\"';
-    } else if (ch === 92) { // backslash
-      msg += '\\\\';
-    } else if (ch === 10) { // newline
-      msg += '\\n';
-    } else if (ch === 13) { // carriage return
-      msg += '\\r';
-    } else {
-      msg += payload.charAt(i);
+    if (ch === 34 || ch === 92 || ch === 10 || ch === 13) {
+      needsEscape = 1;
+      break;
+    }
+  }
+  if (needsEscape < 1) {
+    // Fast path: no escaping needed, direct concat
+    msg += payload;
+  } else {
+    // Slow path: escape character by character
+    for (let i = 0; i < payload.length; i++) {
+      const ch = payload.charCodeAt(i);
+      if (ch === 34) {
+        msg += '\\"';
+      } else if (ch === 92) {
+        msg += '\\\\';
+      } else if (ch === 10) {
+        msg += '\\n';
+      } else if (ch === 13) {
+        msg += '\\r';
+      } else {
+        msg += payload.charAt(i);
+      }
     }
   }
   msg += '"}';
+  _onDebug('sendToClient msgLen=' + String(msg.length) + ' handle=' + String(wsHandle));
   sendToClient(wsHandle, msg);
+  _onDebug('sendToClient DONE');
 }
 
 export function isRelayConnected(): number {
