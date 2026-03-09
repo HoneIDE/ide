@@ -1428,6 +1428,60 @@ let syncAutoJoinPending: number = 0;
 let fileTreeReceived: number = 0;
 let fileTreeRetries: number = 0;
 
+// --- Guest file cache (bulk sync) ---
+// Maps relPath → file content. Populated during initial bulk sync from host.
+let fileCacheKeys: string[] = [];
+let fileCacheVals: string[] = [];
+let fileCacheCount: number = 0;
+let bulkSyncTotal: number = 0;
+let bulkSyncReceived: number = 0;
+let bulkSyncDone: number = 0;
+
+function fileCacheGet(relPath: string): string {
+  for (let i = 0; i < fileCacheCount; i++) {
+    if (fileCacheKeys[i].length === relPath.length) {
+      let match = 1;
+      for (let j = 0; j < relPath.length; j++) {
+        if (fileCacheKeys[i].charCodeAt(j) !== relPath.charCodeAt(j)) { match = 0; break; }
+      }
+      if (match > 0) return fileCacheVals[i];
+    }
+  }
+  return '';
+}
+
+function fileCacheHas(relPath: string): number {
+  for (let i = 0; i < fileCacheCount; i++) {
+    if (fileCacheKeys[i].length === relPath.length) {
+      let match = 1;
+      for (let j = 0; j < relPath.length; j++) {
+        if (fileCacheKeys[i].charCodeAt(j) !== relPath.charCodeAt(j)) { match = 0; break; }
+      }
+      if (match > 0) return 1;
+    }
+  }
+  return 0;
+}
+
+function fileCacheSet(relPath: string, content: string): void {
+  // Update existing entry if present
+  for (let i = 0; i < fileCacheCount; i++) {
+    if (fileCacheKeys[i].length === relPath.length) {
+      let match = 1;
+      for (let j = 0; j < relPath.length; j++) {
+        if (fileCacheKeys[i].charCodeAt(j) !== relPath.charCodeAt(j)) { match = 0; break; }
+      }
+      if (match > 0) {
+        fileCacheVals[i] = content;
+        return;
+      }
+    }
+  }
+  fileCacheKeys.push(relPath);
+  fileCacheVals.push(content);
+  fileCacheCount = fileCacheCount + 1;
+}
+
 // Module-level storage for collectSyncTree
 // Use Map (not Array.push — broken cross-function) and Map.size (not scalar counter — invisible cross-function)
 let syncTreeEntries: Map<number, string> = new Map();
@@ -1706,6 +1760,29 @@ function onRelayMessageImpl(data: string): void {
     if (isSelf < 1) handleFileContentResponse(payload);
     return;
   }
+  // Handle BULK_SYNC_START|count — host starting bulk file push
+  if (payload.indexOf('BULK_SYNC_START|') === 0) {
+    if (isSelf < 1) {
+      const countStr = payload.substring(16);
+      bulkSyncTotal = Number(countStr);
+      bulkSyncReceived = 0;
+      bulkSyncDone = 0;
+      setSyncStatusText('Receiving files: 0/' + countStr);
+    }
+    return;
+  }
+  // Handle BULK_SYNC_END — host finished bulk push
+  if (payload.indexOf('BULK_SYNC_END') === 0) {
+    if (isSelf < 1) {
+      bulkSyncDone = 1;
+      let doneMsg = 'Synced ';
+      doneMsg += String(fileCacheCount);
+      doneMsg += ' files';
+      setSyncStatusText(doneMsg);
+      syncDebugLog(doneMsg);
+    }
+    return;
+  }
 
   refreshSyncPanelDeferred();
 }
@@ -1799,11 +1876,151 @@ function handleFileTreeRequest(): void {
   syncDebugLog('msg len=' + String(msg.length) + ' first100=' + msg.substring(0, 100));
   sendToRelay(msg);
   setSyncStatusText('Sent file tree');
+
+  // --- Bulk sync: send all text/source files after the tree ---
+  // Collect file relPaths from the tree entries
+  let textFiles: string[] = [];
+  let textFileCount = 0;
+  for (let i = 0; i < entryCount; i++) {
+    if (!syncTreeEntries.has(i)) continue;
+    const entry = syncTreeEntries.get(i) as string;
+    if (entry.length < 3) continue;
+    // Only files (F|...), not dirs (D|...)
+    if (entry.charCodeAt(0) !== 70) continue;
+    const relPath = entry.substring(2);
+    if (isTextFile(relPath) > 0) {
+      textFiles.push(relPath);
+      textFileCount = textFileCount + 1;
+    }
+  }
+
+  // Send BULK_SYNC_START|count so guest knows how many files to expect
+  let startMsg = 'BULK_SYNC_START|';
+  startMsg += String(textFileCount);
+  sendToRelay(startMsg);
+  syncDebugLog('Bulk sync: ' + String(textFileCount) + ' text files');
+
+  // Send each file with a small delay to avoid overwhelming the relay
+  bulkSyncIdx = 0;
+  bulkSyncFiles = textFiles;
+  bulkSyncFileCount = textFileCount;
+  // Drip-feed files: send a batch every 50ms via setInterval
+  if (textFileCount > 0) {
+    setSyncStatusText('Syncing ' + String(textFileCount) + ' files...');
+    bulkSyncTimerId = setInterval(() => { bulkSyncTick(); }, 50);
+  }
+}
+
+// Host: bulk sync state
+let bulkSyncIdx: number = 0;
+let bulkSyncFiles: string[] = [];
+let bulkSyncFileCount: number = 0;
+let bulkSyncTimerId: number = 0;
+const BULK_SYNC_BATCH = 3; // files per tick
+const BULK_FILE_MAX_SIZE = 1048576; // 1MB
+
+function bulkSyncTick(): void {
+  let sent = 0;
+  while (bulkSyncIdx < bulkSyncFileCount && sent < BULK_SYNC_BATCH) {
+    const relPath = bulkSyncFiles[bulkSyncIdx];
+    bulkSyncIdx = bulkSyncIdx + 1;
+    let fullPath = workspaceRoot;
+    fullPath += '/';
+    fullPath += relPath;
+    const content = safeReadFile(fullPath);
+    // Skip files that are too large or couldn't be read
+    if (content.length > BULK_FILE_MAX_SIZE) continue;
+    if (content.length === 0) continue;
+    let msg = 'FILE_DATA|';
+    msg += relPath;
+    msg += '\n';
+    msg += content;
+    sendToRelay(msg);
+    sent = sent + 1;
+  }
+  if (bulkSyncIdx >= bulkSyncFileCount) {
+    clearInterval(bulkSyncTimerId);
+    sendToRelay('BULK_SYNC_END');
+    setSyncStatusText('Sync complete (' + String(bulkSyncFileCount) + ' files)');
+    syncDebugLog('Bulk sync complete');
+  }
+}
+
+/** Check if a file is a text/source file based on extension. */
+function isTextFile(relPath: string): number {
+  // Find last dot
+  let dotIdx = -1;
+  for (let i = relPath.length - 1; i >= 0; i--) {
+    if (relPath.charCodeAt(i) === 46) { dotIdx = i; break; }
+    if (relPath.charCodeAt(i) === 47) break; // hit dir separator before dot
+  }
+  if (dotIdx < 0) return 0;
+  const ext = relPath.substring(dotIdx + 1);
+  // Common text/source extensions
+  if (ext.length === 2) {
+    if (ext === 'ts') return 1;
+    if (ext === 'js') return 1;
+    if (ext === 'rs') return 1;
+    if (ext === 'py') return 1;
+    if (ext === 'go') return 1;
+    if (ext === 'rb') return 1;
+    if (ext === 'md') return 1;
+    if (ext === 'sh') return 1;
+    if (ext === 'cs') return 1;
+  }
+  if (ext.length === 3) {
+    if (ext === 'tsx') return 1;
+    if (ext === 'jsx') return 1;
+    if (ext === 'css') return 1;
+    if (ext === 'vue') return 1;
+    if (ext === 'yml') return 1;
+    if (ext === 'xml') return 1;
+    if (ext === 'svg') return 1;
+    if (ext === 'sql') return 1;
+    if (ext === 'txt') return 1;
+    if (ext === 'ini') return 1;
+    if (ext === 'cfg') return 1;
+    if (ext === 'env') return 1;
+    if (ext === 'htm') return 1;
+    if (ext === 'lua') return 1;
+    if (ext === 'zig') return 1;
+    if (ext === 'nim') return 1;
+  }
+  if (ext.length === 4) {
+    if (ext === 'json') return 1;
+    if (ext === 'toml') return 1;
+    if (ext === 'yaml') return 1;
+    if (ext === 'html') return 1;
+    if (ext === 'scss') return 1;
+    if (ext === 'less') return 1;
+    if (ext === 'lock') return 1;
+    if (ext === 'conf') return 1;
+    if (ext === 'java') return 1;
+    if (ext === 'dart') return 1;
+    if (ext === 'swift') return 0; // 5 chars, handled below
+    if (ext === 'diff') return 1;
+  }
+  if (ext.length === 5) {
+    if (ext === 'swift') return 1;
+    if (ext === 'patch') return 1;
+  }
+  // Dotfiles without extension that are text: Makefile, Dockerfile, etc.
+  // Handle by checking common names
+  let lastSlash = -1;
+  for (let i = relPath.length - 1; i >= 0; i--) {
+    if (relPath.charCodeAt(i) === 47) { lastSlash = i; break; }
+  }
+  const name = lastSlash >= 0 ? relPath.substring(lastSlash + 1) : relPath;
+  if (name === 'Makefile') return 1;
+  if (name === 'Dockerfile') return 1;
+  if (name === 'Cargo.toml') return 1;
+  if (name === 'Cargo.lock') return 1;
+  return 0;
 }
 
 function collectSyncTreeDir(absDir: string, relPrefix: string, depth: number): void {
-  if (depth > 4) return;
-  if (syncTreeEntries.size > 200) return;
+  if (depth > 8) return;
+  if (syncTreeEntries.size > 500) return;
   let names: string[] = [];
   try { names = readdirSync(absDir); } catch (e) {
     syncDebugLog('readdirSync FAILED: ' + absDir);
@@ -1839,7 +2056,7 @@ function collectSyncTreeDir(absDir: string, relPrefix: string, depth: number): v
 
   // Add dirs first (with recursion), then files
   for (let i = 0; i < dirCount; i++) {
-    if (syncTreeEntries.size > 200) return;
+    if (syncTreeEntries.size > 500) return;
     if (!dirMap.has(i)) continue;
     const dn = dirMap.get(i) as string;
     let relPath = '';
@@ -1858,7 +2075,7 @@ function collectSyncTreeDir(absDir: string, relPrefix: string, depth: number): v
     collectSyncTreeDir(full, relPath, depth + 1);
   }
   for (let i = 0; i < fileCount; i++) {
-    if (syncTreeEntries.size > 200) return;
+    if (syncTreeEntries.size > 500) return;
     if (!fileMap.has(i)) continue;
     const fn_ = fileMap.get(i) as string;
     let relPath = '';
@@ -1959,6 +2176,9 @@ function handleFileContentRequest(payload: string): void {
 }
 
 /** Guest: receive file content from host and display in editor. */
+// The file the user explicitly requested to open (empty = bulk sync background data)
+let pendingOpenPath = '';
+
 function handleFileContentResponse(payload: string): void {
   // FILE_DATA|relPath\ncontent
   const prefixLen = 10; // "FILE_DATA|".length
@@ -1972,8 +2192,36 @@ function handleFileContentResponse(payload: string): void {
   const relPath = body.substring(0, nlIdx);
   const content = body.substring(nlIdx + 1);
 
+  // Always cache the file content
+  fileCacheSet(relPath, content);
+
+  // Update bulk sync progress
+  if (bulkSyncDone < 1 && bulkSyncTotal > 0) {
+    bulkSyncReceived = bulkSyncReceived + 1;
+    let progressMsg = 'Syncing: ';
+    progressMsg += String(bulkSyncReceived);
+    progressMsg += '/';
+    progressMsg += String(bulkSyncTotal);
+    setSyncStatusText(progressMsg);
+  }
+
+  // Only display in editor if this was a user-requested file
+  let isRequested = 0;
+  if (pendingOpenPath.length > 0 && pendingOpenPath.length === relPath.length) {
+    isRequested = 1;
+    for (let j = 0; j < relPath.length; j++) {
+      if (pendingOpenPath.charCodeAt(j) !== relPath.charCodeAt(j)) { isRequested = 0; break; }
+    }
+  }
+  if (isRequested > 0) {
+    pendingOpenPath = '';
+    displayFileFromCache(relPath, content);
+  }
+}
+
+/** Display a file in the editor (from cache or network). */
+function displayFileFromCache(relPath: string, content: string): void {
   setSyncStatusText('Loaded: ' + relPath);
-  // Display in editor
   currentEditorFilePath = relPath;
   updateBreadcrumb();
   if (editorReady > 0) {
@@ -1999,7 +2247,15 @@ function handleFileContentResponse(payload: string): void {
 
 /** Guest clicked a remote file in the explorer. */
 function onRemoteFileClicked(relPath: string): void {
+  // Check local cache first — instant open if already synced
+  if (fileCacheHas(relPath) > 0) {
+    const content = fileCacheGet(relPath);
+    displayFileFromCache(relPath, content);
+    return;
+  }
+  // Not cached — request from host
   setSyncStatusText('Loading: ' + relPath);
+  pendingOpenPath = relPath;
   let msg = 'FILE_REQ|';
   msg += relPath;
   sendToRelay(msg);
