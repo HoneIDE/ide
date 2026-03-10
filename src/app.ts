@@ -83,4 +83,4 @@ if (_needsSetup === 0) {
 }
 
 // 5. Run
-App({ title: 'Hone', width: 1200, height: 800, body: body });
+App({ title: 'Hone', width: 1200, height: 800, icon: 'hone-icon.png', body: body });

@@ -3,6 +3,17 @@ hone-ide
 hone-ide.exe
 Hone
 Hone.app/
+
+# macOS app bundle build outputs (keep Info.plist)
+Hone-macOS.app/Contents/MacOS/
+Hone-macOS.app/Contents/Resources/
+
+# Build artifacts
+app
+app.html
+hone-ide-map
+hone-ide.map
+test-runs/
 *.o
 *.a
 *.so

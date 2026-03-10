@@ -22,7 +22,7 @@ import {
   stackSetDetachesHidden, stackSetDistribution,
   widgetMatchParentHeight, widgetMatchParentWidth,
   embedNSView,
-  openFolderDialog, openFileDialog, saveFileDialog,
+  openFolderDialog, openFileDialog, saveFileDialog, pollOpenFile,
   textfieldFocus,
   frameSplitCreate, frameSplitAddChild,
 } from 'perry/ui';
@@ -821,6 +821,22 @@ function openFileInEditor(filePath: string, fileName: string): void {
   }
   openTab(filePath, fileName);
   displayFileContent(filePath);
+}
+
+function checkOpenFileRequests(): void {
+  const path = pollOpenFile();
+  if (path.length > 0) {
+    // Extract file name from path
+    let lastSlash = -1;
+    for (let i = path.length - 1; i >= 0; i--) {
+      if (path.charCodeAt(i) === 47) { lastSlash = i; break; }
+    }
+    let name = path;
+    if (lastSlash >= 0) {
+      name = path.slice(lastSlash + 1);
+    }
+    openFileInEditor(path, name);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2540,6 +2556,9 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   // Register settings change listener for live theme switching
   _lastThemeName = settings.colorTheme;
   onSettingsChange(() => { onSettingsChanged(); });
+
+  // Poll for files opened via macOS "Open With" or command-line args
+  setInterval(checkOpenFileRequests, 500);
 
   return shell;
 }
