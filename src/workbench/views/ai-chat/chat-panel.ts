@@ -7,11 +7,11 @@
  */
 import {
   VStack, HStack, VStackWithInsets, HStackWithInsets, Text, Button, Spacer,
-  TextField, ScrollView, scrollViewSetChild,
+  TextField, ScrollView, scrollViewSetChild, scrollViewScrollTo,
   textSetFontSize, textSetFontWeight, textSetFontFamily, textSetString, textSetWraps,
   buttonSetBordered, buttonSetTitle,
   widgetAddChild, widgetClearChildren, widgetSetBackgroundColor, widgetSetWidth,
-  widgetSetHidden, widgetSetHeight, widgetRemoveChild,
+  widgetSetHidden, widgetSetHeight, widgetRemoveChild, stackSetDetachesHidden,
   textfieldSetString, textfieldFocus, textfieldGetString, textfieldSetOnSubmit,
 } from 'perry/ui';
 import { execSync } from 'child_process';
@@ -26,10 +26,14 @@ import { getSideBarForeground } from '../../theme/theme-colors';
 import {
   ensureChatsDir, getSessionFilePath, createNewSession,
   loadSessionMessages, saveSessionMessages, updateSessionTitle,
-  updateSessionMode, deleteSession, getSessionList, getSessionAt,
+  updateSessionMode, updateSessionModel, deleteSession,
+  getSessionList, getSessionAt,
   generateTitle, getActiveSessionId, setActiveSessionId,
-  getActiveSessionMode, setActiveSessionMode, getMostRecentSessionId,
-  loadSessionMeta, getParsedId, getParsedMode, getParsedTitle,
+  getActiveSessionMode, setActiveSessionMode,
+  getActiveSessionModel, setActiveSessionModel,
+  getMostRecentSessionId,
+  loadSessionMeta, getParsedId, getParsedMode, getParsedTitle, getParsedModel,
+  saveClaudeSessionUUID, loadClaudeSessionUUID,
 } from './session-store';
 
 // SSE streaming via Perry native fetch (from node-fetch module)
@@ -51,6 +55,12 @@ import {
   buildContextString, getContextTokenEstimate, renderChips, setChipsRenderCallback,
 } from './context-chips';
 
+// Claude Code integration
+import {
+  findClaudeBinary, checkClaudeAuth, startClaudeSession,
+} from './claude-process';
+import { parseNDJSONCost, parseNDJSONTurns } from './claude-events';
+
 // ---------------------------------------------------------------------------
 // Module-level state
 // ---------------------------------------------------------------------------
@@ -66,11 +76,31 @@ let msgFilePath = '';
 let chatApiKey = '';
 let chatApiKeyLoaded: number = 0;
 
-// Mode: 0=Chat, 1=Agent, 2=Plan
+// Mode: 0=Chat, 1=Agent, 2=Plan, 3=Claude Code
 let panelMode: number = 0;
 let modeChatBtn: unknown = null;
 let modeAgentBtn: unknown = null;
 let modePlanBtn: unknown = null;
+let modeClaudeBtn: unknown = null;
+// Wrapper containers for mode tab backgrounds (NSButton ignores widgetSetBackgroundColor)
+let modeChatWrap: unknown = null;
+let modeAgentWrap: unknown = null;
+let modePlanWrap: unknown = null;
+let modeClaudeWrap: unknown = null;
+
+// Claude Code mode state
+let claudeModeActive: number = 0;
+let claudeToolContainer: unknown = null;
+let claudeCostLabel: unknown = null;
+let claudePollTimer: number = 0;
+let claudeLineBuffer = '';
+let claudeLogFilePath = '';
+let claudeLogOffset: number = 0;
+let claudeProcessDone: number = 0;
+let claudeNoDataCount: number = 0;
+let claudeSessionUUID = '';
+let claudeResumeSessionId = '';
+let claudeSpawnedPid: number = 0;
 
 // Streaming state
 let streamHandle: number = 0;
@@ -105,6 +135,11 @@ let wsRoot = '';
 // Message count for tracking
 let msgCount: number = 0;
 
+// Auto-scroll: last widget added to chat (used as scroll target)
+let lastAddedWidget: unknown = null;
+// Max messages to render (older ones hidden to prevent endless scroll)
+let maxVisibleMessages: number = 30;
+
 // Session list UI
 let sessionListContainer: unknown = null;
 let sessionListScrollView: unknown = null;
@@ -119,6 +154,23 @@ let slotId12 = ''; let slotId13 = ''; let slotId14 = ''; let slotId15 = '';
 
 // Agent continuation messages (tool results to feed back)
 let agentConversationFile = '';
+
+// Live markdown streaming
+let streamContainer: unknown = null;
+let streamLastRenderLen: number = 0;
+let streamLastRenderTime: number = 0;
+
+// Model selector (0=Sonnet, 1=Opus, 2=Haiku)
+let selectedModel: number = 0;
+let modelSonnetBtn: unknown = null;
+let modelOpusBtn: unknown = null;
+let modelHaikuBtn: unknown = null;
+let modelSonnetWrap: unknown = null;
+let modelOpusWrap: unknown = null;
+let modelHaikuWrap: unknown = null;
+let modelRow: unknown = null;
+let modelRowParent: unknown = null;
+let modelRowAttached: number = 0;
 
 // ---------------------------------------------------------------------------
 // Public setters (called from render.ts)
@@ -174,6 +226,16 @@ function decodeContent(s: string): string {
     else { result += s.slice(i, i + 1); }
   }
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Auto-scroll helper
+// ---------------------------------------------------------------------------
+
+function scrollToBottom(): void {
+  if (!chatScrollView) return;
+  if (!lastAddedWidget) return;
+  scrollViewScrollTo(chatScrollView, lastAddedWidget);
 }
 
 // ---------------------------------------------------------------------------
@@ -260,7 +322,10 @@ function loadApiKeyValue(): string {
 // ---------------------------------------------------------------------------
 
 function buildRequestBody(fileContent: string, systemPrompt: string, includeStream: number, toolsJson: string): string {
-  let body = '{"model":"claude-sonnet-4-20250514","max_tokens":4096';
+  let modelStr = getSelectedModelString();
+  let body = '{"model":"';
+  body += modelStr;
+  body += '","max_tokens":4096';
   if (includeStream > 0) {
     body += ',"stream":true';
   }
@@ -554,15 +619,31 @@ function updateStreamingDisplay(): void {
   if (chatPanelReady < 1) return;
   if (!chatMessagesContainer) return;
 
-  if (!streamDisplayLabel) {
-    streamDisplayLabel = Text(streamAccumulated);
-    textSetFontSize(streamDisplayLabel, 12);
-    textSetWraps(streamDisplayLabel, 320);
-    if (panelColors) setFg(streamDisplayLabel, getSideBarForeground());
-    widgetAddChild(chatMessagesContainer, streamDisplayLabel);
-  } else {
-    textSetString(streamDisplayLabel, streamAccumulated);
+  if (!streamContainer) {
+    streamContainer = VStack(2, []);
+    widgetAddChild(chatMessagesContainer, streamContainer);
+    lastAddedWidget = streamContainer;
+    streamLastRenderLen = 0;
+    streamLastRenderTime = 0;
   }
+
+  // Rate-limit markdown rebuilds to every ~300ms with at least 20 chars new
+  const now = Date.now();
+  const lenDiff = streamAccumulated.length - streamLastRenderLen;
+  const timeDiff = now - streamLastRenderTime;
+  let shouldRebuild: number = 0;
+  if (streamLastRenderLen < 1) shouldRebuild = 1;
+  if (timeDiff > 300 && lenDiff > 20) shouldRebuild = 1;
+
+  if (shouldRebuild > 0) {
+    widgetClearChildren(streamContainer);
+    renderMarkdownBlock(streamAccumulated, streamContainer, panelColors, 320);
+    streamLastRenderLen = streamAccumulated.length;
+    streamLastRenderTime = now;
+  }
+
+  lastAddedWidget = streamContainer;
+  scrollToBottom();
 }
 
 function finishStream(): void {
@@ -596,6 +677,7 @@ function finishStream(): void {
   streamAccumulated = '';
   streamingMsgBlock = null;
   streamDisplayLabel = null;
+  streamContainer = null;
 
   updateMessages();
 }
@@ -611,6 +693,8 @@ function startThinking(): void {
     textSetFontSize(thinkingLabel, 12);
     if (panelColors) setFg(thinkingLabel, getSideBarForeground());
     widgetAddChild(chatMessagesContainer, thinkingLabel);
+    lastAddedWidget = thinkingLabel;
+    scrollToBottom();
   }
   thinkingTimer = setInterval(() => { updateThinkingDots(); }, 400);
 }
@@ -661,6 +745,8 @@ function onAgentToolStart(name: string, id: string): void {
   widgetSetBackgroundColor(toolDisplayContainer, 0.15, 0.15, 0.18, 1.0);
   widgetAddChild(toolDisplayContainer, toolText);
   widgetAddChild(chatMessagesContainer, toolDisplayContainer);
+  lastAddedWidget = toolDisplayContainer;
+  scrollToBottom();
 }
 
 function onAgentToolResult(name: string, result: string): void {
@@ -726,6 +812,8 @@ function onAgentApprovalNeeded(name: string, args: string): void {
   const btnRow = HStack(8, [allowBtn, denyBtn, Spacer()]);
   widgetAddChild(approvalContainer, btnRow);
   widgetAddChild(chatMessagesContainer, approvalContainer);
+  lastAddedWidget = approvalContainer;
+  scrollToBottom();
 }
 
 function onAllowClick(): void {
@@ -771,6 +859,69 @@ function onAgentError(msg: string): void {
 
 function onAgentIterationStart(n: number): void {
   // Could show iteration counter
+}
+
+// ---------------------------------------------------------------------------
+// Claude Code mode — callbacks from claude-state
+// ---------------------------------------------------------------------------
+
+function onClaudeToolActivity(name: string, status: string, inputDetail: string): void {
+  if (!chatMessagesContainer) return;
+
+  // status is "running" or "done"
+  // "running" charCodeAt(0)===114 'r'
+  if (status.length > 0 && status.charCodeAt(0) === 114) {
+    let toolLabel = '\u2699 ';
+    toolLabel += name;
+    if (inputDetail.length > 0) {
+      toolLabel += ': ';
+      if (inputDetail.length > 80) {
+        toolLabel += inputDetail.slice(0, 80);
+        toolLabel += '...';
+      } else {
+        toolLabel += inputDetail;
+      }
+    }
+    const toolText = Text(toolLabel);
+    textSetFontSize(toolText, 11);
+    textSetFontFamily(toolText, 11, 'Menlo');
+    textSetWraps(toolText, 300);
+    if (panelColors) setFg(toolText, getSideBarForeground());
+
+    claudeToolContainer = VStackWithInsets(2, 4, 8, 4, 8);
+    widgetSetBackgroundColor(claudeToolContainer, 0.15, 0.15, 0.18, 1.0);
+    widgetAddChild(claudeToolContainer, toolText);
+    widgetAddChild(chatMessagesContainer, claudeToolContainer);
+    lastAddedWidget = claudeToolContainer;
+    scrollToBottom();
+  } else {
+    // Tool done — mark container
+    if (claudeToolContainer) {
+      const doneText = Text('\u2713 done');
+      textSetFontSize(doneText, 10);
+      textSetFontFamily(doneText, 10, 'Menlo');
+      if (panelColors) setFg(doneText, getSideBarForeground());
+      widgetAddChild(claudeToolContainer, doneText);
+      claudeToolContainer = null;
+    }
+  }
+}
+
+function onClaudeToolResult(output: string): void {
+  if (!claudeToolContainer) return;
+  if (output.length < 1) return;
+
+  let displayOutput = output;
+  if (displayOutput.length > 300) {
+    displayOutput = output.slice(0, 300);
+    displayOutput += '\n... (truncated)';
+  }
+  const resultText = Text(displayOutput);
+  textSetFontSize(resultText, 10);
+  textSetFontFamily(resultText, 10, 'Menlo');
+  textSetWraps(resultText, 300);
+  if (panelColors) setFg(resultText, getSideBarForeground());
+  widgetAddChild(claudeToolContainer, resultText);
 }
 
 /** Continue the agent loop after tool execution. */
@@ -885,12 +1036,14 @@ function getSlotId(idx: number): string {
 
 function switchToSession(id: string): void {
   if (streamActive > 0) return;
+  if (claudeModeActive > 0) return;
   if (id.length < 1) return;
 
   setActiveSessionId(id);
   loadSessionMeta(id);
 
   panelMode = getActiveSessionMode();
+  selectedModel = getActiveSessionModel();
   msgFilePath = getSessionFilePath(id);
   firstUserMsgSent = 0;
 
@@ -921,6 +1074,7 @@ function switchToSession(id: string): void {
   resetAgentState();
   updateMessages();
   updateModeTabStyles();
+  updateModelStyles();
   refreshSessionList();
 }
 
@@ -1054,6 +1208,7 @@ function refreshSessionList(): void {
     let badge = 'C';
     if (smode === 1) badge = 'A';
     if (smode === 2) badge = 'P';
+    if (smode === 3) badge = 'CC';
     const badgeLabel = Text(badge);
     textSetFontSize(badgeLabel, 9);
     textSetFontFamily(badgeLabel, 9, 'Menlo');
@@ -1080,9 +1235,7 @@ function refreshSessionList(): void {
     textSetFontSize(rowBtn, 11);
     if (panelColors) setBtnFg(rowBtn, getSideBarForeground());
 
-    const row = HStack(4, [badgeLabel, rowBtn, Spacer(), delBtn]);
-
-    // Highlight active session
+    // Check active session
     let isActive: number = 0;
     if (sid.length === activeId.length) {
       isActive = 1;
@@ -1090,8 +1243,17 @@ function refreshSessionList(): void {
         if (sid.charCodeAt(c) !== activeId.charCodeAt(c)) { isActive = 0; break; }
       }
     }
+
+    let row: unknown = null;
     if (isActive > 0) {
-      widgetSetBackgroundColor(row, 0.25, 0.25, 0.3, 1.0);
+      const accentBar = Text('');
+      widgetSetWidth(accentBar, 3);
+      widgetSetHeight(accentBar, 18);
+      widgetSetBackgroundColor(accentBar, 0.35, 0.45, 0.85, 1.0);
+      row = HStack(4, [accentBar, badgeLabel, rowBtn, Spacer(), delBtn]);
+      widgetSetBackgroundColor(row, 0.22, 0.22, 0.28, 1.0);
+    } else {
+      row = HStack(4, [badgeLabel, rowBtn, Spacer(), delBtn]);
     }
 
     widgetAddChild(sessionListContainer, row);
@@ -1125,6 +1287,361 @@ function onSubmitFromField(text: string): void {
   onSend();
 }
 
+/**
+ * Inline JSON string value extractor — searches for "key":"value" and returns value.
+ * Uses a specific pattern: finds "KEY": then reads the string value.
+ * This avoids cross-module extractJsonString which may not work correctly in Perry.
+ */
+function inlineExtractValue(json: string, keyWithQuotes: string): string {
+  // keyWithQuotes is like: "result":  (including quotes and colon)
+  // Find the pattern in json
+  let pos = -1;
+  for (let i = 0; i <= json.length - keyWithQuotes.length; i++) {
+    let match: number = 1;
+    for (let j = 0; j < keyWithQuotes.length; j++) {
+      if (json.charCodeAt(i + j) !== keyWithQuotes.charCodeAt(j)) {
+        match = 0;
+        break;
+      }
+    }
+    if (match > 0) {
+      pos = i + keyWithQuotes.length;
+      break;
+    }
+  }
+  if (pos < 0) return '';
+
+  // Skip whitespace after colon
+  while (pos < json.length) {
+    const ch = json.charCodeAt(pos);
+    if (ch === 32 || ch === 9) {
+      pos += 1;
+    } else {
+      break;
+    }
+  }
+  if (pos >= json.length) return '';
+
+  // Expect opening quote
+  if (json.charCodeAt(pos) !== 34) return '';
+  pos += 1;
+
+  // Read string value until closing quote
+  let result = '';
+  while (pos < json.length) {
+    const ch = json.charCodeAt(pos);
+    if (ch === 92) {
+      // Backslash escape
+      pos += 1;
+      if (pos < json.length) {
+        const next = json.charCodeAt(pos);
+        if (next === 110) { result += '\n'; }
+        else if (next === 116) { result += '\t'; }
+        else if (next === 114) { result += '\r'; }
+        else if (next === 34) { result += '"'; }
+        else if (next === 92) { result += '\\'; }
+        else if (next === 117) { pos += 4; result += ' '; }
+        else { result += json.slice(pos, pos + 1); }
+      }
+    } else if (ch === 34) {
+      // Closing quote
+      break;
+    } else {
+      result += json.slice(pos, pos + 1);
+    }
+    pos += 1;
+  }
+  return result;
+}
+
+/**
+ * Check if line contains a substring (inline, no cross-module call).
+ */
+function lineContains(line: string, sub: string): number {
+  if (sub.length > line.length) return 0;
+  for (let i = 0; i <= line.length - sub.length; i++) {
+    let m: number = 1;
+    for (let j = 0; j < sub.length; j++) {
+      if (line.charCodeAt(i + j) !== sub.charCodeAt(j)) {
+        m = 0;
+        break;
+      }
+    }
+    if (m > 0) return 1;
+  }
+  return 0;
+}
+
+/**
+ * Detect event type from NDJSON line.
+ * Returns: 1=system, 2=assistant, 3=result, 4=user, 0=unknown
+ */
+function detectClaudeEventType(line: string): number {
+  // Look for "type":"system" / "type":"assistant" / "type":"result" / "type":"user"
+  // "type":"system" → check for "system" at the right spot
+  if (lineContains(line, '"type":"system"') > 0) return 1;
+  if (lineContains(line, '"type":"assistant"') > 0) return 2;
+  if (lineContains(line, '"type":"result"') > 0) return 3;
+  if (lineContains(line, '"type":"user"') > 0) return 4;
+  return 0;
+}
+
+/**
+ * Process a single NDJSON line from Claude Code output.
+ * All processing is inline in this module — no cross-module dependencies.
+ * Uses exact pattern matching ("key":) to avoid ambiguous key/value collisions.
+ */
+function handleClaudeLine(line: string): void {
+  if (line.length < 10) return;
+
+  const evtType = detectClaudeEventType(line);
+  if (evtType < 1) return;
+
+  // System event (1) — session init
+  if (evtType === 1) {
+    // Extract session_id using exact pattern "session_id":"
+    let sid = inlineExtractValue(line, '"session_id":');
+    if (sid.length > 0) {
+      claudeSessionUUID = sid;
+      saveClaudeSessionUUID(getActiveSessionId(), sid);
+    }
+    stopThinking();
+    return;
+  }
+
+  // Assistant event (2) — text or tool_use
+  if (evtType === 2) {
+    // Check for tool_use blocks
+    if (lineContains(line, 'tool_use') > 0) {
+      let toolName = inlineExtractValue(line, '"name":');
+      if (toolName.length > 0) {
+        // Extract tool input details
+        let toolInput = inlineExtractValue(line, '"command":');
+        if (toolInput.length < 1) toolInput = inlineExtractValue(line, '"file_path":');
+        if (toolInput.length < 1) toolInput = inlineExtractValue(line, '"pattern":');
+        onClaudeToolActivity(toolName, 'running', toolInput);
+      }
+    }
+    // Extract text content — look for "text":" pattern after "type":"text"
+    // The assistant message has content blocks like: {"type":"text","text":"actual content"}
+    // We need the value of the second "text" key (the content), not "type":"text"
+    if (lineContains(line, '"type":"text"') > 0) {
+      // Find "type":"text" then extract the next "text":"..." value after it
+      let searchPattern = '"type":"text"';
+      let foundPos = -1;
+      for (let i = 0; i <= line.length - searchPattern.length; i++) {
+        let m: number = 1;
+        for (let j = 0; j < searchPattern.length; j++) {
+          if (line.charCodeAt(i + j) !== searchPattern.charCodeAt(j)) {
+            m = 0;
+            break;
+          }
+        }
+        if (m > 0) {
+          foundPos = i + searchPattern.length;
+          break;
+        }
+      }
+      if (foundPos > 0) {
+        // Now extract "text":"value" from the remainder after "type":"text"
+        let remainder = line.slice(foundPos);
+        let textVal = inlineExtractValue(remainder, '"text":');
+        if (textVal.length > 0) {
+          streamAccumulated += textVal;
+          updateStreamingDisplay();
+        }
+      }
+    }
+    return;
+  }
+
+  // Result event (3) — final output
+  if (evtType === 3) {
+    // Check for error: "is_error":true
+    let isError: number = 0;
+    if (lineContains(line, '"is_error":true') > 0) {
+      isError = 1;
+    }
+
+    // Extract result text using EXACT pattern: ,"result":" (with leading comma to disambiguate from "type":"result")
+    let resultText = inlineExtractValue(line, ',"result":');
+    let costVal = parseNDJSONCost(line);
+    let turnsVal = parseNDJSONTurns(line);
+    let sid = inlineExtractValue(line, '"session_id":');
+    if (sid.length > 0) {
+      claudeSessionUUID = sid;
+      saveClaudeSessionUUID(getActiveSessionId(), sid);
+      claudeResumeSessionId = sid;
+    }
+
+    // On error, clear stale resume ID so next attempt starts fresh
+    if (isError > 0) {
+      claudeResumeSessionId = '';
+      saveClaudeSessionUUID(getActiveSessionId(), '');
+    }
+
+    // Stop polling
+    claudeProcessDone = 1;
+    if (claudePollTimer > 0) {
+      clearInterval(claudePollTimer);
+      claudePollTimer = 0;
+    }
+    // Finalize UI
+    stopThinking();
+    claudeModeActive = 0;
+
+    if (isError > 0) {
+      // Show error message
+      let errMsg = resultText;
+      if (errMsg.length < 1) errMsg = 'Claude Code returned an error.';
+      if (chatMessagesContainer) {
+        const errBlock = VStackWithInsets(4, 8, 8, 8, 8);
+        widgetSetBackgroundColor(errBlock, 0.3, 0.12, 0.12, 1.0);
+        const errLabel = Text(errMsg);
+        textSetFontSize(errLabel, 12);
+        textSetWraps(errLabel, 300);
+        if (panelColors) setFg(errLabel, getSideBarForeground());
+        widgetAddChild(errBlock, errLabel);
+        widgetAddChild(chatMessagesContainer, errBlock);
+        lastAddedWidget = errBlock;
+        scrollToBottom();
+      }
+      streamAccumulated = '';
+      streamDisplayLabel = null;
+      streamContainer = null;
+      return;
+    }
+
+    if (streamAccumulated.length > 0) {
+      appendMessage(0, streamAccumulated);
+    } else if (resultText.length > 0) {
+      appendMessage(0, resultText);
+    }
+    streamAccumulated = '';
+    streamDisplayLabel = null;
+    streamContainer = null;
+    // Show cost
+    if (chatMessagesContainer && costVal >= 0) {
+      let costStr = 'Cost: $';
+      let costInt = Math.floor(costVal * 10000);
+      let costMain = Math.floor(costInt / 10000);
+      let costFrac = costInt % 10000;
+      costStr += String(costMain);
+      costStr += '.';
+      if (costFrac < 1000) costStr += '0';
+      if (costFrac < 100) costStr += '0';
+      if (costFrac < 10) costStr += '0';
+      costStr += String(costFrac);
+      if (turnsVal >= 0) {
+        costStr += ' | Turns: ';
+        costStr += String(turnsVal);
+      }
+      claudeCostLabel = Text(costStr);
+      textSetFontSize(claudeCostLabel, 10);
+      textSetFontFamily(claudeCostLabel, 10, 'Menlo');
+      if (panelColors) setFg(claudeCostLabel, getSideBarForeground());
+      widgetAddChild(chatMessagesContainer, claudeCostLabel);
+      lastAddedWidget = claudeCostLabel;
+    }
+    updateMessages();
+    return;
+  }
+
+  // User event (4) — tool results (internal to Claude Code)
+  if (evtType === 4) {
+    // Extract tool output before marking done
+    let toolOutput = inlineExtractValue(line, '"stdout":');
+    if (toolOutput.length < 1) toolOutput = inlineExtractValue(line, '"content":');
+    onClaudeToolResult(toolOutput);
+    onClaudeToolActivity('', 'done', '');
+  }
+}
+
+/**
+ * Claude Code poll tick — called from setInterval in chat-panel (same module).
+ * Reads log file directly, splits lines, processes each inline.
+ * No cross-module state dependencies.
+ */
+function claudePollTick(): void {
+  if (claudeModeActive < 1) return;
+  if (claudeLogFilePath.length < 1) return;
+  if (claudeProcessDone > 0) return;
+
+  // Read the log file directly from this module
+  let content = '';
+  try {
+    content = readFileSync(claudeLogFilePath);
+  } catch (e) {
+    return;
+  }
+
+  if (content.length <= claudeLogOffset) {
+    // No new data — count consecutive empty polls
+    claudeNoDataCount += 1;
+    // After 60 empty polls (~3 seconds), check if process exited via kill -0
+    if (claudeNoDataCount > 60) {
+      claudeNoDataCount = 0;
+      let processGone: number = 0;
+      try {
+        let checkCmd = 'kill -0 ';
+        checkCmd += String(claudeSpawnedPid);
+        execSync(checkCmd);
+      } catch (e) {
+        processGone = 1;
+      }
+      if (processGone > 0) {
+        claudeProcessDone = 1;
+        if (claudePollTimer > 0) {
+          clearInterval(claudePollTimer);
+          claudePollTimer = 0;
+        }
+        // Finalize with whatever we have
+        if (claudeModeActive > 0) {
+          claudeModeActive = 0;
+          stopThinking();
+          if (streamAccumulated.length > 0) {
+            appendMessage(0, streamAccumulated);
+          }
+          streamAccumulated = '';
+          streamDisplayLabel = null;
+          streamContainer = null;
+          updateMessages();
+        }
+      }
+    }
+    return;
+  }
+
+  // Got new data — reset no-data counter
+  claudeNoDataCount = 0;
+
+  // Extract new data since last read
+  const newData = content.slice(claudeLogOffset);
+  claudeLogOffset = content.length;
+
+  // Prepend any incomplete line from previous tick
+  let buffer = claudeLineBuffer;
+  buffer += newData;
+  claudeLineBuffer = '';
+
+  // Split into lines and process each
+  let lineStart = 0;
+  for (let i = 0; i < buffer.length; i++) {
+    if (buffer.charCodeAt(i) === 10) {
+      const line = buffer.slice(lineStart, i);
+      if (line.length > 0) {
+        handleClaudeLine(line);
+      }
+      lineStart = i + 1;
+    }
+  }
+
+  // Save any remaining incomplete line
+  if (lineStart < buffer.length) {
+    claudeLineBuffer = buffer.slice(lineStart);
+  }
+}
+
 function onSend(): void {
   // Read text directly from widget (Perry: module vars stale in callbacks)
   if (chatInput) {
@@ -1137,12 +1654,14 @@ function onSend(): void {
   }
   if (chatInputText.length < 1) return;
   if (streamActive > 0) return;
+  if (claudeModeActive > 0) return;
 
   const sendText = chatInputText;
   appendMessage(1, sendText);
   chatInputText = '';
   if (chatInput) textfieldSetString(chatInput, '');
   updateMessages();
+  scrollToBottom();
 
   // Build request — use fresh path (Perry: module vars stale in callbacks)
   const currentPath = getCurrentMsgFilePath();
@@ -1151,6 +1670,36 @@ function onSend(): void {
 
   let systemPrompt = 'You are Hone, an AI coding assistant built into the Hone IDE. Be concise and helpful.';
   let toolsJson = '';
+
+  if (panelMode === 3) {
+    // Claude Code mode — spawn subprocess instead of API call
+    claudeModeActive = 1;
+    streamAccumulated = '';
+    streamDisplayLabel = null;
+    streamContainer = null;
+    claudeLineBuffer = '';
+    claudeLogOffset = 0;
+    claudeProcessDone = 0;
+    claudeNoDataCount = 0;
+    startThinking();
+
+    // Build log file path in THIS module (avoids cross-module string returns)
+    let logPath = getAppDataDir();
+    logPath += '/claude-session-';
+    logPath += String(Date.now());
+    logPath += '.log';
+    claudeLogFilePath = logPath;
+
+    // Load resume ID from stored session
+    const storedUUID = loadClaudeSessionUUID(getActiveSessionId());
+
+    // Pass log path to startClaudeSession so it redirects output there
+    claudeSpawnedPid = startClaudeSession(sendText, wsRoot, storedUUID, logPath);
+
+    // Start polling from THIS module (same-module setInterval pattern works in Perry)
+    claudePollTimer = setInterval(() => { claudePollTick(); }, 50);
+    return;
+  }
 
   if (panelMode === 1) {
     // Agent mode
@@ -1174,17 +1723,29 @@ function onSend(): void {
 
 function onNewChat(): void {
   if (streamActive > 0) return;
+  if (claudeModeActive > 0) return;
   msgCount = 0;
   clearContext();
   resetAgentState();
+  claudeSessionUUID = '';
+  claudeResumeSessionId = '';
+  claudeProcessDone = 0;
   streamAccumulated = '';
   streamingMsgBlock = null;
+  streamContainer = null;
   firstUserMsgSent = 0;
 
-  const newId = createNewSession(panelMode);
+  // New sessions always default to Chat mode (0)
+  panelMode = 0;
+  setActiveSessionMode(0);
+  const newId = createNewSession(0);
   msgFilePath = getSessionFilePath(newId);
 
+  // Persist model choice for new session
+  updateSessionModel(newId, selectedModel);
+
   updateMessages();
+  updateModeTabStyles();
   renderChipsArea();
   refreshSessionList();
 }
@@ -1194,44 +1755,155 @@ function onNewChat(): void {
 // ---------------------------------------------------------------------------
 
 function onModeChat(): void {
+  // Mode locked if current session is Claude Code (mode 3)
+  if (getActiveSessionMode() === 3) return;
   panelMode = 0;
   updateSessionMode(getActiveSessionId(), 0);
+  setActiveSessionMode(0);
   updateModeTabStyles();
   updateMessages();
 }
 
 function onModeAgent(): void {
+  if (getActiveSessionMode() === 3) return;
   panelMode = 1;
   updateSessionMode(getActiveSessionId(), 1);
+  setActiveSessionMode(1);
   updateModeTabStyles();
   updateMessages();
 }
 
 function onModePlan(): void {
+  if (getActiveSessionMode() === 3) return;
   panelMode = 2;
   updateSessionMode(getActiveSessionId(), 2);
+  setActiveSessionMode(2);
   updateModeTabStyles();
   updateMessages();
 }
 
-function styleModeBtn(btn: unknown, active: number): void {
-  if (!btn || !panelColors) return;
+function onModeClaude(): void {
+  // If current session has API messages (modes 0-2), create new session
+  const curMode = getActiveSessionMode();
+  if (curMode < 3) {
+    const fp = getCurrentMsgFilePath();
+    let hasMessages: number = 0;
+    try {
+      const fc = readFileSync(fp);
+      if (fc.length > 1) hasMessages = 1;
+    } catch (e) {}
+    if (hasMessages > 0) {
+      panelMode = 3;
+      onNewChat();
+      setActiveSessionMode(3);
+      updateModeTabStyles();
+      return;
+    }
+  }
+  panelMode = 3;
+  updateSessionMode(getActiveSessionId(), 3);
+  setActiveSessionMode(3);
+  updateModeTabStyles();
+  updateMessages();
+}
+
+function styleModeTab(btn: unknown, wrap: unknown, active: number): void {
+  if (!btn) return;
   if (active > 0) {
-    // Active: bright text + visible background
     setBtnFg(btn, '#ffffff');
-    widgetSetBackgroundColor(btn, 0.3, 0.35, 0.55, 1.0);
+    if (wrap) widgetSetBackgroundColor(wrap, 0.25, 0.30, 0.58, 1.0);
   } else {
-    // Inactive: dimmed text, transparent
-    setBtnFg(btn, '#808080');
-    widgetSetBackgroundColor(btn, 0.0, 0.0, 0.0, 0.0);
+    setBtnFg(btn, '#707070');
+    if (wrap) widgetSetBackgroundColor(wrap, 0.0, 0.0, 0.0, 0.0);
   }
 }
 
+function styleDisabledTab(btn: unknown, wrap: unknown): void {
+  if (!btn) return;
+  setBtnFg(btn, '#404040');
+  if (wrap) widgetSetBackgroundColor(wrap, 0.0, 0.0, 0.0, 0.0);
+}
+
 function updateModeTabStyles(): void {
-  if (!panelColors) return;
-  styleModeBtn(modeChatBtn, panelMode === 0 ? 1 : 0);
-  styleModeBtn(modeAgentBtn, panelMode === 1 ? 1 : 0);
-  styleModeBtn(modePlanBtn, panelMode === 2 ? 1 : 0);
+  const isClaudeSession = panelMode === 3 ? 1 : 0;
+  if (isClaudeSession > 0) {
+    // Claude Code session — lock API tabs
+    styleDisabledTab(modeChatBtn, modeChatWrap);
+    styleDisabledTab(modeAgentBtn, modeAgentWrap);
+    styleDisabledTab(modePlanBtn, modePlanWrap);
+    styleModeTab(modeClaudeBtn, modeClaudeWrap, 1);
+  } else {
+    styleModeTab(modeChatBtn, modeChatWrap, panelMode === 0 ? 1 : 0);
+    styleModeTab(modeAgentBtn, modeAgentWrap, panelMode === 1 ? 1 : 0);
+    styleModeTab(modePlanBtn, modePlanWrap, panelMode === 2 ? 1 : 0);
+    styleModeTab(modeClaudeBtn, modeClaudeWrap, panelMode === 3 ? 1 : 0);
+  }
+  updateModelRowVisibility();
+}
+
+// ---------------------------------------------------------------------------
+// Model selector
+// ---------------------------------------------------------------------------
+
+function getSelectedModelString(): string {
+  if (selectedModel === 1) return 'claude-opus-4-20250514';
+  if (selectedModel === 2) return 'claude-haiku-4-5-20251001';
+  return 'claude-sonnet-4-20250514';
+}
+
+function onModelSonnet(): void {
+  selectedModel = 0;
+  updateModelStyles();
+  updateSessionModel(getActiveSessionId(), 0);
+  setActiveSessionModel(0);
+}
+
+function onModelOpus(): void {
+  selectedModel = 1;
+  updateModelStyles();
+  updateSessionModel(getActiveSessionId(), 1);
+  setActiveSessionModel(1);
+}
+
+function onModelHaiku(): void {
+  selectedModel = 2;
+  updateModelStyles();
+  updateSessionModel(getActiveSessionId(), 2);
+  setActiveSessionModel(2);
+}
+
+function styleModelBtn(btn: unknown, wrap: unknown, active: number): void {
+  if (!btn) return;
+  if (active > 0) {
+    setBtnFg(btn, '#ffffff');
+    if (wrap) widgetSetBackgroundColor(wrap, 0.22, 0.28, 0.50, 1.0);
+  } else {
+    setBtnFg(btn, '#707070');
+    if (wrap) widgetSetBackgroundColor(wrap, 0.0, 0.0, 0.0, 0.0);
+  }
+}
+
+function updateModelStyles(): void {
+  styleModelBtn(modelSonnetBtn, modelSonnetWrap, selectedModel === 0 ? 1 : 0);
+  styleModelBtn(modelOpusBtn, modelOpusWrap, selectedModel === 1 ? 1 : 0);
+  styleModelBtn(modelHaikuBtn, modelHaikuWrap, selectedModel === 2 ? 1 : 0);
+}
+
+function updateModelRowVisibility(): void {
+  if (!modelRowParent) return;
+  if (panelMode === 3) {
+    // Remove model row from wrapper — empty VStack collapses to 0 height
+    if (modelRowAttached > 0 && modelRow) {
+      widgetClearChildren(modelRowParent);
+      modelRowAttached = 0;
+    }
+  } else {
+    // Re-add model row to wrapper
+    if (modelRowAttached < 1 && modelRow) {
+      widgetAddChild(modelRowParent, modelRow);
+      modelRowAttached = 1;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1274,6 +1946,7 @@ function renderChipsArea(): void {
 function updateMessages(): void {
   if (chatPanelReady < 1) return;
   widgetClearChildren(chatMessagesContainer);
+  lastAddedWidget = null;
 
   const fp = getCurrentMsgFilePath();
   let fileContent = '';
@@ -1283,6 +1956,7 @@ function updateMessages(): void {
     let hintText = 'Ask a question about your code';
     if (panelMode === 1) hintText = 'Describe a task for the AI agent';
     if (panelMode === 2) hintText = 'Describe what you want to plan';
+    if (panelMode === 3) hintText = 'Ask Claude Code (uses your Claude.ai subscription)';
     const hint = Text(hintText);
     textSetFontSize(hint, 12);
     if (panelColors) setFg(hint, getSideBarForeground());
@@ -1290,9 +1964,34 @@ function updateMessages(): void {
     return;
   }
 
+  // Count total messages first (pairs of lines)
+  let totalMessages: number = 0;
+  for (let c = 0; c < fileContent.length; c++) {
+    if (fileContent.charCodeAt(c) === 10) totalMessages += 1;
+  }
+  totalMessages = Math.floor((totalMessages + 1) / 2);
+
+  // Calculate skip count — only show last maxVisibleMessages
+  let skipCount: number = 0;
+  if (totalMessages > maxVisibleMessages) {
+    skipCount = totalMessages - maxVisibleMessages;
+  }
+
+  // Show "N older messages hidden" indicator
+  if (skipCount > 0 && chatMessagesContainer) {
+    let hiddenText = '... ';
+    hiddenText += String(skipCount);
+    hiddenText += ' older messages hidden';
+    const hiddenLabel = Text(hiddenText);
+    textSetFontSize(hiddenLabel, 10);
+    if (panelColors) setFg(hiddenLabel, getSideBarForeground());
+    widgetAddChild(chatMessagesContainer, hiddenLabel);
+  }
+
   // Parse file: pairs of (role line, content line)
   let lineStart = 0;
   let lineIdx = 0;
+  let msgIdx: number = 0;
   let isUser: number = 0;
   let isTool: number = 0;
   let isWithTool: number = 0;
@@ -1307,6 +2006,14 @@ function updateMessages(): void {
         if (line.length > 0 && line.charCodeAt(0) === 84) { isTool = 1; }
         if (line.length > 0 && line.charCodeAt(0) === 87) { isWithTool = 1; }
       } else {
+        msgIdx += 1;
+        // Skip older messages beyond the visible limit
+        if (msgIdx <= skipCount) {
+          lineIdx += 1;
+          lineStart = i + 1;
+          continue;
+        }
+
         let content = decodeContent(line);
         // 'W' messages: extract text before first SOH (\x01)
         if (isWithTool > 0) {
@@ -1345,6 +2052,7 @@ function updateMessages(): void {
           if (panelColors) setFg(resultText, getSideBarForeground());
           widgetAddChild(toolBlock, resultText);
           widgetAddChild(chatMessagesContainer, toolBlock);
+          lastAddedWidget = toolBlock;
         } else {
           // User or assistant message
           const roleLabel = Text(isUser > 0 ? 'You' : 'Hone');
@@ -1363,12 +2071,15 @@ function updateMessages(): void {
           }
 
           widgetAddChild(chatMessagesContainer, msgBlock);
+          lastAddedWidget = msgBlock;
         }
       }
       lineIdx += 1;
       lineStart = i + 1;
     }
   }
+  // Auto-scroll to bottom after rendering messages
+  scrollToBottom();
 }
 
 // ---------------------------------------------------------------------------
@@ -1396,6 +2107,7 @@ export function getChatInputHandle(): unknown {
 export function renderChatPanel(container: unknown, colors: ResolvedUIColors): unknown {
   panelColors = colors;
   chatPanelReady = 0;
+  stackSetDetachesHidden(container, 1);
 
   // Load API key — assign in this function (Perry: sub-function writes to module vars are stale in caller)
   if (chatApiKeyLoaded < 1) {
@@ -1434,42 +2146,90 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
     onAgentError,
     onAgentIterationStart
   );
+  // Claude Code: no cross-module callbacks — polling + line processing all inline
   setChipsRenderCallback(() => { renderChipsArea(); });
 
-  // --- Header row: History toggle + New Chat + mode tabs + clear ---
-  const historyBtn = Button('History', () => { toggleSessionList(); });
-  buttonSetBordered(historyBtn, 0);
-  textSetFontSize(historyBtn, 11);
-  setBtnFg(historyBtn, getSideBarForeground());
-
+  // --- Header row: New Chat ---
   const newChatBtn = Button('+ New', () => { onNewChat(); });
   buttonSetBordered(newChatBtn, 0);
   textSetFontSize(newChatBtn, 11);
   setBtnFg(newChatBtn, getSideBarForeground());
 
+  const headerRow = HStack(4, [newChatBtn, Spacer()]);
+  widgetAddChild(container, headerRow);
+
   modeChatBtn = Button('Chat', () => { onModeChat(); });
   buttonSetBordered(modeChatBtn, 0);
   textSetFontSize(modeChatBtn, 11);
+  modeChatWrap = HStackWithInsets(0, 6, 3, 6, 3);
+  widgetAddChild(modeChatWrap, modeChatBtn);
 
   modeAgentBtn = Button('Agent', () => { onModeAgent(); });
   buttonSetBordered(modeAgentBtn, 0);
   textSetFontSize(modeAgentBtn, 11);
+  modeAgentWrap = HStackWithInsets(0, 6, 3, 6, 3);
+  widgetAddChild(modeAgentWrap, modeAgentBtn);
 
   modePlanBtn = Button('Plan', () => { onModePlan(); });
   buttonSetBordered(modePlanBtn, 0);
   textSetFontSize(modePlanBtn, 11);
+  modePlanWrap = HStackWithInsets(0, 6, 3, 6, 3);
+  widgetAddChild(modePlanWrap, modePlanBtn);
 
-  const modeRow = HStack(2, [historyBtn, newChatBtn, Spacer(), modeChatBtn, modeAgentBtn, modePlanBtn]);
+  modeClaudeBtn = Button('Claude Code', () => { onModeClaude(); });
+  buttonSetBordered(modeClaudeBtn, 0);
+  textSetFontSize(modeClaudeBtn, 11);
+  modeClaudeWrap = HStackWithInsets(0, 6, 3, 6, 3);
+  widgetAddChild(modeClaudeWrap, modeClaudeBtn);
+
+  const modeRow = HStack(2, [modeChatWrap, modeAgentWrap, modePlanWrap, modeClaudeWrap, Spacer()]);
   widgetAddChild(container, modeRow);
 
-  // --- Session list (collapsible) ---
+  // --- Model selector row (hidden for Claude Code mode) ---
+  modelSonnetBtn = Button('Sonnet', () => { onModelSonnet(); });
+  buttonSetBordered(modelSonnetBtn, 0);
+  textSetFontSize(modelSonnetBtn, 10);
+  modelSonnetWrap = HStackWithInsets(0, 5, 2, 5, 2);
+  widgetAddChild(modelSonnetWrap, modelSonnetBtn);
+
+  modelOpusBtn = Button('Opus', () => { onModelOpus(); });
+  buttonSetBordered(modelOpusBtn, 0);
+  textSetFontSize(modelOpusBtn, 10);
+  modelOpusWrap = HStackWithInsets(0, 5, 2, 5, 2);
+  widgetAddChild(modelOpusWrap, modelOpusBtn);
+
+  modelHaikuBtn = Button('Haiku', () => { onModelHaiku(); });
+  buttonSetBordered(modelHaikuBtn, 0);
+  textSetFontSize(modelHaikuBtn, 10);
+  modelHaikuWrap = HStackWithInsets(0, 5, 2, 5, 2);
+  widgetAddChild(modelHaikuWrap, modelHaikuBtn);
+
+  modelRow = HStack(2, [modelSonnetWrap, modelOpusWrap, modelHaikuWrap, Spacer()]);
+  // Wrap in VStack so clearing children collapses it (widgetSetHidden doesn't work on HStack)
+  modelRowParent = VStack(0, []);
+  widgetAddChild(modelRowParent, modelRow);
+  modelRowAttached = 1;
+  widgetAddChild(container, modelRowParent);
+
+  // Load model from session
+  selectedModel = getActiveSessionModel();
+  updateModelStyles();
+  updateModelRowVisibility();
+
+  // --- Session list (always visible) ---
+  const sessionLabel = Text('History');
+  textSetFontSize(sessionLabel, 11);
+  textSetFontWeight(sessionLabel, 11, 0.5);
+  if (panelColors) setFg(sessionLabel, getSideBarForeground());
+  widgetAddChild(container, sessionLabel);
+
   sessionListContainer = VStack(2, []);
   sessionListScrollView = ScrollView();
   scrollViewSetChild(sessionListScrollView, sessionListContainer);
-  widgetSetHeight(sessionListScrollView, 180);
-  widgetSetHidden(sessionListScrollView, 1);
-  sessionListVisible = 0;
+  widgetSetHeight(sessionListScrollView, 120);
+  sessionListVisible = 1;
   widgetAddChild(container, sessionListScrollView);
+  refreshSessionList();
 
   // 1px divider
   const divider = Text('');
@@ -1488,8 +2248,49 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
 
   chatPanelReady = 1;
 
-  // Show API key setup hint if no key configured
-  if (chatApiKey.length < 5) {
+  // Show setup hints based on mode
+  if (panelMode === 3) {
+    // Claude Code mode — check binary and auth
+    const claudeBin = findClaudeBinary();
+    if (claudeBin.length < 3) {
+      const hintBlock = VStackWithInsets(4, 8, 8, 8, 8);
+      widgetSetBackgroundColor(hintBlock, 0.15, 0.18, 0.25, 1.0);
+
+      const hintTitle = Text('Claude Code Required');
+      textSetFontSize(hintTitle, 12);
+      textSetFontWeight(hintTitle, 12, 0.7);
+      setFg(hintTitle, getSideBarForeground());
+      widgetAddChild(hintBlock, hintTitle);
+
+      const hint1 = Text('Install Claude Code: npm install -g @anthropic-ai/claude-code');
+      textSetFontSize(hint1, 11);
+      setFg(hint1, getSideBarForeground());
+      widgetAddChild(hintBlock, hint1);
+
+      widgetAddChild(chatMessagesContainer, hintBlock);
+    } else {
+      const authOk = checkClaudeAuth();
+      if (authOk < 1) {
+        const hintBlock = VStackWithInsets(4, 8, 8, 8, 8);
+        widgetSetBackgroundColor(hintBlock, 0.15, 0.18, 0.25, 1.0);
+
+        const hintTitle = Text('Sign In Required');
+        textSetFontSize(hintTitle, 12);
+        textSetFontWeight(hintTitle, 12, 0.7);
+        setFg(hintTitle, getSideBarForeground());
+        widgetAddChild(hintBlock, hintTitle);
+
+        const hint1 = Text('Run "claude auth login" in your terminal to sign in.');
+        textSetFontSize(hint1, 11);
+        setFg(hint1, getSideBarForeground());
+        widgetAddChild(hintBlock, hint1);
+
+        widgetAddChild(chatMessagesContainer, hintBlock);
+      } else {
+        updateMessages();
+      }
+    }
+  } else if (chatApiKey.length < 5) {
     const hintBlock = VStackWithInsets(4, 8, 8, 8, 8);
     widgetSetBackgroundColor(hintBlock, 0.15, 0.18, 0.25, 1.0);
 

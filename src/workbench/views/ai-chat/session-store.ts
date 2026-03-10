@@ -27,6 +27,9 @@ let parsedId = '';
 let parsedMode: number = 0;
 let parsedTimestamp = '';
 let parsedTitle = '';
+let parsedModel: number = 0;
+
+let activeSessionModel: number = 0;
 
 let sessionCount: number = 0;
 
@@ -150,20 +153,30 @@ export function updateSessionTitle(id: string, title: string): void {
 
       // Check if this line contains our session id
       if (lineMatchesId(line, id) > 0) {
-        // Rebuild line with new title
-        let newLine = '';
-        let pipeCount = 0;
-        for (let j = 0; j < line.length; j++) {
-          if (line.charCodeAt(j) === 124) {
-            pipeCount += 1;
-          }
-          if (pipeCount < 4) {
-            newLine += line.slice(j, j + 1);
+        // Parse all fields and rebuild with new title, preserving model
+        let f0 = ''; let f1 = ''; let f2 = ''; let f3 = ''; let f5 = '';
+        let fIdx = 0;
+        let fS = 0;
+        for (let j = 0; j <= line.length; j++) {
+          if (j === line.length || line.charCodeAt(j) === 124) {
+            const fV = line.slice(fS, j);
+            if (fIdx === 0) f0 = fV;
+            if (fIdx === 1) f1 = fV;
+            if (fIdx === 2) f2 = fV;
+            if (fIdx === 3) f3 = fV;
+            if (fIdx === 5) f5 = fV;
+            fIdx += 1;
+            fS = j + 1;
           }
         }
-        // pipeCount should be >= 4; append new title
-        newLine += '|';
-        newLine += title;
+        let newLine = f0;
+        newLine += '|'; newLine += f1;
+        newLine += '|'; newLine += f2;
+        newLine += '|'; newLine += f3;
+        newLine += '|'; newLine += title;
+        if (f5.length > 0) {
+          newLine += '|'; newLine += f5;
+        }
         result += newLine;
       } else {
         result += line;
@@ -195,6 +208,7 @@ export function updateSessionMode(id: string, mode: number): void {
         let field1 = '';
         let field3 = '';
         let field4 = '';
+        let field5 = '';
         let fieldIdx = 0;
         let fStart = 0;
         for (let j = 0; j <= line.length; j++) {
@@ -204,6 +218,7 @@ export function updateSessionMode(id: string, mode: number): void {
             if (fieldIdx === 1) field1 = fVal;
             if (fieldIdx === 3) field3 = fVal;
             if (fieldIdx === 4) field4 = fVal;
+            if (fieldIdx === 5) field5 = fVal;
             fieldIdx += 1;
             fStart = j + 1;
           }
@@ -217,6 +232,62 @@ export function updateSessionMode(id: string, mode: number): void {
         newLine += field3;
         newLine += '|';
         newLine += field4;
+        if (field5.length > 0) {
+          newLine += '|';
+          newLine += field5;
+        }
+        result += newLine;
+      } else {
+        result += line;
+      }
+
+      lineStart = i + 1;
+    }
+  }
+
+  writeIndex(result);
+}
+
+export function updateSessionModel(id: string, model: number): void {
+  const idx = readIndex();
+  let result = '';
+  let lineStart = 0;
+  let firstLine: number = 1;
+
+  for (let i = 0; i <= idx.length; i++) {
+    if (i === idx.length || idx.charCodeAt(i) === 10) {
+      const line = idx.slice(lineStart, i);
+
+      if (firstLine < 1) result += '\n';
+      firstLine = 0;
+
+      if (lineMatchesId(line, id) > 0) {
+        // Parse existing fields: S|id|mode|timestamp|title[|model]
+        let field0 = '';
+        let field1 = '';
+        let field2 = '';
+        let field3 = '';
+        let field4 = '';
+        let fieldIdx = 0;
+        let fStart = 0;
+        for (let j = 0; j <= line.length; j++) {
+          if (j === line.length || line.charCodeAt(j) === 124) {
+            const fVal = line.slice(fStart, j);
+            if (fieldIdx === 0) field0 = fVal;
+            if (fieldIdx === 1) field1 = fVal;
+            if (fieldIdx === 2) field2 = fVal;
+            if (fieldIdx === 3) field3 = fVal;
+            if (fieldIdx === 4) field4 = fVal;
+            fieldIdx += 1;
+            fStart = j + 1;
+          }
+        }
+        let newLine = field0;
+        newLine += '|'; newLine += field1;
+        newLine += '|'; newLine += field2;
+        newLine += '|'; newLine += field3;
+        newLine += '|'; newLine += field4;
+        newLine += '|'; newLine += String(model);
         result += newLine;
       } else {
         result += line;
@@ -325,10 +396,19 @@ function parseIndexLine(line: string): void {
           if (c0 === 48) parsedMode = 0;       // '0'
           else if (c0 === 49) parsedMode = 1;   // '1'
           else if (c0 === 50) parsedMode = 2;   // '2'
+          else if (c0 === 51) parsedMode = 3;   // '3' (Claude Code)
         }
       }
       if (fieldIdx === 3) parsedTimestamp = fVal;
       if (fieldIdx === 4) parsedTitle = fVal;
+      if (fieldIdx === 5) {
+        parsedModel = 0;
+        if (fVal.length > 0) {
+          const mc = fVal.charCodeAt(0);
+          if (mc === 49) parsedModel = 1;
+          else if (mc === 50) parsedModel = 2;
+        }
+      }
       fieldIdx += 1;
       fStart = i + 1;
     }
@@ -383,11 +463,60 @@ export function setActiveSessionTitle(title: string): void {
   activeSessionTitle = title;
 }
 
+export function getActiveSessionModel(): number { return activeSessionModel; }
+export function setActiveSessionModel(model: number): void { activeSessionModel = model; }
+
 // Output var accessors
 export function getParsedId(): string { return parsedId; }
 export function getParsedMode(): number { return parsedMode; }
 export function getParsedTimestamp(): string { return parsedTimestamp; }
 export function getParsedTitle(): string { return parsedTitle; }
+export function getParsedModel(): number { return parsedModel; }
+
+// ---------------------------------------------------------------------------
+// Claude Code session UUID persistence
+// ---------------------------------------------------------------------------
+
+/**
+ * Store a Claude Code session UUID for a given session ID.
+ * Written to ~/.hone/chats/<id>.claude (separate file from messages).
+ */
+export function saveClaudeSessionUUID(sessionId: string, claudeUUID: string): void {
+  if (sessionId.length < 1 || claudeUUID.length < 1) return;
+  let p = '';
+  p += chatsDir;
+  p += '/';
+  p += sessionId;
+  p += '.claude';
+  try { writeFileSync(p, claudeUUID); } catch (e) {}
+}
+
+/**
+ * Load a Claude Code session UUID for a given session ID.
+ * Returns empty string if not found.
+ */
+export function loadClaudeSessionUUID(sessionId: string): string {
+  if (sessionId.length < 1) return '';
+  let p = '';
+  p += chatsDir;
+  p += '/';
+  p += sessionId;
+  p += '.claude';
+  try {
+    const content = readFileSync(p);
+    // Trim trailing newlines
+    let end = content.length;
+    while (end > 0) {
+      const ch = content.charCodeAt(end - 1);
+      if (ch === 10 || ch === 13 || ch === 32) { end -= 1; }
+      else { break; }
+    }
+    if (end < content.length) return content.slice(0, end);
+    return content;
+  } catch (e) {
+    return '';
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -456,6 +585,7 @@ export function loadSessionMeta(id: string): void {
         activeSessionId = parsedId;
         activeSessionMode = parsedMode;
         activeSessionTitle = parsedTitle;
+        activeSessionModel = parsedModel;
         return;
       }
       lineStart = i + 1;

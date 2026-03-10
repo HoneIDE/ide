@@ -183,6 +183,59 @@ export function setOnPairingUrlChanged(fn: (url: string) => void): void {
   _onPairingUrlChanged = fn;
 }
 
+// --- Claude Code relay ---
+
+// Claude Code session state for remote guests
+let claudeRelayActive: number = 0;
+let claudeRelayGuestId = '';
+
+// Event emitter — set by render.ts or whoever wires up the sync system
+let _onClaudeRelayRequest: (guestId: string, prompt: string, workspaceRoot: string, resumeId: string) => void = _noopClaudeReq;
+let _onClaudeRelayStop: (guestId: string, sessionId: string) => void = _noopClaudeStop;
+
+function _noopClaudeReq(guestId: string, prompt: string, wsRoot: string, resumeId: string): void {}
+function _noopClaudeStop(guestId: string, sessionId: string): void {}
+
+export function setOnClaudeRelayRequest(fn: (guestId: string, prompt: string, workspaceRoot: string, resumeId: string) => void): void {
+  _onClaudeRelayRequest = fn;
+}
+
+export function setOnClaudeRelayStop(fn: (guestId: string, sessionId: string) => void): void {
+  _onClaudeRelayStop = fn;
+}
+
+/**
+ * Handle an ai.claudeSend request from a guest device.
+ * Forwards to the registered callback which starts the Claude Code process.
+ */
+export function handleClaudeSendFromGuest(guestId: string, prompt: string, workspaceRoot: string, resumeId: string): void {
+  claudeRelayActive = 1;
+  claudeRelayGuestId = guestId;
+  _onClaudeRelayRequest(guestId, prompt, workspaceRoot, resumeId);
+}
+
+/**
+ * Handle an ai.claudeStop request from a guest device.
+ */
+export function handleClaudeStopFromGuest(guestId: string, sessionId: string): void {
+  claudeRelayActive = 0;
+  claudeRelayGuestId = '';
+  _onClaudeRelayStop(guestId, sessionId);
+}
+
+export function isClaudeRelayActive(): number {
+  return claudeRelayActive;
+}
+
+export function getClaudeRelayGuestId(): string {
+  return claudeRelayGuestId;
+}
+
+export function clearClaudeRelay(): void {
+  claudeRelayActive = 0;
+  claudeRelayGuestId = '';
+}
+
 // --- Helpers ---
 
 function makeRoomId(): string {

@@ -8,7 +8,7 @@
  * 4. Build the visual workbench
  */
 
-import { App } from 'perry/ui';
+import { App, VStack, widgetAddChild, widgetSetHidden } from 'perry/ui';
 import {
   getPlatformContext,
   onPlatformContextChange,
@@ -29,6 +29,8 @@ import { HONE_DARK } from './workbench/theme/builtin-themes';
 import { loadBuiltinThemes } from './workbench/theme/load-builtin-themes';
 import { renderWorkbench } from './workbench/render';
 import { setupNativeMenuBar } from './workbench/native-menu';
+import { isSetupComplete } from './workbench/settings';
+import { createSetupScreen, setSetupParent } from './workbench/views/setup/setup-screen';
 
 // ---------------------------------------------------------------------------
 // App state
@@ -49,10 +51,6 @@ export function getAppState(): AppState | null {
 }
 
 // ---------------------------------------------------------------------------
-// Initialization (disabled for now — async not supported by Perry on Windows)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // Perry app entry point
 // ---------------------------------------------------------------------------
 
@@ -66,8 +64,23 @@ if (_layoutNum === 1) _layoutMode = 'split';
 
 setupNativeMenuBar();
 
-// 4. Render the workbench
-const body = renderWorkbench(_layoutMode);
+// Check if first-run setup is needed
+const _needsSetup = isSetupComplete();
+
+let body: unknown;
+
+if (_needsSetup === 0) {
+  // First run — create a root VStack containing setup screen
+  // The setup screen will handle the transition to the workbench itself
+  const root = VStack(0, []);
+  const setupScreen = createSetupScreen();
+  widgetAddChild(root, setupScreen);
+  setSetupParent(root);
+  body = root;
+} else {
+  // Normal launch — go straight to workbench
+  body = renderWorkbench(_layoutMode);
+}
 
 // 5. Run
 App({ title: 'Hone', width: 1200, height: 800, body: body });

@@ -356,6 +356,166 @@ export function setOnQueueFull(fn: (count: number, max: number) => void): void {
   _onQueueFull = fn;
 }
 
+// --- Claude Code relay (guest side) ---
+
+// Callbacks for Claude Code events received from host
+let _onClaudeStream: (sessionId: string, delta: string, deltaType: string, toolName: string) => void = _noopClaudeStream;
+let _onClaudeResult: (sessionId: string, result: string, costUsd: number, numTurns: number) => void = _noopClaudeResult;
+let _onClaudeError: (sessionId: string, error: string) => void = _noopClaudeError;
+
+function _noopClaudeStream(sessionId: string, delta: string, deltaType: string, toolName: string): void {}
+function _noopClaudeResult(sessionId: string, result: string, costUsd: number, numTurns: number): void {}
+function _noopClaudeError(sessionId: string, error: string): void {}
+
+export function setOnClaudeStream(fn: (sessionId: string, delta: string, deltaType: string, toolName: string) => void): void {
+  _onClaudeStream = fn;
+}
+
+export function setOnClaudeResult(fn: (sessionId: string, result: string, costUsd: number, numTurns: number) => void): void {
+  _onClaudeResult = fn;
+}
+
+export function setOnClaudeError(fn: (sessionId: string, error: string) => void): void {
+  _onClaudeError = fn;
+}
+
+/**
+ * Send a Claude Code prompt request to the host via relay.
+ * Wraps in the standard ApiMessage envelope format.
+ */
+export function sendClaudeRequest(prompt: string, workspaceRoot: string, resumeSessionId: string): void {
+  let payload = '{"domain":"ai","operation":"claudeSend","payload":{"prompt":"';
+  payload += jsonEscapeSync(prompt);
+  payload += '","workspaceRoot":"';
+  payload += jsonEscapeSync(workspaceRoot);
+  payload += '"';
+  if (resumeSessionId.length > 0) {
+    payload += ',"resumeSessionId":"';
+    payload += jsonEscapeSync(resumeSessionId);
+    payload += '"';
+  }
+  payload += '},"id":"';
+  payload += generateMsgId();
+  payload += '"}';
+  sendOrQueue(payload);
+}
+
+/**
+ * Send a Claude Code stop request to the host via relay.
+ */
+export function sendClaudeStop(sessionId: string): void {
+  let payload = '{"domain":"ai","operation":"claudeStop","payload":{"sessionId":"';
+  payload += jsonEscapeSync(sessionId);
+  payload += '"},"id":"';
+  payload += generateMsgId();
+  payload += '"}';
+  sendOrQueue(payload);
+}
+
+/**
+ * Process an incoming Claude Code event from host (called by message dispatcher).
+ */
+export function processClaudeRelayEvent(operation: string, data: string): void {
+  // Inline JSON extraction using charCodeAt (Perry-safe)
+  // Operations: claudeStream, claudeResult, claudeError
+
+  // claudeStream: charCodeAt(6) === 83 'S'
+  if (operation.length === 12 && operation.charCodeAt(6) === 83) {
+    const sessionId = extractSyncField(data, 'sessionId');
+    const delta = extractSyncField(data, 'delta');
+    const deltaType = extractSyncField(data, 'deltaType');
+    const toolName = extractSyncField(data, 'toolName');
+    _onClaudeStream(sessionId, delta, deltaType, toolName);
+    return;
+  }
+  // claudeResult: charCodeAt(6) === 82 'R'
+  if (operation.length === 12 && operation.charCodeAt(6) === 82) {
+    const sessionId = extractSyncField(data, 'sessionId');
+    const result = extractSyncField(data, 'result');
+    const costStr = extractSyncField(data, 'costUsd');
+    const turnsStr = extractSyncField(data, 'numTurns');
+    let cost = -1;
+    let turns = -1;
+    if (costStr.length > 0) cost = Number(costStr);
+    if (turnsStr.length > 0) turns = Number(turnsStr);
+    _onClaudeResult(sessionId, result, cost, turns);
+    return;
+  }
+  // claudeError: charCodeAt(6) === 69 'E'
+  if (operation.length === 11 && operation.charCodeAt(6) === 69) {
+    const sessionId = extractSyncField(data, 'sessionId');
+    const error = extractSyncField(data, 'error');
+    _onClaudeError(sessionId, error);
+    return;
+  }
+}
+
+/** Simple JSON string escape for sync payloads. */
+function jsonEscapeSync(s: string): string {
+  let result = '';
+  for (let i = 0; i < s.length; i++) {
+    const ch = s.charCodeAt(i);
+    if (ch === 92) { result += '\\\\'; }
+    else if (ch === 34) { result += '\\"'; }
+    else if (ch === 10) { result += '\\n'; }
+    else if (ch === 13) { result += '\\r'; }
+    else if (ch === 9) { result += '\\t'; }
+    else { result += s.slice(i, i + 1); }
+  }
+  return result;
+}
+
+/** Extract a JSON string field from a payload string. Perry-safe charCodeAt scanning. */
+function extractSyncField(json: string, key: string): string {
+  let pattern = '"';
+  pattern += key;
+  pattern += '"';
+
+  let pos = -1;
+  for (let i = 0; i <= json.length - pattern.length; i++) {
+    let match: number = 1;
+    for (let j = 0; j < pattern.length; j++) {
+      if (json.charCodeAt(i + j) !== pattern.charCodeAt(j)) {
+        match = 0;
+        break;
+      }
+    }
+    if (match > 0) { pos = i; break; }
+  }
+  if (pos < 0) return '';
+
+  let afterKey = pos + pattern.length;
+  // Skip whitespace + colon + whitespace
+  while (afterKey < json.length && (json.charCodeAt(afterKey) === 32 || json.charCodeAt(afterKey) === 9)) afterKey += 1;
+  if (afterKey >= json.length || json.charCodeAt(afterKey) !== 58) return '';
+  afterKey += 1;
+  while (afterKey < json.length && (json.charCodeAt(afterKey) === 32 || json.charCodeAt(afterKey) === 9)) afterKey += 1;
+  if (afterKey >= json.length || json.charCodeAt(afterKey) !== 34) return '';
+  afterKey += 1;
+
+  let result = '';
+  while (afterKey < json.length) {
+    const ch = json.charCodeAt(afterKey);
+    if (ch === 92) {
+      afterKey += 1;
+      if (afterKey < json.length) {
+        const next = json.charCodeAt(afterKey);
+        if (next === 110) { result += '\n'; }
+        else if (next === 116) { result += '\t'; }
+        else if (next === 34) { result += '"'; }
+        else if (next === 92) { result += '\\'; }
+        else { result += json.slice(afterKey, afterKey + 1); }
+      }
+    } else if (ch === 34) {
+      break;
+    } else {
+      result += json.slice(afterKey, afterKey + 1);
+    }
+    afterKey += 1;
+  }
+  return result;
+}
+
 // --- App lifecycle (background/foreground) ---
 
 /** Call when app enters background (iOS/Android). Gracefully closes connection. */

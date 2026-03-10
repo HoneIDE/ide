@@ -72,6 +72,16 @@ export interface WorkbenchSettings {
   lastOpenFolder: string;
   /** AI API key (Anthropic) */
   aiApiKey: string;
+  /** Sync: enabled */
+  syncEnabled: boolean;
+  /** Sync: relay server URL */
+  syncRelayUrl: string;
+  /** Sync: auth server URL */
+  syncAuthUrl: string;
+  /** Sync: device token (set after login) */
+  syncDeviceToken: string;
+  /** Whether the first-run setup has been completed */
+  setupComplete: boolean;
 }
 
 type SettingsChangeListener = (settings: WorkbenchSettings) => void;
@@ -131,6 +141,11 @@ let _settings_searchUseIgnoreFiles: number = 1;
 let _settings_searchFollowSymlinks: number = 1;
 let _settings_lastOpenFolder: string = '';
 let _settings_aiApiKey: string = '';
+let _settings_syncEnabled: number = 0;
+let _settings_syncRelayUrl: string = 'wss://sync.hone.codes/ws';
+let _settings_syncAuthUrl: string = 'https://auth.hone.codes';
+let _settings_syncDeviceToken: string = '';
+let _settings_setupComplete: number = 0;
 let _settingsLoaded: number = 0;
 
 const _listeners: SettingsChangeListener[] = [];
@@ -194,6 +209,11 @@ export function initSettings(): void {
     if (key === 'searchFollowSymlinks') _settings_searchFollowSymlinks = val === '1' ? 1 : 0;
     if (key === 'lastOpenFolder') _settings_lastOpenFolder = val;
     if (key === 'aiApiKey') _settings_aiApiKey = val;
+    if (key === 'syncEnabled') _settings_syncEnabled = val === '1' ? 1 : 0;
+    if (key === 'syncRelayUrl') _settings_syncRelayUrl = val;
+    if (key === 'syncAuthUrl') _settings_syncAuthUrl = val;
+    if (key === 'syncDeviceToken') _settings_syncDeviceToken = val;
+    if (key === 'setupComplete') _settings_setupComplete = val === '1' ? 1 : 0;
   }
 }
 
@@ -229,6 +249,11 @@ function buildSnapshot(): WorkbenchSettings {
     searchFollowSymlinks: _settings_searchFollowSymlinks > 0,
     lastOpenFolder: _settings_lastOpenFolder,
     aiApiKey: _settings_aiApiKey,
+    syncEnabled: _settings_syncEnabled > 0,
+    syncRelayUrl: _settings_syncRelayUrl,
+    syncAuthUrl: _settings_syncAuthUrl,
+    syncDeviceToken: _settings_syncDeviceToken,
+    setupComplete: _settings_setupComplete > 0,
   };
 }
 
@@ -350,6 +375,21 @@ function serializeFromVars(): string {
   out += 'aiApiKey=';
   out += _settings_aiApiKey;
   out += '\n';
+  out += 'syncEnabled=';
+  out += _settings_syncEnabled > 0 ? '1' : '0';
+  out += '\n';
+  out += 'syncRelayUrl=';
+  out += _settings_syncRelayUrl;
+  out += '\n';
+  out += 'syncAuthUrl=';
+  out += _settings_syncAuthUrl;
+  out += '\n';
+  out += 'syncDeviceToken=';
+  out += _settings_syncDeviceToken;
+  out += '\n';
+  out += 'setupComplete=';
+  out += _settings_setupComplete > 0 ? '1' : '0';
+  out += '\n';
   return out;
 }
 
@@ -375,8 +415,16 @@ export function setStringSetting(key: string, value: string): void {
   if (key === 'terminalCursorStyle') _settings_terminalCursorStyle = value;
   if (key === 'lastOpenFolder') _settings_lastOpenFolder = value;
   if (key === 'aiApiKey') _settings_aiApiKey = value;
+  if (key === 'syncRelayUrl') _settings_syncRelayUrl = value;
+  if (key === 'syncAuthUrl') _settings_syncAuthUrl = value;
+  if (key === 'syncDeviceToken') _settings_syncDeviceToken = value;
   persistToDisk();
   notifyListeners();
+}
+
+/** Check if first-run setup is complete. */
+export function isSetupComplete(): number {
+  return _settings_setupComplete;
 }
 
 /** Update a number setting. */
@@ -403,6 +451,8 @@ export function setBoolSetting(key: string, value: number): void {
   if (key === 'filesTrimTrailingWhitespace') _settings_filesTrimTrailingWhitespace = value;
   if (key === 'searchUseIgnoreFiles') _settings_searchUseIgnoreFiles = value;
   if (key === 'searchFollowSymlinks') _settings_searchFollowSymlinks = value;
+  if (key === 'syncEnabled') _settings_syncEnabled = value;
+  if (key === 'setupComplete') _settings_setupComplete = value;
   persistToDisk();
   notifyListeners();
 }
@@ -443,6 +493,11 @@ export function updateSettings(patch: Partial<WorkbenchSettings>): void {
     if (k === 'searchFollowSymlinks') _settings_searchFollowSymlinks = (patch as any).searchFollowSymlinks ? 1 : 0;
     if (k === 'lastOpenFolder') _settings_lastOpenFolder = (patch as any).lastOpenFolder;
     if (k === 'aiApiKey') _settings_aiApiKey = (patch as any).aiApiKey;
+    if (k === 'syncEnabled') _settings_syncEnabled = (patch as any).syncEnabled ? 1 : 0;
+    if (k === 'syncRelayUrl') _settings_syncRelayUrl = (patch as any).syncRelayUrl;
+    if (k === 'syncAuthUrl') _settings_syncAuthUrl = (patch as any).syncAuthUrl;
+    if (k === 'syncDeviceToken') _settings_syncDeviceToken = (patch as any).syncDeviceToken;
+    if (k === 'setupComplete') _settings_setupComplete = (patch as any).setupComplete ? 1 : 0;
   }
   persistToDisk();
   notifyListeners();
@@ -468,3 +523,6 @@ export function toggleSidebarLocation(): void {
     setStringSetting('sidebarLocation', 'left');
   }
 }
+
+// Auto-load settings from disk on module init
+initSettings();
