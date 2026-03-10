@@ -98,7 +98,7 @@ export function getDefaultKeybindings(platform: Platform): Keybinding[] {
 
 function kb(
   command: string,
-  keys: Omit<KeyCombo, 'ctrl' | 'meta'> & Partial<Pick<KeyCombo, 'ctrl' | 'meta'>>[],
+  keys: KeyCombo[],
   when: string | null,
   display: string,
 ): Keybinding {

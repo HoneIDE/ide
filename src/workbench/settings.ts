@@ -70,8 +70,21 @@ export interface WorkbenchSettings {
   searchFollowSymlinks: boolean;
   /** Last opened folder path */
   lastOpenFolder: string;
-  /** AI API key (Anthropic) */
+  /** AI API key (Anthropic) — legacy, migrated to aiKeyAnthropic */
   aiApiKey: string;
+  /** AI: per-provider API keys */
+  aiKeyAnthropic: string;
+  aiKeyOpenai: string;
+  aiKeyGoogle: string;
+  aiKeyDeepseek: string;
+  aiKeyXai: string;
+  /** AI: Ollama settings */
+  aiOllamaUrl: string;
+  aiOllamaModel: string;
+  /** AI: Custom endpoint settings */
+  aiCustomUrl: string;
+  aiCustomKey: string;
+  aiCustomModel: string;
   /** Sync: enabled */
   syncEnabled: boolean;
   /** Sync: relay server URL */
@@ -141,6 +154,16 @@ let _settings_searchUseIgnoreFiles: number = 1;
 let _settings_searchFollowSymlinks: number = 1;
 let _settings_lastOpenFolder: string = '';
 let _settings_aiApiKey: string = '';
+let _settings_aiKeyAnthropic: string = '';
+let _settings_aiKeyOpenai: string = '';
+let _settings_aiKeyGoogle: string = '';
+let _settings_aiKeyDeepseek: string = '';
+let _settings_aiKeyXai: string = '';
+let _settings_aiOllamaUrl: string = 'http://localhost:11434';
+let _settings_aiOllamaModel: string = 'llama3:8b';
+let _settings_aiCustomUrl: string = '';
+let _settings_aiCustomKey: string = '';
+let _settings_aiCustomModel: string = '';
 let _settings_syncEnabled: number = 0;
 let _settings_syncRelayUrl: string = 'wss://sync.hone.codes/ws';
 let _settings_syncAuthUrl: string = 'https://auth.hone.codes';
@@ -209,11 +232,26 @@ export function initSettings(): void {
     if (key === 'searchFollowSymlinks') _settings_searchFollowSymlinks = val === '1' ? 1 : 0;
     if (key === 'lastOpenFolder') _settings_lastOpenFolder = val;
     if (key === 'aiApiKey') _settings_aiApiKey = val;
+    if (key === 'aiKeyAnthropic') _settings_aiKeyAnthropic = val;
+    if (key === 'aiKeyOpenai') _settings_aiKeyOpenai = val;
+    if (key === 'aiKeyGoogle') _settings_aiKeyGoogle = val;
+    if (key === 'aiKeyDeepseek') _settings_aiKeyDeepseek = val;
+    if (key === 'aiKeyXai') _settings_aiKeyXai = val;
+    if (key === 'aiOllamaUrl') _settings_aiOllamaUrl = val;
+    if (key === 'aiOllamaModel') _settings_aiOllamaModel = val;
+    if (key === 'aiCustomUrl') _settings_aiCustomUrl = val;
+    if (key === 'aiCustomKey') _settings_aiCustomKey = val;
+    if (key === 'aiCustomModel') _settings_aiCustomModel = val;
     if (key === 'syncEnabled') _settings_syncEnabled = val === '1' ? 1 : 0;
     if (key === 'syncRelayUrl') _settings_syncRelayUrl = val;
     if (key === 'syncAuthUrl') _settings_syncAuthUrl = val;
     if (key === 'syncDeviceToken') _settings_syncDeviceToken = val;
     if (key === 'setupComplete') _settings_setupComplete = val === '1' ? 1 : 0;
+  }
+
+  // Migrate legacy aiApiKey → aiKeyAnthropic
+  if (_settings_aiKeyAnthropic.length < 5 && _settings_aiApiKey.length > 5) {
+    _settings_aiKeyAnthropic = _settings_aiApiKey;
   }
 }
 
@@ -249,6 +287,16 @@ function buildSnapshot(): WorkbenchSettings {
     searchFollowSymlinks: _settings_searchFollowSymlinks > 0,
     lastOpenFolder: _settings_lastOpenFolder,
     aiApiKey: _settings_aiApiKey,
+    aiKeyAnthropic: _settings_aiKeyAnthropic,
+    aiKeyOpenai: _settings_aiKeyOpenai,
+    aiKeyGoogle: _settings_aiKeyGoogle,
+    aiKeyDeepseek: _settings_aiKeyDeepseek,
+    aiKeyXai: _settings_aiKeyXai,
+    aiOllamaUrl: _settings_aiOllamaUrl,
+    aiOllamaModel: _settings_aiOllamaModel,
+    aiCustomUrl: _settings_aiCustomUrl,
+    aiCustomKey: _settings_aiCustomKey,
+    aiCustomModel: _settings_aiCustomModel,
     syncEnabled: _settings_syncEnabled > 0,
     syncRelayUrl: _settings_syncRelayUrl,
     syncAuthUrl: _settings_syncAuthUrl,
@@ -375,6 +423,36 @@ function serializeFromVars(): string {
   out += 'aiApiKey=';
   out += _settings_aiApiKey;
   out += '\n';
+  out += 'aiKeyAnthropic=';
+  out += _settings_aiKeyAnthropic;
+  out += '\n';
+  out += 'aiKeyOpenai=';
+  out += _settings_aiKeyOpenai;
+  out += '\n';
+  out += 'aiKeyGoogle=';
+  out += _settings_aiKeyGoogle;
+  out += '\n';
+  out += 'aiKeyDeepseek=';
+  out += _settings_aiKeyDeepseek;
+  out += '\n';
+  out += 'aiKeyXai=';
+  out += _settings_aiKeyXai;
+  out += '\n';
+  out += 'aiOllamaUrl=';
+  out += _settings_aiOllamaUrl;
+  out += '\n';
+  out += 'aiOllamaModel=';
+  out += _settings_aiOllamaModel;
+  out += '\n';
+  out += 'aiCustomUrl=';
+  out += _settings_aiCustomUrl;
+  out += '\n';
+  out += 'aiCustomKey=';
+  out += _settings_aiCustomKey;
+  out += '\n';
+  out += 'aiCustomModel=';
+  out += _settings_aiCustomModel;
+  out += '\n';
   out += 'syncEnabled=';
   out += _settings_syncEnabled > 0 ? '1' : '0';
   out += '\n';
@@ -415,6 +493,16 @@ export function setStringSetting(key: string, value: string): void {
   if (key === 'terminalCursorStyle') _settings_terminalCursorStyle = value;
   if (key === 'lastOpenFolder') _settings_lastOpenFolder = value;
   if (key === 'aiApiKey') _settings_aiApiKey = value;
+  if (key === 'aiKeyAnthropic') _settings_aiKeyAnthropic = value;
+  if (key === 'aiKeyOpenai') _settings_aiKeyOpenai = value;
+  if (key === 'aiKeyGoogle') _settings_aiKeyGoogle = value;
+  if (key === 'aiKeyDeepseek') _settings_aiKeyDeepseek = value;
+  if (key === 'aiKeyXai') _settings_aiKeyXai = value;
+  if (key === 'aiOllamaUrl') _settings_aiOllamaUrl = value;
+  if (key === 'aiOllamaModel') _settings_aiOllamaModel = value;
+  if (key === 'aiCustomUrl') _settings_aiCustomUrl = value;
+  if (key === 'aiCustomKey') _settings_aiCustomKey = value;
+  if (key === 'aiCustomModel') _settings_aiCustomModel = value;
   if (key === 'syncRelayUrl') _settings_syncRelayUrl = value;
   if (key === 'syncAuthUrl') _settings_syncAuthUrl = value;
   if (key === 'syncDeviceToken') _settings_syncDeviceToken = value;
@@ -493,6 +581,16 @@ export function updateSettings(patch: Partial<WorkbenchSettings>): void {
     if (k === 'searchFollowSymlinks') _settings_searchFollowSymlinks = (patch as any).searchFollowSymlinks ? 1 : 0;
     if (k === 'lastOpenFolder') _settings_lastOpenFolder = (patch as any).lastOpenFolder;
     if (k === 'aiApiKey') _settings_aiApiKey = (patch as any).aiApiKey;
+    if (k === 'aiKeyAnthropic') _settings_aiKeyAnthropic = (patch as any).aiKeyAnthropic;
+    if (k === 'aiKeyOpenai') _settings_aiKeyOpenai = (patch as any).aiKeyOpenai;
+    if (k === 'aiKeyGoogle') _settings_aiKeyGoogle = (patch as any).aiKeyGoogle;
+    if (k === 'aiKeyDeepseek') _settings_aiKeyDeepseek = (patch as any).aiKeyDeepseek;
+    if (k === 'aiKeyXai') _settings_aiKeyXai = (patch as any).aiKeyXai;
+    if (k === 'aiOllamaUrl') _settings_aiOllamaUrl = (patch as any).aiOllamaUrl;
+    if (k === 'aiOllamaModel') _settings_aiOllamaModel = (patch as any).aiOllamaModel;
+    if (k === 'aiCustomUrl') _settings_aiCustomUrl = (patch as any).aiCustomUrl;
+    if (k === 'aiCustomKey') _settings_aiCustomKey = (patch as any).aiCustomKey;
+    if (k === 'aiCustomModel') _settings_aiCustomModel = (patch as any).aiCustomModel;
     if (k === 'syncEnabled') _settings_syncEnabled = (patch as any).syncEnabled ? 1 : 0;
     if (k === 'syncRelayUrl') _settings_syncRelayUrl = (patch as any).syncRelayUrl;
     if (k === 'syncAuthUrl') _settings_syncAuthUrl = (patch as any).syncAuthUrl;

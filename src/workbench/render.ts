@@ -1061,7 +1061,7 @@ function initSplitSidebarExplorer(): void {
   if (!sidebarContainer) return;
   const colors = getActiveTheme();
   if (!colors) return;
-  renderExplorerPanel(sidebarContainer, colors);
+  renderExplorerPanel(sidebarContainer, colors as any);
 }
 
 function renderIPadTopBar(): unknown {
@@ -1342,9 +1342,6 @@ function recolorUI(): void {
 
   // Right panel (AI Chat)
   if (rightPanelWidget) setBg(rightPanelWidget, getSideBarBackground());
-
-  // Sync panel colors
-  setSyncPanelColors(c);
 
   // Activity bar icon colors
   for (let i = 0; i < activityButtons.length; i++) {

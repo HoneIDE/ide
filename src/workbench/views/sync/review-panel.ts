@@ -271,9 +271,9 @@ function buildGroupCard(groupId: string): unknown {
   const card = VStack(2, [groupLabel, metaLabel, descContainer, btnRow]);
   if (reviewColors) {
     widgetSetBackgroundColor(card,
-      reviewColors.editorBackground[0] || 0.15,
-      reviewColors.editorBackground[1] || 0.15,
-      reviewColors.editorBackground[2] || 0.15,
+      (reviewColors.editorBackground as unknown as number[])[0] || 0.15,
+      (reviewColors.editorBackground as unknown as number[])[1] || 0.15,
+      (reviewColors.editorBackground as unknown as number[])[2] || 0.15,
       1.0);
   }
   return card;
@@ -310,9 +310,9 @@ function buildProposalCard(idx: number): unknown {
   const card = VStack(2, [descLabel, metaLabel, btnRow]);
   if (reviewColors) {
     widgetSetBackgroundColor(card,
-      reviewColors.editorBackground[0] || 0.15,
-      reviewColors.editorBackground[1] || 0.15,
-      reviewColors.editorBackground[2] || 0.15,
+      (reviewColors.editorBackground as unknown as number[])[0] || 0.15,
+      (reviewColors.editorBackground as unknown as number[])[1] || 0.15,
+      (reviewColors.editorBackground as unknown as number[])[2] || 0.15,
       1.0);
   }
 

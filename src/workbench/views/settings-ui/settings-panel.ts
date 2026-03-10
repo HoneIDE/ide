@@ -54,7 +54,6 @@ let _hTermFontSizeVal: unknown = null;
 let _hTermCursorBtn: unknown = null;
 
 // Widget handles — AI
-let _hAiProviderBtn: unknown = null;
 let _hAiInlineBtn: unknown = null;
 let _hAiInlineDelayVal: unknown = null;
 
@@ -95,7 +94,6 @@ function onAiInlineDelayUp(): void { _pendingAction = 23; setTimeout(() => { def
 function onAiInlineDelayDown(): void { _pendingAction = 24; setTimeout(() => { deferredAction(); }, 0); }
 function onSearchIgnoreToggle(): void { _pendingAction = 25; setTimeout(() => { deferredAction(); }, 0); }
 function onSearchSymlinksToggle(): void { _pendingAction = 26; setTimeout(() => { deferredAction(); }, 0); }
-function onAiProviderCycle(): void { _pendingAction = 27; setTimeout(() => { deferredAction(); }, 0); }
 
 // ---------------------------------------------------------------------------
 // Cycle helpers
@@ -144,19 +142,6 @@ function cycleTermCursor(c: string): string {
   return 'block';
 }
 
-function cycleAiProvider(c: string): string {
-  const c0 = c.charCodeAt(0);
-  const c1 = c.charCodeAt(1);
-  if (c0 === 97 && c1 === 110) return 'openai';
-  if (c0 === 111 && c1 === 112 && c.length < 10) return 'google';
-  if (c0 === 103) return 'ollama';
-  if (c0 === 111 && c1 === 108) return 'openai-compat';
-  if (c0 === 111 && c1 === 112 && c.length > 10) return 'bedrock';
-  if (c0 === 98) return 'vertex';
-  if (c0 === 118) return 'azure-openai';
-  if (c0 === 97 && c1 === 122) return 'anthropic';
-  return 'anthropic';
-}
 
 // ---------------------------------------------------------------------------
 // Deferred action handler
@@ -317,11 +302,6 @@ function deferredAction(): void {
     setBoolSetting('searchFollowSymlinks', next);
     if (_hSearchSymlinksBtn) buttonSetTitle(_hSearchSymlinksBtn, next > 0 ? 'On' : 'Off');
   }
-  if (action === 27) {
-    const next = cycleAiProvider(s.aiProvider);
-    setStringSetting('aiProvider', next);
-    if (_hAiProviderBtn) buttonSetTitle(_hAiProviderBtn, next);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -339,6 +319,41 @@ function onAiModelChange(text: string): void {
 function onAiApiKeyChange(text: string): void {
   // Only save keys that look like real API keys (at least 20 chars, starts with 'sk-')
   if (text.length > 20) setStringSetting('aiApiKey', text);
+}
+
+// Per-provider key callbacks (module-level for Perry)
+function onAiKeyAnthropicChange(text: string): void {
+  if (text.length > 10) {
+    setStringSetting('aiKeyAnthropic', text);
+    setStringSetting('aiApiKey', text); // keep legacy in sync
+  }
+}
+function onAiKeyOpenaiChange(text: string): void {
+  if (text.length > 10) setStringSetting('aiKeyOpenai', text);
+}
+function onAiKeyGoogleChange(text: string): void {
+  if (text.length > 10) setStringSetting('aiKeyGoogle', text);
+}
+function onAiKeyDeepseekChange(text: string): void {
+  if (text.length > 10) setStringSetting('aiKeyDeepseek', text);
+}
+function onAiKeyXaiChange(text: string): void {
+  if (text.length > 10) setStringSetting('aiKeyXai', text);
+}
+function onAiOllamaUrlChange(text: string): void {
+  if (text.length > 3) setStringSetting('aiOllamaUrl', text);
+}
+function onAiOllamaModelChange(text: string): void {
+  if (text.length > 0) setStringSetting('aiOllamaModel', text);
+}
+function onAiCustomUrlChange(text: string): void {
+  if (text.length > 3) setStringSetting('aiCustomUrl', text);
+}
+function onAiCustomKeyChange(text: string): void {
+  if (text.length > 5) setStringSetting('aiCustomKey', text);
+}
+function onAiCustomModelChange(text: string): void {
+  if (text.length > 0) setStringSetting('aiCustomModel', text);
 }
 
 // ---------------------------------------------------------------------------
@@ -569,7 +584,6 @@ function resetHandles(): void {
   _hTrimWsBtn = null;
   _hTermFontSizeVal = null;
   _hTermCursorBtn = null;
-  _hAiProviderBtn = null;
   _hAiInlineBtn = null;
   _hAiInlineDelayVal = null;
   _hSearchIgnoreBtn = null;
@@ -671,20 +685,41 @@ function buildContent(ctr: unknown, colors: ResolvedUIColors): void {
   }
 
   // ---- AI ----
-  if (matchesSearch('AI Provider', 'The AI provider to use for completions') > 0) hasAi = 1;
-  if (matchesSearch('API Key', 'API key for the AI provider') > 0) hasAi = 1;
-  if (matchesSearch('AI Chat Model', 'The model to use for AI chat') > 0) hasAi = 1;
+  if (matchesSearch('Anthropic', 'API key for Anthropic Claude models') > 0) hasAi = 1;
+  if (matchesSearch('OpenAI', 'API key for OpenAI GPT models') > 0) hasAi = 1;
+  if (matchesSearch('Google', 'API key for Google Gemini models') > 0) hasAi = 1;
+  if (matchesSearch('DeepSeek', 'API key for DeepSeek models') > 0) hasAi = 1;
+  if (matchesSearch('xAI', 'API key for xAI Grok models') > 0) hasAi = 1;
+  if (matchesSearch('Ollama', 'Local Ollama server') > 0) hasAi = 1;
+  if (matchesSearch('Custom', 'Custom OpenAI-compatible endpoint') > 0) hasAi = 1;
   if (matchesSearch('Inline Completion', 'Enable AI inline code completions') > 0) hasAi = 1;
   if (matchesSearch('Inline Completion Delay', 'Delay in ms before showing completions') > 0) hasAi = 1;
 
   if (hasAi > 0) {
-    makeSection(ctr, colors, 'AI');
-    if (matchesSearch('AI Provider', 'The AI provider to use for completions') > 0)
-      _hAiProviderBtn = makeCycleRow(ctr, colors, 'Provider', 'The AI provider to use for completions', s.aiProvider, () => { onAiProviderCycle(); });
-    if (matchesSearch('API Key', 'API key for the AI provider') > 0)
-      makeTextRow(ctr, colors, 'API Key', 'API key for the AI provider (paste full key to update)', s.aiApiKey.length > 8 ? 'sk-...set' : '', onAiApiKeyChange);
-    if (matchesSearch('AI Chat Model', 'The model to use for AI chat') > 0)
-      makeTextRow(ctr, colors, 'Chat Model', 'The model to use for AI chat', s.aiModel, onAiModelChange);
+    makeSection(ctr, colors, 'AI Provider Keys');
+    if (matchesSearch('Anthropic', 'API key for Anthropic Claude models') > 0)
+      makeTextRow(ctr, colors, 'Anthropic API Key', 'API key for Anthropic Claude models', s.aiKeyAnthropic.length > 8 ? 'sk-...set' : '', onAiKeyAnthropicChange);
+    if (matchesSearch('OpenAI', 'API key for OpenAI GPT models') > 0)
+      makeTextRow(ctr, colors, 'OpenAI API Key', 'API key for OpenAI GPT models', s.aiKeyOpenai.length > 8 ? 'sk-...set' : '', onAiKeyOpenaiChange);
+    if (matchesSearch('Google', 'API key for Google Gemini models') > 0)
+      makeTextRow(ctr, colors, 'Google AI API Key', 'API key for Google Gemini models', s.aiKeyGoogle.length > 8 ? '...set' : '', onAiKeyGoogleChange);
+    if (matchesSearch('DeepSeek', 'API key for DeepSeek models') > 0)
+      makeTextRow(ctr, colors, 'DeepSeek API Key', 'API key for DeepSeek models', s.aiKeyDeepseek.length > 8 ? '...set' : '', onAiKeyDeepseekChange);
+    if (matchesSearch('xAI', 'API key for xAI Grok models') > 0)
+      makeTextRow(ctr, colors, 'xAI API Key', 'API key for xAI Grok models', s.aiKeyXai.length > 8 ? '...set' : '', onAiKeyXaiChange);
+
+    makeSection(ctr, colors, 'Local / Custom');
+    if (matchesSearch('Ollama', 'Local Ollama server') > 0) {
+      makeTextRow(ctr, colors, 'Ollama URL', 'URL for local Ollama server', s.aiOllamaUrl, onAiOllamaUrlChange);
+      makeTextRow(ctr, colors, 'Ollama Model', 'Model name for Ollama (e.g., llama3:8b)', s.aiOllamaModel, onAiOllamaModelChange);
+    }
+    if (matchesSearch('Custom', 'Custom OpenAI-compatible endpoint') > 0) {
+      makeTextRow(ctr, colors, 'Custom URL', 'Custom OpenAI-compatible API endpoint', s.aiCustomUrl, onAiCustomUrlChange);
+      makeTextRow(ctr, colors, 'Custom API Key', 'API key for custom endpoint', s.aiCustomKey.length > 5 ? '...set' : '', onAiCustomKeyChange);
+      makeTextRow(ctr, colors, 'Custom Model', 'Model name for custom endpoint', s.aiCustomModel, onAiCustomModelChange);
+    }
+
+    makeSection(ctr, colors, 'AI Features');
     if (matchesSearch('Inline Completion', 'Enable AI inline code completions') > 0)
       _hAiInlineBtn = makeToggleRow(ctr, colors, 'Inline Completion', 'Enable AI inline code completions', s.aiInlineCompletionEnabled ? 1 : 0, () => { onAiInlineToggle(); });
     if (matchesSearch('Inline Completion Delay', 'Delay in ms before showing completions') > 0)

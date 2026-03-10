@@ -7,7 +7,8 @@
  */
 import {
   VStack, HStack, VStackWithInsets, HStackWithInsets, Text, Button, Spacer,
-  TextField, ScrollView, scrollViewSetChild, scrollViewScrollTo,
+  TextField, ScrollView, Picker,
+  scrollViewSetChild, scrollViewScrollTo,
   textSetFontSize, textSetFontWeight, textSetFontFamily, textSetString, textSetWraps,
   buttonSetBordered, buttonSetTitle,
   widgetAddChild, widgetClearChildren, widgetSetBackgroundColor, widgetSetWidth,
@@ -60,6 +61,13 @@ import {
   findClaudeBinary, checkClaudeAuth, startClaudeSession,
 } from './claude-process';
 import { parseNDJSONCost, parseNDJSONTurns } from './claude-events';
+
+// Multi-provider support
+import {
+  getModelApiId, getProviderIndex, getProviderFormat,
+  getProviderApiUrl, getModelCount, getPickerLabel,
+} from './provider-config';
+import { buildProviderBody } from './request-builders';
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -160,17 +168,12 @@ let streamContainer: unknown = null;
 let streamLastRenderLen: number = 0;
 let streamLastRenderTime: number = 0;
 
-// Model selector (0=Sonnet, 1=Opus, 2=Haiku)
-let selectedModel: number = 0;
-let modelSonnetBtn: unknown = null;
-let modelOpusBtn: unknown = null;
-let modelHaikuBtn: unknown = null;
-let modelSonnetWrap: unknown = null;
-let modelOpusWrap: unknown = null;
-let modelHaikuWrap: unknown = null;
-let modelRow: unknown = null;
-let modelRowParent: unknown = null;
-let modelRowAttached: number = 0;
+// Model selector — flat ID (0–15), provider format for SSE parsing
+let selectedModelId: number = 0;
+let activeProviderFormat: number = 0; // 0=anthropic, 1=openai, 2=google, 3=ollama
+let modelPicker: unknown = null;
+let modelPickerParent: unknown = null;
+let modelPickerAttached: number = 0;
 
 // ---------------------------------------------------------------------------
 // Public setters (called from render.ts)
@@ -292,29 +295,55 @@ function appendAssistantWithTool(text: string, toolId: string, toolName: string,
 // API key loading
 // ---------------------------------------------------------------------------
 
-/** Returns the loaded key (Perry workaround: caller must assign to module var). */
-function loadApiKeyValue(): string {
-  // 1. Try workbench settings (settings.ini — persisted via Settings UI)
+/** Load API key for a given provider index (0–6). */
+function loadProviderApiKey(providerIdx: number): string {
   try {
     const s = getWorkbenchSettings();
-    if (s.aiApiKey.length > 5) { return s.aiApiKey; }
+    if (providerIdx === 0) {
+      // Anthropic — check dedicated key, then legacy key
+      if (s.aiKeyAnthropic.length > 5) return s.aiKeyAnthropic;
+      if (s.aiApiKey.length > 5) return s.aiApiKey;
+    }
+    if (providerIdx === 1) {
+      if (s.aiKeyOpenai.length > 5) return s.aiKeyOpenai;
+    }
+    if (providerIdx === 2) {
+      if (s.aiKeyGoogle.length > 5) return s.aiKeyGoogle;
+    }
+    if (providerIdx === 3) {
+      if (s.aiKeyDeepseek.length > 5) return s.aiKeyDeepseek;
+    }
+    if (providerIdx === 4) {
+      if (s.aiKeyXai.length > 5) return s.aiKeyXai;
+    }
+    if (providerIdx === 5) return ''; // Ollama — no key needed
+    if (providerIdx === 6) {
+      if (s.aiCustomKey.length > 5) return s.aiCustomKey;
+    }
   } catch (e) {}
-  // 2. Try environment variable (macOS/Linux/Windows only — not available on iOS/Android)
+
+  // Fallback: try environment variables for common providers
   if (canRunShellCommands()) {
     try {
-      const envResult = execSync('echo $ANTHROPIC_API_KEY') as unknown as string;
-      const key = trimNewline(envResult);
-      if (key.length > 5) { return key; }
+      let envVar = '';
+      if (providerIdx === 0) envVar = 'ANTHROPIC_API_KEY';
+      if (providerIdx === 1) envVar = 'OPENAI_API_KEY';
+      if (providerIdx === 2) envVar = 'GOOGLE_AI_API_KEY';
+      if (envVar.length > 0) {
+        let cmd = 'echo $';
+        cmd += envVar;
+        const envResult = execSync(cmd) as unknown as string;
+        const key = trimNewline(envResult);
+        if (key.length > 5) return key;
+      }
     } catch (e) {}
   }
-  // 3. Try legacy settings.json file
-  try {
-    let settingsPath = getAppDataDir();
-    settingsPath += '/settings.json';
-    const raw = readFileSync(settingsPath);
-    return extractJsonString(raw, 'anthropicApiKey');
-  } catch (e) {}
   return '';
+}
+
+/** Legacy: load Anthropic key (for initial panel setup check). */
+function loadApiKeyValue(): string {
+  return loadProviderApiKey(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -322,151 +351,72 @@ function loadApiKeyValue(): string {
 // ---------------------------------------------------------------------------
 
 function buildRequestBody(fileContent: string, systemPrompt: string, includeStream: number, toolsJson: string): string {
-  let modelStr = getSelectedModelString();
-  let body = '{"model":"';
-  body += modelStr;
-  body += '","max_tokens":4096';
-  if (includeStream > 0) {
-    body += ',"stream":true';
-  }
-
-  body += ',"system":"';
-  body += jsonEscape(systemPrompt);
-  body += '"';
-
-  // Tools
-  if (toolsJson.length > 2) {
-    body += ',"tools":';
-    body += toolsJson;
-  }
-
-  body += ',"messages":[';
-
-  // Parse message file
-  let lineStart = 0;
-  let lineIdx = 0;
-  let currentRole = '';
-  let firstMsg: number = 1;
-  for (let i = 0; i <= fileContent.length; i++) {
-    if (i === fileContent.length || fileContent.charCodeAt(i) === 10) {
-      const line = fileContent.slice(lineStart, i);
-      if (lineIdx % 2 === 0) {
-        if (line.length > 0 && line.charCodeAt(0) === 85) {
-          currentRole = 'user';
-        } else if (line.length > 0 && line.charCodeAt(0) === 84) {
-          // 'T' = tool_result
-          currentRole = 'tool_result';
-        } else if (line.length > 0 && line.charCodeAt(0) === 87) {
-          // 'W' = assistant with tool_use
-          currentRole = 'assistant_tool';
-        } else {
-          currentRole = 'assistant';
-        }
-      } else {
-        const decoded: string = decodeContent(line);
-        if (firstMsg < 1) body += ',';
-        firstMsg = 0;
-
-        if (currentRole.length === 14) {
-          // assistant_tool — assistant message with tool_use content block
-          // Format: text\x01toolId\x01toolName\x01toolArgsJson (split on SOH=1)
-          let soh1 = -1; let soh2 = -1; let soh3 = -1;
-          for (let s = 0; s < decoded.length; s++) {
-            if (decoded.charCodeAt(s) === 1) {
-              if (soh1 < 0) soh1 = s;
-              else if (soh2 < 0) soh2 = s;
-              else if (soh3 < 0) { soh3 = s; break; }
-            }
-          }
-          if (soh1 > -1 && soh2 > 0 && soh3 > 0) {
-            const aText = decoded.slice(0, soh1);
-            const aToolId = decoded.slice(soh1 + 1, soh2);
-            const aToolName = decoded.slice(soh2 + 1, soh3);
-            const aToolArgs = decoded.slice(soh3 + 1);
-            body += '{"role":"assistant","content":[';
-            if (aText.length > 0) {
-              body += '{"type":"text","text":"';
-              body += jsonEscape(aText);
-              body += '"},';
-            }
-            body += '{"type":"tool_use","id":"';
-            body += jsonEscape(aToolId);
-            body += '","name":"';
-            body += jsonEscape(aToolName);
-            body += '","input":';
-            // toolArgs is raw JSON, don't escape it
-            if (aToolArgs.length > 1) {
-              body += aToolArgs;
-            } else {
-              body += '{}';
-            }
-            body += '}]}';
-          }
-        } else if (currentRole.length === 11) {
-          // tool_result — special format
-          // Content is: toolId|toolName|result
-          let pipePos1 = -1;
-          let pipePos2 = -1;
-          for (let p = 0; p < decoded.length; p++) {
-            if (decoded.charCodeAt(p) === 124) {
-              if (pipePos1 < 0) pipePos1 = p;
-              else if (pipePos2 < 0) { pipePos2 = p; break; }
-            }
-          }
-          if (pipePos1 > 0 && pipePos2 > 0) {
-            const toolId = decoded.slice(0, pipePos1);
-            const toolResult = decoded.slice(pipePos2 + 1);
-            body += '{"role":"user","content":[{"type":"tool_result","tool_use_id":"';
-            body += jsonEscape(toolId);
-            body += '","content":"';
-            body += jsonEscape(toolResult);
-            body += '"}]}';
-          }
-        } else {
-          body += '{"role":"';
-          body += currentRole;
-          body += '","content":"';
-          body += jsonEscape(decoded);
-          body += '"}';
-        }
-      }
-      lineIdx += 1;
-      lineStart = i + 1;
-    }
-  }
-
-  body += ']}';
-  return body;
+  const modelStr = getModelApiId(selectedModelId);
+  const format = getProviderFormat(selectedModelId);
+  return buildProviderBody(format, fileContent, systemPrompt, includeStream, toolsJson, modelStr);
 }
 
 // ---------------------------------------------------------------------------
 // Streaming via Perry native SSE
 // ---------------------------------------------------------------------------
 
-function startStream(requestBody: string): void {
-  // Re-load key (Perry: module var may be stale in callback context)
-  if (chatApiKey.length < 5) {
-    chatApiKey = loadApiKeyValue();
+function buildProviderHeaders(providerIdx: number, apiKey: string): string {
+  // Anthropic
+  if (providerIdx === 0) {
+    let h = '{"Content-Type":"application/json","x-api-key":"';
+    h += apiKey;
+    h += '","anthropic-version":"2023-06-01"}';
+    return h;
   }
-  if (chatApiKey.length < 5) {
-    appendMessage(0, 'No API key found. Open Settings to configure your API key.');
+  // Google — key goes in URL, no auth header
+  if (providerIdx === 2) {
+    return '{"Content-Type":"application/json"}';
+  }
+  // Ollama — no auth
+  if (providerIdx === 5) {
+    return '{"Content-Type":"application/json"}';
+  }
+  // OpenAI, DeepSeek, xAI, Custom — Bearer token
+  let h = '{"Content-Type":"application/json","Authorization":"Bearer ';
+  h += apiKey;
+  h += '"}';
+  return h;
+}
+
+function buildGoogleStreamUrl(modelId: number, apiKey: string): string {
+  let url = 'https://generativelanguage.googleapis.com/v1beta/models/';
+  url += getModelApiId(modelId);
+  url += ':streamGenerateContent?alt=sse&key=';
+  url += apiKey;
+  return url;
+}
+
+function startStream(requestBody: string): void {
+  const providerIdx = getProviderIndex(selectedModelId);
+  const format = getProviderFormat(selectedModelId);
+  activeProviderFormat = format;
+
+  // Load the right API key
+  const apiKey = loadProviderApiKey(providerIdx);
+  if (apiKey.length < 2 && providerIdx !== 5) {
+    appendMessage(0, 'No API key for this provider. Add one in Settings.');
     updateMessages();
     return;
   }
 
-  let headersJson = '{"Content-Type":"application/json","x-api-key":"';
-  headersJson += chatApiKey;
-  headersJson += '","anthropic-version":"2023-06-01"}';
+  // Build URL (Google puts key in URL)
+  let url = getProviderApiUrl(selectedModelId);
+  if (format === 2) {
+    url = buildGoogleStreamUrl(selectedModelId, apiKey);
+  }
+
+  // Build headers
+  const headersJson = buildProviderHeaders(providerIdx, apiKey);
 
   streamAccumulated = '';
   streamActive = 1;
 
-  streamHandle = streamStart(
-    'https://api.anthropic.com/v1/messages',
-    'POST',
-    requestBody,
-    headersJson
-  );
+  streamHandle = streamStart(url, 'POST', requestBody, headersJson);
 
   // Start thinking indicator
   startThinking();
@@ -597,7 +547,173 @@ function isDataLine(): number {
   return 1;
 }
 
+// ---------------------------------------------------------------------------
+// OpenAI-compat SSE extraction: find "delta" then "content" value
+// Pattern: "delta":{"content":"<value>"}
+// ---------------------------------------------------------------------------
+
+function inlineExtractOpenAIContent(): void {
+  sseExtractedText = '';
+  // Find "delta" in payload
+  // d=100, e=101, l=108, t=116, a=97
+  let deltaPos = -1;
+  for (let i = 0; i < sseDataPayload.length - 10; i++) {
+    if (sseDataPayload.charCodeAt(i) === 34 &&       // "
+        sseDataPayload.charCodeAt(i + 1) === 100 &&  // d
+        sseDataPayload.charCodeAt(i + 2) === 101 &&  // e
+        sseDataPayload.charCodeAt(i + 3) === 108 &&  // l
+        sseDataPayload.charCodeAt(i + 4) === 116 &&  // t
+        sseDataPayload.charCodeAt(i + 5) === 97) {   // a
+      deltaPos = i + 6;
+      break;
+    }
+  }
+  if (deltaPos < 0) return;
+
+  // Now find "content" after delta
+  // c=99, o=111, n=110, t=116, e=101, n=110, t=116
+  for (let i = deltaPos; i < sseDataPayload.length - 12; i++) {
+    if (sseDataPayload.charCodeAt(i) === 34 &&       // "
+        sseDataPayload.charCodeAt(i + 1) === 99 &&   // c
+        sseDataPayload.charCodeAt(i + 2) === 111 &&  // o
+        sseDataPayload.charCodeAt(i + 3) === 110 &&  // n
+        sseDataPayload.charCodeAt(i + 4) === 116 &&  // t
+        sseDataPayload.charCodeAt(i + 5) === 101 &&  // e
+        sseDataPayload.charCodeAt(i + 6) === 110 &&  // n
+        sseDataPayload.charCodeAt(i + 7) === 116 &&  // t
+        sseDataPayload.charCodeAt(i + 8) === 34) {   // "
+      // Found "content", extract value
+      let j = i + 9;
+      while (j < sseDataPayload.length && sseDataPayload.charCodeAt(j) !== 34) {
+        if (sseDataPayload.charCodeAt(j) === 58) { j += 1; break; }
+        j += 1;
+      }
+      // Skip whitespace
+      while (j < sseDataPayload.length && (sseDataPayload.charCodeAt(j) === 32 || sseDataPayload.charCodeAt(j) === 9)) j += 1;
+      // Check for null (content can be null in OpenAI)
+      if (j < sseDataPayload.length && sseDataPayload.charCodeAt(j) === 110) return; // n(ull)
+      if (j >= sseDataPayload.length || sseDataPayload.charCodeAt(j) !== 34) return;
+      j += 1;
+      // Read until closing "
+      let result = '';
+      while (j < sseDataPayload.length) {
+        const ch = sseDataPayload.charCodeAt(j);
+        if (ch === 92) { // backslash
+          j += 1;
+          if (j < sseDataPayload.length) {
+            const next = sseDataPayload.charCodeAt(j);
+            if (next === 110) { result += '\n'; }
+            else if (next === 116) { result += '\t'; }
+            else if (next === 34) { result += '"'; }
+            else if (next === 92) { result += '\\'; }
+            else if (next === 117) { j += 4; result += ' '; }
+            else { result += sseDataPayload.slice(j, j + 1); }
+          }
+        } else if (ch === 34) {
+          break;
+        } else {
+          result += sseDataPayload.slice(j, j + 1);
+        }
+        j += 1;
+      }
+      sseExtractedText = result;
+      return;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Google Gemini extraction: find "text" in parts context
+// ---------------------------------------------------------------------------
+
+function inlineExtractGoogleText(): void {
+  // Reuse the existing inlineExtractText — Google also uses "text":"..." in parts
+  inlineExtractText();
+}
+
+// ---------------------------------------------------------------------------
+// Ollama NDJSON: raw JSON lines, no "data: " prefix
+// Pattern: {"message":{"content":"<value>"},"done":false}
+// ---------------------------------------------------------------------------
+
+function processOllamaLine(): void {
+  sseExtractedText = '';
+  // Ollama sends raw JSON lines (no "data: " prefix)
+  const line = currentSSELine;
+  if (line.length < 5) return;
+
+  // Check for "done":true
+  // d=100, o=111, n=110, e=101
+  for (let i = 0; i < line.length - 10; i++) {
+    if (line.charCodeAt(i) === 34 &&       // "
+        line.charCodeAt(i + 1) === 100 &&  // d
+        line.charCodeAt(i + 2) === 111 &&  // o
+        line.charCodeAt(i + 3) === 110 &&  // n
+        line.charCodeAt(i + 4) === 101 &&  // e
+        line.charCodeAt(i + 5) === 34) {   // "
+      // Check if value is true
+      let j = i + 6;
+      while (j < line.length && (line.charCodeAt(j) === 58 || line.charCodeAt(j) === 32)) j += 1;
+      if (j < line.length && line.charCodeAt(j) === 116) { // t(rue)
+        // Stream is done
+        return;
+      }
+    }
+  }
+
+  // Find "content" inside "message"
+  // c=99, o=111, n=110, t=116, e=101
+  for (let i = 0; i < line.length - 12; i++) {
+    if (line.charCodeAt(i) === 34 &&       // "
+        line.charCodeAt(i + 1) === 99 &&   // c
+        line.charCodeAt(i + 2) === 111 &&  // o
+        line.charCodeAt(i + 3) === 110 &&  // n
+        line.charCodeAt(i + 4) === 116 &&  // t
+        line.charCodeAt(i + 5) === 101 &&  // e
+        line.charCodeAt(i + 6) === 110 &&  // n
+        line.charCodeAt(i + 7) === 116 &&  // t
+        line.charCodeAt(i + 8) === 34) {   // "
+      let j = i + 9;
+      while (j < line.length && (line.charCodeAt(j) === 58 || line.charCodeAt(j) === 32)) j += 1;
+      if (j >= line.length || line.charCodeAt(j) !== 34) continue;
+      j += 1;
+      let result = '';
+      while (j < line.length) {
+        const ch = line.charCodeAt(j);
+        if (ch === 92) {
+          j += 1;
+          if (j < line.length) {
+            const next = line.charCodeAt(j);
+            if (next === 110) { result += '\n'; }
+            else if (next === 116) { result += '\t'; }
+            else if (next === 34) { result += '"'; }
+            else if (next === 92) { result += '\\'; }
+            else if (next === 117) { j += 4; result += ' '; }
+            else { result += line.slice(j, j + 1); }
+          }
+        } else if (ch === 34) {
+          break;
+        } else {
+          result += line.slice(j, j + 1);
+        }
+        j += 1;
+      }
+      sseExtractedText = result;
+      if (sseExtractedText.length > 0) {
+        streamAccumulated += sseExtractedText;
+      }
+      return;
+    }
+  }
+}
+
 function processCurrentLine(): void {
+  // Ollama: raw JSON lines, no "data: " prefix
+  if (activeProviderFormat === 3) {
+    processOllamaLine();
+    return;
+  }
+
   const isDL = isDataLine();
   if (isDL < 1) return;
   sseDataPayload = currentSSELine.slice(6);
@@ -607,9 +723,17 @@ function processCurrentLine(): void {
     return;
   }
 
-  // Chat mode — simple text extraction
+  // Chat mode — format-aware text extraction
   if (inlineCheckDone() > 0) return;
-  inlineExtractText();
+
+  if (activeProviderFormat === 0) {
+    inlineExtractText();           // Anthropic: "text":"..."
+  } else if (activeProviderFormat === 1) {
+    inlineExtractOpenAIContent();  // OpenAI-compat: delta.content
+  } else if (activeProviderFormat === 2) {
+    inlineExtractGoogleText();     // Google: parts[0].text
+  }
+
   if (sseExtractedText.length > 0) {
     streamAccumulated += sseExtractedText;
   }
@@ -1043,7 +1167,8 @@ function switchToSession(id: string): void {
   loadSessionMeta(id);
 
   panelMode = getActiveSessionMode();
-  selectedModel = getActiveSessionModel();
+  selectedModelId = getActiveSessionModel();
+  activeProviderFormat = getProviderFormat(selectedModelId);
   msgFilePath = getSessionFilePath(id);
   firstUserMsgSent = 0;
 
@@ -1074,7 +1199,10 @@ function switchToSession(id: string): void {
   resetAgentState();
   updateMessages();
   updateModeTabStyles();
-  updateModelStyles();
+  // Sync picker with loaded session's model
+  if (modelPicker) {
+    (modelPicker as any).setSelected(selectedModelId);
+  }
   refreshSessionList();
 }
 
@@ -1742,7 +1870,7 @@ function onNewChat(): void {
   msgFilePath = getSessionFilePath(newId);
 
   // Persist model choice for new session
-  updateSessionModel(newId, selectedModel);
+  updateSessionModel(newId, selectedModelId);
 
   updateMessages();
   updateModeTabStyles();
@@ -1838,72 +1966,30 @@ function updateModeTabStyles(): void {
     styleModeTab(modePlanBtn, modePlanWrap, panelMode === 2 ? 1 : 0);
     styleModeTab(modeClaudeBtn, modeClaudeWrap, panelMode === 3 ? 1 : 0);
   }
-  updateModelRowVisibility();
+  updateModelPickerVisibility();
 }
 
 // ---------------------------------------------------------------------------
-// Model selector
+// Model picker
 // ---------------------------------------------------------------------------
 
-function getSelectedModelString(): string {
-  if (selectedModel === 1) return 'claude-opus-4-20250514';
-  if (selectedModel === 2) return 'claude-haiku-4-5-20251001';
-  return 'claude-sonnet-4-20250514';
+function onModelPickerChange(idx: number): void {
+  selectedModelId = idx;
+  activeProviderFormat = getProviderFormat(idx);
+  updateSessionModel(getActiveSessionId(), idx);
+  setActiveSessionModel(idx);
 }
 
-function onModelSonnet(): void {
-  selectedModel = 0;
-  updateModelStyles();
-  updateSessionModel(getActiveSessionId(), 0);
-  setActiveSessionModel(0);
+/** Module-level callback for Picker onChange (Perry: read index from widget). */
+function pickerChanged(): void {
+  if (!modelPicker) return;
+  const idx = (modelPicker as any).getSelected();
+  onModelPickerChange(idx);
 }
 
-function onModelOpus(): void {
-  selectedModel = 1;
-  updateModelStyles();
-  updateSessionModel(getActiveSessionId(), 1);
-  setActiveSessionModel(1);
-}
-
-function onModelHaiku(): void {
-  selectedModel = 2;
-  updateModelStyles();
-  updateSessionModel(getActiveSessionId(), 2);
-  setActiveSessionModel(2);
-}
-
-function styleModelBtn(btn: unknown, wrap: unknown, active: number): void {
-  if (!btn) return;
-  if (active > 0) {
-    setBtnFg(btn, '#ffffff');
-    if (wrap) widgetSetBackgroundColor(wrap, 0.22, 0.28, 0.50, 1.0);
-  } else {
-    setBtnFg(btn, '#707070');
-    if (wrap) widgetSetBackgroundColor(wrap, 0.0, 0.0, 0.0, 0.0);
-  }
-}
-
-function updateModelStyles(): void {
-  styleModelBtn(modelSonnetBtn, modelSonnetWrap, selectedModel === 0 ? 1 : 0);
-  styleModelBtn(modelOpusBtn, modelOpusWrap, selectedModel === 1 ? 1 : 0);
-  styleModelBtn(modelHaikuBtn, modelHaikuWrap, selectedModel === 2 ? 1 : 0);
-}
-
-function updateModelRowVisibility(): void {
-  if (!modelRowParent) return;
-  if (panelMode === 3) {
-    // Remove model row from wrapper — empty VStack collapses to 0 height
-    if (modelRowAttached > 0 && modelRow) {
-      widgetClearChildren(modelRowParent);
-      modelRowAttached = 0;
-    }
-  } else {
-    // Re-add model row to wrapper
-    if (modelRowAttached < 1 && modelRow) {
-      widgetAddChild(modelRowParent, modelRow);
-      modelRowAttached = 1;
-    }
-  }
+function updateModelPickerVisibility(): void {
+  // Picker stays visible in all modes (NSPopUpButton doesn't reliably restore from hidden).
+  // In Claude Code mode, the picker selection is irrelevant since CC uses its own process.
 }
 
 // ---------------------------------------------------------------------------
@@ -2185,36 +2271,24 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
   const modeRow = HStack(2, [modeChatWrap, modeAgentWrap, modePlanWrap, modeClaudeWrap, Spacer()]);
   widgetAddChild(container, modeRow);
 
-  // --- Model selector row (hidden for Claude Code mode) ---
-  modelSonnetBtn = Button('Sonnet', () => { onModelSonnet(); });
-  buttonSetBordered(modelSonnetBtn, 0);
-  textSetFontSize(modelSonnetBtn, 10);
-  modelSonnetWrap = HStackWithInsets(0, 5, 2, 5, 2);
-  widgetAddChild(modelSonnetWrap, modelSonnetBtn);
+  // --- Model picker (hidden for Claude Code mode) ---
+  selectedModelId = getActiveSessionModel();
+  activeProviderFormat = getProviderFormat(selectedModelId);
 
-  modelOpusBtn = Button('Opus', () => { onModelOpus(); });
-  buttonSetBordered(modelOpusBtn, 0);
-  textSetFontSize(modelOpusBtn, 10);
-  modelOpusWrap = HStackWithInsets(0, 5, 2, 5, 2);
-  widgetAddChild(modelOpusWrap, modelOpusBtn);
+  const picker = Picker('Model', () => { pickerChanged(); }, 0);
+  for (let pi = 0; pi < getModelCount(); pi++) {
+    picker.addItem(getPickerLabel(pi));
+  }
+  picker.setSelected(selectedModelId);
+  widgetSetWidth(picker, 200);
+  modelPicker = picker;
 
-  modelHaikuBtn = Button('Haiku', () => { onModelHaiku(); });
-  buttonSetBordered(modelHaikuBtn, 0);
-  textSetFontSize(modelHaikuBtn, 10);
-  modelHaikuWrap = HStackWithInsets(0, 5, 2, 5, 2);
-  widgetAddChild(modelHaikuWrap, modelHaikuBtn);
-
-  modelRow = HStack(2, [modelSonnetWrap, modelOpusWrap, modelHaikuWrap, Spacer()]);
-  // Wrap in VStack so clearing children collapses it (widgetSetHidden doesn't work on HStack)
-  modelRowParent = VStack(0, []);
-  widgetAddChild(modelRowParent, modelRow);
-  modelRowAttached = 1;
-  widgetAddChild(container, modelRowParent);
-
-  // Load model from session
-  selectedModel = getActiveSessionModel();
-  updateModelStyles();
-  updateModelRowVisibility();
+  // Wrap in VStack so clearing children collapses it
+  modelPickerParent = VStack(0, []);
+  widgetAddChild(modelPickerParent, modelPicker);
+  modelPickerAttached = 1;
+  widgetAddChild(container, modelPickerParent);
+  updateModelPickerVisibility();
 
   // --- Session list (always visible) ---
   const sessionLabel = Text('History');
@@ -2290,24 +2364,29 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
         updateMessages();
       }
     }
-  } else if (chatApiKey.length < 5) {
-    const hintBlock = VStackWithInsets(4, 8, 8, 8, 8);
-    widgetSetBackgroundColor(hintBlock, 0.15, 0.18, 0.25, 1.0);
-
-    const hintTitle = Text('API Key Required');
-    textSetFontSize(hintTitle, 12);
-    textSetFontWeight(hintTitle, 12, 0.7);
-    setFg(hintTitle, getSideBarForeground());
-    widgetAddChild(hintBlock, hintTitle);
-
-    const hint1 = Text('Open Settings to configure your API key.');
-    textSetFontSize(hint1, 11);
-    setFg(hint1, getSideBarForeground());
-    widgetAddChild(hintBlock, hint1);
-
-    widgetAddChild(chatMessagesContainer, hintBlock);
   } else {
-    updateMessages();
+    // Check if current provider has a key (skip for Ollama which needs no key)
+    const initProviderIdx = getProviderIndex(selectedModelId);
+    const initKey = loadProviderApiKey(initProviderIdx);
+    if (initKey.length < 2 && initProviderIdx !== 5) {
+      const hintBlock = VStackWithInsets(4, 8, 8, 8, 8);
+      widgetSetBackgroundColor(hintBlock, 0.15, 0.18, 0.25, 1.0);
+
+      const hintTitle = Text('API Key Required');
+      textSetFontSize(hintTitle, 12);
+      textSetFontWeight(hintTitle, 12, 0.7);
+      setFg(hintTitle, getSideBarForeground());
+      widgetAddChild(hintBlock, hintTitle);
+
+      const hint1 = Text('Open Settings to configure your provider API key.');
+      textSetFontSize(hint1, 11);
+      setFg(hint1, getSideBarForeground());
+      widgetAddChild(hintBlock, hint1);
+
+      widgetAddChild(chatMessagesContainer, hintBlock);
+    } else {
+      updateMessages();
+    }
   }
 
   // --- Context chips ---

@@ -150,9 +150,9 @@ function buildTrustRow(idx: number): unknown {
   const row = HStack(8, [nameLabel, levelLabel, Spacer(), cycleBtn]);
   if (trustColors) {
     widgetSetBackgroundColor(row,
-      trustColors.editorBackground[0] || 0.15,
-      trustColors.editorBackground[1] || 0.15,
-      trustColors.editorBackground[2] || 0.15,
+      (trustColors.editorBackground as unknown as number[])[0] || 0.15,
+      (trustColors.editorBackground as unknown as number[])[1] || 0.15,
+      (trustColors.editorBackground as unknown as number[])[2] || 0.15,
       1.0);
   }
   return row;

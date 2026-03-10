@@ -404,9 +404,15 @@ function parseIndexLine(line: string): void {
       if (fieldIdx === 5) {
         parsedModel = 0;
         if (fVal.length > 0) {
-          const mc = fVal.charCodeAt(0);
-          if (mc === 49) parsedModel = 1;
-          else if (mc === 50) parsedModel = 2;
+          // Parse multi-digit model ID (0–15+)
+          let num = 0;
+          for (let d = 0; d < fVal.length; d++) {
+            const dc = fVal.charCodeAt(d);
+            if (dc >= 48 && dc <= 57) {
+              num = num * 10 + (dc - 48);
+            }
+          }
+          parsedModel = num;
         }
       }
       fieldIdx += 1;

@@ -59,9 +59,10 @@ function buildNativeMenu(items: MenuItem[]): unknown {
       const sub = buildNativeMenu(mi.submenu);
       menuAddSubmenu(menu, mi.label, sub);
     } else {
-      const cmd = mi.command;
-      if (mi.shortcut) {
-        menuAddItem(menu, mi.label, () => { dispatchCommand(cmd); }, mi.shortcut);
+      const cmd = mi.command || '';
+      const shortcut = mi.shortcut || '';
+      if (shortcut.length > 0) {
+        menuAddItem(menu, mi.label, () => { dispatchCommand(cmd); }, shortcut);
       } else {
         menuAddItem(menu, mi.label, () => { dispatchCommand(cmd); });
       }
