@@ -1154,7 +1154,7 @@ function renderEditorArea(): unknown {
   }
   const defaultName = 'app.ts';
 
-  const tbc = HStack(0, []);
+  const tbc = HStack(1, []);
   initTabBar(tbc, null as any, defaultFile, defaultName);
 
   const ed = new Editor(800, 600);

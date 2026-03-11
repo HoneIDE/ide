@@ -14,7 +14,7 @@ declare module 'perry/ui' {
   /** Create the application root (positional args). */
   export function App(title: string, width: number, height: number, body: unknown): void;
   /** Create the application root (object form). */
-  export function App(options: { title: string; width: number; height: number; body: unknown }): void;
+  export function App(options: { title: string; width: number; height: number; body: unknown; icon?: string }): void;
 
   // Layout containers
   export function VStack(spacing: number, children: unknown[]): unknown;
@@ -52,6 +52,8 @@ declare module 'perry/ui' {
 
   // Widget mutations
   export function widgetAddChild(parent: unknown, child: unknown): void;
+  export function widgetAddOverlay(parent: unknown, overlay: unknown): void;
+  export function widgetSetOverlayFrame(overlay: unknown, x: number, y: number, width: number, height: number): void;
   export function widgetClearChildren(parent: unknown): void;
   export function widgetRemoveChild(parent: unknown, child: unknown): void;
   export function widgetSetBackgroundColor(widget: unknown, r: number, g: number, b: number, a: number): void;
@@ -77,8 +79,10 @@ declare module 'perry/ui' {
   // TextField mutations
   export function textfieldSetString(field: unknown, value: string): void;
   export function textfieldFocus(field: unknown): void;
+  export function textfieldBlurAll(): void;
   export function textfieldGetString(field: unknown): string;
   export function textfieldSetOnSubmit(field: unknown, onSubmit: (text: string) => void): void;
+  export function textfieldSetOnFocus(field: unknown, onFocus: () => void): void;
 
   // Native view embedding
   export function embedNSView(view: unknown): unknown;
@@ -87,6 +91,7 @@ declare module 'perry/ui' {
   export function openFolderDialog(callback: (path: string) => void): void;
   export function openFileDialog(callback: (path: string) => void): void;
   export function saveFileDialog(callback: (path: string) => void, defaultName?: string, directory?: string): void;
+  export function pollOpenFile(): string;
 
   // Menu
   export function menuCreate(title?: string): unknown;
