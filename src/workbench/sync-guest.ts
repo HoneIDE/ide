@@ -10,6 +10,11 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { getHomeDir, getAppDataDir } from './paths';
+import {
+  x25519Keypair, x25519SharedSecret,
+  aes256GcmEncrypt, aes256GcmDecrypt,
+  randomNonce, hkdfSha256
+} from 'crypto';
 
 // --- Module-level state ---
 
@@ -22,6 +27,14 @@ let guestHostUrl = '';
 let guestRoomId = '';
 let guestRelayUrl = 'wss://sync.hone.codes/ws';
 let guestConnected: number = 0;
+
+// E2E encryption state
+let _projectKey = '';
+let _dhSecretKey = '';
+let _dhPublicKey = '';
+
+// Sequence tracking
+let _lastSeq = 0;
 
 // Auto-reconnect state
 let reconnectEnabled: number = 0;
@@ -97,6 +110,9 @@ function persistConnection(): void {
     out += 'platform=';
     out += guestPlatform;
     out += '\n';
+    out += 'lastSeq=';
+    out += String(_lastSeq);
+    out += '\n';
     writeFileSync(getSyncPath(), out);
   } catch (e: any) { /* ignore */ }
 }
@@ -126,6 +142,7 @@ function loadStoredConnection(): number {
       if (key === 'deviceId') guestDeviceId = val;
       if (key === 'deviceName') guestDeviceName = val;
       if (key === 'platform') guestPlatform = val;
+      if (key === 'lastSeq' && val.length > 0) _lastSeq = Number(val);
     }
 
     return (guestRoomId.length > 0 && guestRelayUrl.length > 0) ? 1 : 0;
@@ -354,6 +371,79 @@ export function setOnQueueWarning(fn: (count: number, max: number) => void): voi
 
 export function setOnQueueFull(fn: (count: number, max: number) => void): void {
   _onQueueFull = fn;
+}
+
+// --- E2E Encryption ---
+
+export function startGuestKeyExchange(): void {
+  const keypairJson = x25519Keypair();
+  const pkIdx = keypairJson.indexOf('"publicKey":"');
+  if (pkIdx >= 0) {
+    const pkStart = pkIdx + 13;
+    const pkEnd = keypairJson.indexOf('"', pkStart);
+    _dhPublicKey = keypairJson.slice(pkStart, pkEnd);
+  }
+  const skIdx = keypairJson.indexOf('"secretKey":"');
+  if (skIdx >= 0) {
+    const skStart = skIdx + 13;
+    const skEnd = keypairJson.indexOf('"', skStart);
+    _dhSecretKey = keypairJson.slice(skStart, skEnd);
+  }
+}
+
+export function getGuestDhPublicKey(): string {
+  return _dhPublicKey;
+}
+
+export function receiveProjectKey(theirPublicKey: string, encryptedPayload: string): void {
+  // Compute shared secret
+  const shared = x25519SharedSecret(_dhSecretKey, theirPublicKey);
+  // Derive same encryption key
+  const encKey = hkdfSha256(shared, '', 'hone-pairing-key', 32);
+  // Parse nonce:encrypted
+  const colonIdx = encryptedPayload.indexOf(':');
+  if (colonIdx < 0) return;
+  const nonce = encryptedPayload.slice(0, colonIdx);
+  const encrypted = encryptedPayload.slice(colonIdx + 1);
+  _projectKey = aes256GcmDecrypt(encrypted, encKey, nonce);
+}
+
+export function getGuestProjectKey(): string {
+  return _projectKey;
+}
+
+export function setGuestProjectKey(key: string): void {
+  _projectKey = key;
+}
+
+export function encryptDelta(plaintext: string): string {
+  if (_projectKey.length === 0) return plaintext;
+  const nonce = randomNonce();
+  const encrypted = aes256GcmEncrypt(plaintext, _projectKey, nonce);
+  let result = nonce;
+  result += ':';
+  result += encrypted;
+  return result;
+}
+
+export function decryptDelta(ciphertext: string): string {
+  if (_projectKey.length === 0) return ciphertext;
+  const colonIdx = ciphertext.indexOf(':');
+  if (colonIdx < 0) return ciphertext;
+  const nonce = ciphertext.slice(0, colonIdx);
+  const encrypted = ciphertext.slice(colonIdx + 1);
+  const decrypted = aes256GcmDecrypt(encrypted, _projectKey, nonce);
+  return decrypted;
+}
+
+// --- Sequence tracking ---
+
+export function getLastSeq(): number {
+  return _lastSeq;
+}
+
+export function setLastSeq(seq: number): void {
+  _lastSeq = seq;
 }
 
 // --- Claude Code relay (guest side) ---

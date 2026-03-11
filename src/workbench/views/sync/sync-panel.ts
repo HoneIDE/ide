@@ -34,6 +34,10 @@ let currentCode = '';
 // Device list container
 let deviceContainer: unknown = null;
 
+// Upgrade prompt
+let upgradeContainer: unknown = null;
+let syncLimited: number = 0;
+
 // Host/guest mode (0=host, 1=guest)
 let syncMode: number = 0;
 
@@ -123,6 +127,9 @@ export function buildSyncPanel(): unknown {
   textSetFontSize(divider, 9);
   textSetColor(divider, 0.4, 0.4, 0.4, 1.0);
 
+  // Upgrade prompt (hidden until limit is hit)
+  upgradeContainer = VStack(4, []);
+
   syncContainer = VStackWithInsets(12, 8, 8, 8, 8);
   widgetAddChild(syncContainer, title);
   widgetAddChild(syncContainer, statusLabel);
@@ -131,6 +138,12 @@ export function buildSyncPanel(): unknown {
   widgetAddChild(syncContainer, joinSection);
   widgetAddChild(syncContainer, devHeader);
   widgetAddChild(syncContainer, deviceContainer);
+  widgetAddChild(syncContainer, upgradeContainer);
+
+  // Show limit prompt if already limited
+  if (syncLimited === 1) {
+    showSyncLimitPrompt();
+  }
 
   syncPanelReady = 1;
   return syncContainer;
@@ -217,6 +230,33 @@ export function clearSyncDevices(): void {
   devStatuses = [];
   devCount = 0;
   rebuildDeviceList();
+}
+
+export function showSyncLimitPrompt(): void {
+  syncLimited = 1;
+  if (upgradeContainer === null) return;
+  // Build the upgrade message
+  widgetClearChildren(upgradeContainer);
+
+  const limitMsg = Text('Free plan syncs 1 project.');
+  textSetFontSize(limitMsg, 11);
+  textSetColor(limitMsg, 0.85, 0.65, 0.2, 1.0);
+  widgetAddChild(upgradeContainer, limitMsg);
+
+  const upgradeMsg = Text('Upgrade to Pro or use a self-hosted relay.');
+  textSetFontSize(upgradeMsg, 10);
+  textSetColor(upgradeMsg, 0.5, 0.5, 0.5, 1.0);
+  widgetAddChild(upgradeContainer, upgradeMsg);
+}
+
+export function hideSyncLimitPrompt(): void {
+  syncLimited = 0;
+  if (upgradeContainer === null) return;
+  widgetClearChildren(upgradeContainer);
+}
+
+export function isSyncLimited(): number {
+  return syncLimited;
 }
 
 // --- Internal ---

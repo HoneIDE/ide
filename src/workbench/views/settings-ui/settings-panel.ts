@@ -64,6 +64,11 @@ let _hSearchSymlinksBtn: unknown = null;
 // Widget handles — Privacy
 let _hTelemetryBtn: unknown = null;
 
+// Widget handles — Account
+let _hAccountTierLabel: unknown = null;
+let _hAccountProjectsLabel: unknown = null;
+let _hAccountEmailLabel: unknown = null;
+
 // Deferred action
 let _pendingAction: number = -1;
 
@@ -757,6 +762,74 @@ function buildContent(ctr: unknown, colors: ResolvedUIColors): void {
     if (matchesSearch('Anonymous Statistics', 'Share anonymous usage statistics to help improve Hone') > 0)
       _hTelemetryBtn = makeToggleRow(ctr, colors, 'Anonymous Statistics', 'Share anonymous usage statistics to help improve Hone. No file content, paths, or personal data is ever collected.', s.telemetryEnabled ? 1 : 0, () => { onTelemetryToggle(); });
   }
+
+  // ---- Account ----
+  let hasAccount = 0;
+  if (matchesSearch('Account', 'Plan tier projects devices email') > 0) hasAccount = 1;
+
+  if (hasAccount > 0) {
+    makeSection(ctr, colors, 'Account');
+
+    // Plan badge
+    const planLabel = Text('Plan');
+    textSetFontSize(planLabel, 13);
+    textSetFontWeight(planLabel, 13, 0.5);
+    setFg(planLabel, getEditorForeground());
+
+    let tierStr = 'Free';
+    if (s.syncEnabled) {
+      tierStr = 'Free';
+    }
+    const planValue = Text(tierStr);
+    textSetFontSize(planValue, 13);
+    setFg(planValue, getInputPlaceholderForeground());
+    _hAccountTierLabel = planValue;
+
+    const planRow = HStack(8, [planLabel, Spacer(), planValue]);
+    const planDesc = Text('Upgrade to Pro at account.hone.codes for unlimited projects and devices.');
+    textSetFontSize(planDesc, 11);
+    setFg(planDesc, getInputPlaceholderForeground());
+    const planSection = VStackWithInsets(2, 4, 0, 4, 0);
+    widgetAddChild(planSection, planRow);
+    widgetAddChild(planSection, planDesc);
+    widgetAddChild(ctr, planSection);
+
+    // Synced projects
+    const projLabel = Text('Synced Projects');
+    textSetFontSize(projLabel, 13);
+    textSetFontWeight(projLabel, 13, 0.5);
+    setFg(projLabel, getEditorForeground());
+
+    const projValue = Text('0 of 1');
+    textSetFontSize(projValue, 13);
+    setFg(projValue, getInputPlaceholderForeground());
+    _hAccountProjectsLabel = projValue;
+
+    const projRow = HStack(8, [projLabel, Spacer(), projValue]);
+    const projSection = VStackWithInsets(2, 4, 0, 4, 0);
+    widgetAddChild(projSection, projRow);
+    widgetAddChild(ctr, projSection);
+
+    // Email
+    const emailLabel = Text('Email');
+    textSetFontSize(emailLabel, 13);
+    textSetFontWeight(emailLabel, 13, 0.5);
+    setFg(emailLabel, getEditorForeground());
+
+    const emailValue = Text('Not linked');
+    textSetFontSize(emailValue, 13);
+    setFg(emailValue, getInputPlaceholderForeground());
+    _hAccountEmailLabel = emailValue;
+
+    const emailRow = HStack(8, [emailLabel, Spacer(), emailValue]);
+    const emailDesc = Text('Link an email at account.hone.codes to manage your account.');
+    textSetFontSize(emailDesc, 11);
+    setFg(emailDesc, getInputPlaceholderForeground());
+    const emailSection = VStackWithInsets(2, 4, 0, 4, 0);
+    widgetAddChild(emailSection, emailRow);
+    widgetAddChild(emailSection, emailDesc);
+    widgetAddChild(ctr, emailSection);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -796,4 +869,29 @@ export function renderSettingsTab(container: unknown, colors: ResolvedUIColors):
   setBg(outer, getEditorBackground());
   widgetSetHugging(outer, 1);
   widgetAddChild(container, outer);
+}
+
+export function updateAccountTier(tier: string): void {
+  if (_hAccountTierLabel !== null) {
+    textSetString(_hAccountTierLabel, tier);
+  }
+}
+
+export function updateAccountProjects(current: number, max: number): void {
+  if (_hAccountProjectsLabel !== null) {
+    let txt = String(current);
+    txt += ' of ';
+    txt += String(max);
+    textSetString(_hAccountProjectsLabel, txt);
+  }
+}
+
+export function updateAccountEmail(email: string): void {
+  if (_hAccountEmailLabel !== null) {
+    if (email.length > 0 && email.indexOf('@hone.local') < 0) {
+      textSetString(_hAccountEmailLabel, email);
+    } else {
+      textSetString(_hAccountEmailLabel, 'Not linked');
+    }
+  }
 }

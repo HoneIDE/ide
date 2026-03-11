@@ -7,6 +7,12 @@
  * All state is module-level (Perry closures capture by value).
  */
 
+import {
+  x25519Keypair, x25519SharedSecret,
+  aes256GcmEncrypt, aes256GcmDecrypt,
+  randomNonce, hkdfSha256
+} from 'crypto';
+
 // --- Module-level state ---
 
 let hostActive: number = 0;
@@ -18,6 +24,12 @@ let hostPairingCode = '';
 let hostPairingExpiry: number = 0;
 let hostRelayUrl = 'wss://sync.hone.codes/ws';
 let hostPairingUrl = '';
+
+// E2E encryption state
+let _projectKey = '';       // AES-256-GCM key for E2E encryption (hex)
+let _dhSecretKey = '';      // Our ephemeral DH secret key (hex)
+let _dhPublicKey = '';      // Our ephemeral DH public key (hex)
+let _pairingActive = 0;    // 1 when waiting for pair
 
 // Connected guest tracking (max 10 guests)
 let guestIds: string[] = [];
@@ -61,7 +73,7 @@ export function generateHostPairingCode(): string {
   let code = '';
   for (let i = 0; i < 6; i++) {
     const idx = Math.floor(Math.random() * CODE_CHARS.length);
-    code = code + CODE_CHARS[idx];
+    code += CODE_CHARS.charAt(idx);
   }
   hostPairingCode = code;
   hostPairingExpiry = Date.now() + 5 * 60 * 1000; // 5 minutes
@@ -113,6 +125,92 @@ export function validatePairingAttempt(code: string): number {
   hostPairingUrl = '';
   return 1;
 }
+
+// --- E2E Encryption ---
+
+export function generateProjectKey(): void {
+  // Generate random 32-byte project encryption key
+  const nonce = randomNonce(); // 12 bytes hex = 24 chars
+  // Use two nonces + hkdf to get 32 bytes
+  const nonce2 = randomNonce();
+  let ikm = nonce;
+  ikm += nonce2;
+  _projectKey = hkdfSha256(ikm, '', 'hone-project-key', 32);
+}
+
+export function getProjectKeyHex(): string {
+  return _projectKey;
+}
+
+export function setProjectKey(key: string): void {
+  _projectKey = key;
+}
+
+export function startKeyExchange(): void {
+  // Generate ephemeral X25519 keypair
+  const keypairJson = x25519Keypair();
+  // Parse JSON: {"publicKey":"hex","secretKey":"hex"}
+  const pkIdx = keypairJson.indexOf('"publicKey":"');
+  if (pkIdx >= 0) {
+    const pkStart = pkIdx + 13;
+    const pkEnd = keypairJson.indexOf('"', pkStart);
+    _dhPublicKey = keypairJson.slice(pkStart, pkEnd);
+  }
+  const skIdx = keypairJson.indexOf('"secretKey":"');
+  if (skIdx >= 0) {
+    const skStart = skIdx + 13;
+    const skEnd = keypairJson.indexOf('"', skStart);
+    _dhSecretKey = keypairJson.slice(skStart, skEnd);
+  }
+  _pairingActive = 1;
+}
+
+export function getDhPublicKey(): string {
+  return _dhPublicKey;
+}
+
+export function isPairingActive(): number {
+  return _pairingActive;
+}
+
+export function completeKeyExchange(theirPublicKey: string): string {
+  // Compute shared secret
+  const shared = x25519SharedSecret(_dhSecretKey, theirPublicKey);
+  // Derive encryption key from shared secret
+  const encKey = hkdfSha256(shared, '', 'hone-pairing-key', 32);
+  // Encrypt project key with derived key
+  const nonce = randomNonce();
+  const encrypted = aes256GcmEncrypt(_projectKey, encKey, nonce);
+  // Return nonce:encrypted so peer can decrypt
+  let result = nonce;
+  result += ':';
+  result += encrypted;
+  _pairingActive = 0;
+  return result;
+}
+
+export function encryptDelta(plaintext: string): string {
+  if (_projectKey.length === 0) return plaintext;
+  const nonce = randomNonce();
+  const encrypted = aes256GcmEncrypt(plaintext, _projectKey, nonce);
+  let result = nonce;
+  result += ':';
+  result += encrypted;
+  return result;
+}
+
+export function decryptDelta(ciphertext: string): string {
+  if (_projectKey.length === 0) return ciphertext;
+  // Parse nonce:encrypted
+  const colonIdx = ciphertext.indexOf(':');
+  if (colonIdx < 0) return ciphertext;
+  const nonce = ciphertext.slice(0, colonIdx);
+  const encrypted = ciphertext.slice(colonIdx + 1);
+  const decrypted = aes256GcmDecrypt(encrypted, _projectKey, nonce);
+  return decrypted;
+}
+
+// --- Guest tracking ---
 
 export function addGuest(deviceId: string, deviceName: string): void {
   if (guestCount >= 10) return;
@@ -242,7 +340,7 @@ function makeRoomId(): string {
   let id = '';
   for (let i = 0; i < 32; i++) {
     const idx = Math.floor(Math.random() * HEX_CHARS.length);
-    id = id + HEX_CHARS[idx];
+    id += HEX_CHARS.charAt(idx);
   }
   let out = '';
   out += id.slice(0, 8);

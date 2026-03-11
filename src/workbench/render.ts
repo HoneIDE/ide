@@ -47,8 +47,10 @@ import {
 } from './theme/theme-colors';
 import type { LayoutMode } from '../platform';
 import { getWorkbenchSettings, updateSettings, onSettingsChange } from './settings';
-import { readFileSync, writeFileSync, readdirSync, isDirectory, existsSync } from 'fs';
+import { readFileSync, writeFileSync, readdirSync, isDirectory, existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import { spawnBackground } from 'child_process';
+import { execSync } from 'child_process';
 import { getTempDir, getCwd, getHomeDir } from './paths';
 import { getPlatformContext } from '../platform';
 
@@ -92,7 +94,7 @@ import {
   recolorStatusBar, getStatusBarWidget,
 } from './views/status-bar/status-bar';
 // Extensions panel hidden for now — no runtime extension system yet
-import { renderChatPanel, focusChatInput, getChatInputHandle, setChatWorkspaceRoot, setChatFilePathGetter, setChatFileContentGetter } from './views/ai-chat/chat-panel';
+import { renderChatPanel, focusChatInput, getChatInputHandle, setChatWorkspaceRoot, setChatFilePathGetter, setChatFileContentGetter, setChatRemoteGuest, setChatRelaySendFn, setChatRelayForwardFn, startClaudeForRelay, handleClaudeRelayLine, handleClaudeRelayEvent } from './views/ai-chat/chat-panel';
 import { renderTerminalPanel, setTerminalCwd, destroyTerminalPanel, setTerminalCloseCallback, setTerminalProblemsFileOpener } from './views/terminal/terminal-panel';
 import { renderSettingsTab } from './views/settings-ui/settings-panel';
 import { setWelcomeActions, createWelcomeContent } from './views/welcome/welcome-tab';
@@ -102,8 +104,8 @@ import { setDiagnosticsFileOpener } from './views/lsp/diagnostics-panel';
 import { createAutocompletePopup, setAutocompleteAcceptHandler } from './views/lsp/autocomplete-popup';
 import { initTelemetry, telemetryTrackFileOpen, telemetryTrackSettingsOpen, telemetryTrackStartup, telemetryTrackThemeChange, telemetryTrackTerminalOpen } from './telemetry';
 import { buildSyncPanel, refreshSyncPanel, setSyncStatusText, setSyncPairCallback, setSyncJoinCallback, setSyncPairingCode, addSyncDevice, removeSyncDevice } from './views/sync/sync-panel';
-import { initSyncHost, setOnGuestConnected, setOnGuestDisconnected, getHostRoomId, getHostRelayUrl, generateHostPairingCode, validatePairingAttempt, addGuest } from './sync-host';
-import { initSyncGuest } from './sync-guest';
+import { initSyncHost, setOnGuestConnected, setOnGuestDisconnected, getHostRoomId, getHostRelayUrl, generateHostPairingCode, validatePairingAttempt, addGuest, handleClaudeSendFromGuest, handleClaudeStopFromGuest, setOnClaudeRelayRequest, setOnClaudeRelayStop } from './sync-host';
+import { initSyncGuest, sendClaudeRequest } from './sync-guest';
 import { getOrCreateDeviceId } from './paths';
 import {
   connectToRelay, disconnectFromRelay, sendToRelay,
@@ -411,6 +413,18 @@ export function saveFileAction(): void {
   if (currentEditorFilePath.length < 1) return;
   if (editorReady < 1) return;
   const content = editorInstance.getContent();
+  // In remote mode, send save to host via relay instead of writing locally
+  if (isRemoteExplorerMode() > 0) {
+    let msg = 'FILE_SAVE|';
+    msg += currentEditorFilePath;
+    msg += '\n';
+    msg += content;
+    sendToRelay(msg);
+    let savingMsg = 'Saving: ';
+    savingMsg += currentEditorFilePath;
+    setSyncStatusText(savingMsg);
+    return;
+  }
   writeFileSync(currentEditorFilePath, content);
   triggerDiagnostics();
   markTabSaved(content.length);
@@ -1509,12 +1523,16 @@ let syncTreeEntries: Map<number, string> = new Map();
 
 function syncDebugLog(msg: string): void {
   try {
+    // Use device-specific log file to avoid cross-process corruption
+    let logFile = '/tmp/hone-sync-';
+    logFile += syncDeviceId.substring(0, 8);
+    logFile += '.log';
     let prev = '';
-    try { prev = readFileSync('/tmp/hone-sync-debug.log'); } catch (e: any) {}
+    try { prev = readFileSync(logFile); } catch (e: any) {}
     let out = prev;
     out += '\n';
     out += msg;
-    writeFileSync('/tmp/hone-sync-debug.log', out);
+    writeFileSync(logFile, out);
   } catch (e: any) {}
 }
 
@@ -1530,6 +1548,9 @@ function initSyncSystem(layoutMode: LayoutMode): void {
     initSyncHost(syncDeviceId, 'Hone Desktop');
     setOnGuestConnected(onSyncGuestConnected);
     setOnGuestDisconnected(onSyncGuestDisconnected);
+    // Wire host-side Claude Code relay: when guest sends a prompt, start local Claude session
+    setOnClaudeRelayRequest(onClaudeRelayRequestFromGuest);
+    setOnClaudeRelayStop(onClaudeRelayStopFromGuest);
   } else {
     syncDeviceName = 'Hone Mobile';
     if (ctx.deviceClass === 'tablet') {
@@ -1541,6 +1562,9 @@ function initSyncSystem(layoutMode: LayoutMode): void {
     if (__platform__ === 2) platform = 'Android';
     if (__platform__ === 3) platform = 'Windows';
     initSyncGuest(syncDeviceId, syncDeviceName, platform);
+    // Mark chat panel as remote guest so Claude Code mode routes through relay
+    setChatRemoteGuest(1);
+    setChatRelaySendFn(onChatRelayClaudeSend);
   }
 
   // Wire relay event callbacks
@@ -1552,17 +1576,9 @@ function initSyncSystem(layoutMode: LayoutMode): void {
   // Wire remote file click callback (for sync guest)
   setRemoteFileClickCallback(onRemoteFileClicked);
 
-  // --- DEBUG AUTO-CONNECT ---
-  // Defer connection to after renderWorkbench returns (Perry timer pump must be active)
-  if (ctx.deviceClass === 'desktop') {
-    syncStatusOverride = 'Auto-paired (debug)';
-    setSyncStatusText('Auto-paired (debug)');
-  } else {
-    syncAutoJoinPending = 1;
-    syncStatusOverride = 'Auto-joining (debug)';
-    setSyncStatusText('Auto-joining (debug)');
-  }
-  setTimeout(() => { autoConnectDebug(); }, 1000);
+  // --- DEBUG AUTO-CONNECT (disabled for testing) ---
+  // Manual pairing: click "Pair Device" on host, enter code on guest
+  setSyncStatusText('Ready — click Pair Device or Join');
 
   // Poll sync panel refresh every 5s
   setInterval(() => { refreshSyncPanelDeferred(); }, 5000);
@@ -1671,6 +1687,405 @@ function onSyncGuestConnected(deviceId: string, deviceName: string): void {
 
 function onSyncGuestDisconnected(deviceId: string): void {
   refreshSyncPanelDeferred();
+}
+
+// ---------------------------------------------------------------------------
+// Claude Code relay callbacks
+// ---------------------------------------------------------------------------
+
+// Host-side Claude Code state for relay
+let claudeRelayLogPath = '';
+let claudeRelayPid: number = 0;
+let claudeRelayPollTimer: number = 0;
+let claudeRelayLogOffset: number = 0;
+let claudeRelayLineBuffer = '';
+let claudeRelayDone: number = 0;
+let claudeRelayNoData: number = 0;
+
+/**
+ * Host callback: guest requested Claude Code execution.
+ * Start a local Claude Code subprocess and stream results back via relay.
+ */
+function onClaudeRelayRequestFromGuest(guestId: string, prompt: string, wsRoot: string, resumeId: string): void {
+  syncDebugLog('Claude relay request from guest: prompt=' + prompt.slice(0, 50));
+
+  // Import claude-process functions dynamically won't work in Perry.
+  // Instead, use execSync/spawnBackground directly here (same-module pattern).
+
+  // Find claude binary
+  let claudeBin = '';
+  try {
+    const whichResult = execSync('which claude') as unknown as string;
+    for (let i = 0; i < whichResult.length; i++) {
+      const ch = whichResult.charCodeAt(i);
+      if (ch === 10 || ch === 13) break;
+      claudeBin += whichResult.slice(i, i + 1);
+    }
+  } catch (e) {}
+
+  if (claudeBin.length < 3) {
+    // Send error back to guest
+    sendClaudeRelayError('Claude Code not found on host. Install: npm install -g @anthropic-ai/claude-code');
+    return;
+  }
+
+  // Clean up previous relay session
+  if (claudeRelayPollTimer > 0) {
+    clearInterval(claudeRelayPollTimer);
+    claudeRelayPollTimer = 0;
+  }
+  if (claudeRelayPid > 0) {
+    try {
+      let killCmd = 'kill ';
+      killCmd += String(claudeRelayPid);
+      execSync(killCmd);
+    } catch (e) {}
+  }
+
+  // Build log file path
+  let logPath = '';
+  try {
+    const homeResult = execSync('echo $HOME') as unknown as string;
+    for (let i = 0; i < homeResult.length; i++) {
+      const ch = homeResult.charCodeAt(i);
+      if (ch === 10 || ch === 13) break;
+      logPath += homeResult.slice(i, i + 1);
+    }
+  } catch (e) {}
+  logPath += '/.hone/claude-relay-';
+  logPath += String(Date.now());
+  logPath += '.log';
+  claudeRelayLogPath = logPath;
+  claudeRelayLogOffset = 0;
+  claudeRelayLineBuffer = '';
+  claudeRelayDone = 0;
+  claudeRelayNoData = 0;
+
+  // Write prompt to temp file
+  let promptFile = logPath;
+  promptFile += '.prompt';
+  try {
+    writeFileSync(promptFile, prompt);
+  } catch (e) {
+    sendClaudeRelayError('Failed to write prompt file on host');
+    return;
+  }
+
+  // Build shell command — same as claude-process.ts
+  let cmd = 'unset CLAUDECODE; ';
+  cmd += claudeBin;
+  cmd += ' -p "$(cat ';
+  cmd += shellEscapeRelay(promptFile);
+  cmd += ')"';
+  cmd += ' --output-format stream-json';
+  cmd += ' --verbose';
+  cmd += ' --max-turns 25';
+  cmd += ' --permission-mode acceptEdits';
+
+  if (wsRoot.length > 0) {
+    cmd += ' --add-dir ';
+    cmd += shellEscapeRelay(wsRoot);
+  }
+
+  if (resumeId.length > 0) {
+    cmd += ' --resume ';
+    cmd += shellEscapeRelay(resumeId);
+  }
+
+  cmd += ' > ';
+  cmd += shellEscapeRelay(logPath);
+  cmd += ' 2>&1';
+
+  // Spawn background process
+  const result = spawnBackground('/bin/sh', ['-c', cmd], '/dev/null');
+  claudeRelayPid = result.pid;
+
+  syncDebugLog('Claude relay spawned pid=' + String(claudeRelayPid));
+
+  // Start polling log file and streaming results back to guest
+  claudeRelayPollTimer = setInterval(() => { claudeRelayPollTick(); }, 100);
+
+  // Clean up prompt file after delay
+  setTimeout(() => { cleanupRelayPromptFile(promptFile); }, 3000);
+}
+
+function cleanupRelayPromptFile(path: string): void {
+  try { unlinkSync(path); } catch (e) {}
+}
+
+function shellEscapeRelay(s: string): string {
+  let result = "'";
+  for (let i = 0; i < s.length; i++) {
+    const ch = s.charCodeAt(i);
+    if (ch === 39) {
+      result += "'\\''";
+    } else {
+      result += s.slice(i, i + 1);
+    }
+  }
+  result += "'";
+  return result;
+}
+
+/**
+ * Poll the Claude Code log file and stream NDJSON events back to guest via relay.
+ */
+function claudeRelayPollTick(): void {
+  if (claudeRelayDone > 0) return;
+  if (claudeRelayLogPath.length < 1) return;
+
+  let content = '';
+  try {
+    content = readFileSync(claudeRelayLogPath);
+  } catch (e) {
+    return;
+  }
+
+  if (content.length <= claudeRelayLogOffset) {
+    claudeRelayNoData += 1;
+    if (claudeRelayNoData > 60) {
+      claudeRelayNoData = 0;
+      // Check if process exited
+      let gone: number = 0;
+      try {
+        let checkCmd = 'kill -0 ';
+        checkCmd += String(claudeRelayPid);
+        execSync(checkCmd);
+      } catch (e) {
+        gone = 1;
+      }
+      if (gone > 0) {
+        claudeRelayDone = 1;
+        if (claudeRelayPollTimer > 0) {
+          clearInterval(claudeRelayPollTimer);
+          claudeRelayPollTimer = 0;
+        }
+        // Send final result if we have nothing else
+        sendClaudeRelayResult('', -1, -1);
+      }
+    }
+    return;
+  }
+
+  claudeRelayNoData = 0;
+  const newData = content.slice(claudeRelayLogOffset);
+  claudeRelayLogOffset = content.length;
+
+  let buffer = claudeRelayLineBuffer;
+  buffer += newData;
+  claudeRelayLineBuffer = '';
+
+  let lineStart = 0;
+  for (let i = 0; i < buffer.length; i++) {
+    if (buffer.charCodeAt(i) === 10) {
+      const line = buffer.slice(lineStart, i);
+      if (line.length > 10) {
+        processClaudeRelayLine(line);
+      }
+      lineStart = i + 1;
+    }
+  }
+
+  if (lineStart < buffer.length) {
+    claudeRelayLineBuffer = buffer.slice(lineStart);
+  }
+}
+
+/**
+ * Process a single NDJSON line from the Claude Code log and relay relevant events to guest.
+ */
+function processClaudeRelayLine(line: string): void {
+  // Detect event type using same logic as chat-panel handleClaudeLine
+  const evtType = detectRelayEventType(line);
+  if (evtType < 1) return;
+
+  // System event (1) — just note, don't send to guest
+  if (evtType === 1) {
+    return;
+  }
+
+  // Assistant event (2) — extract text and tool info, stream to guest
+  if (evtType === 2) {
+    // Check for tool_use
+    if (lineContainsRelay(line, 'tool_use') > 0) {
+      let toolName = extractAiField(line, '"name":');
+      if (toolName.length > 0) {
+        sendClaudeRelayStream('', 'tool', toolName);
+      }
+    }
+    // Extract text content
+    if (lineContainsRelay(line, '"type":"text"') > 0) {
+      let searchPat = '"type":"text"';
+      let foundPos = -1;
+      for (let i = 0; i <= line.length - searchPat.length; i++) {
+        let m: number = 1;
+        for (let j = 0; j < searchPat.length; j++) {
+          if (line.charCodeAt(i + j) !== searchPat.charCodeAt(j)) { m = 0; break; }
+        }
+        if (m > 0) { foundPos = i + searchPat.length; break; }
+      }
+      if (foundPos > 0) {
+        let remainder = line.slice(foundPos);
+        let textVal = extractAiField(remainder, '"text":');
+        if (textVal.length > 0) {
+          sendClaudeRelayStream(textVal, 'text', '');
+        }
+      }
+    }
+    return;
+  }
+
+  // Result event (3) — send final result to guest
+  if (evtType === 3) {
+    let isError: number = 0;
+    if (lineContainsRelay(line, '"is_error":true') > 0) isError = 1;
+
+    let resultText = extractAiField(line, ',"result":');
+    // Parse cost and turns as strings, send as-is
+    let costStr = extractAiField(line, '"total_cost":');
+    let turnsStr = extractAiField(line, '"num_turns":');
+    let costVal: number = -1;
+    let turnsVal: number = -1;
+    if (costStr.length > 0) costVal = Number(costStr);
+    if (turnsStr.length > 0) turnsVal = Number(turnsStr);
+
+    claudeRelayDone = 1;
+    if (claudeRelayPollTimer > 0) {
+      clearInterval(claudeRelayPollTimer);
+      claudeRelayPollTimer = 0;
+    }
+
+    if (isError > 0) {
+      sendClaudeRelayError(resultText);
+    } else {
+      sendClaudeRelayResult(resultText, costVal, turnsVal);
+    }
+    // Clean up log file
+    try { unlinkSync(claudeRelayLogPath); } catch (e) {}
+    return;
+  }
+
+  // User event (4) — tool result done
+  if (evtType === 4) {
+    sendClaudeRelayStream('', 'toolDone', '');
+  }
+}
+
+function detectRelayEventType(line: string): number {
+  // Same detection as handleClaudeLine: find "type":"..." value
+  let pat = '"type":';
+  let pos = -1;
+  for (let i = 0; i <= line.length - pat.length; i++) {
+    let m: number = 1;
+    for (let j = 0; j < pat.length; j++) {
+      if (line.charCodeAt(i + j) !== pat.charCodeAt(j)) { m = 0; break; }
+    }
+    if (m > 0) { pos = i + pat.length; break; }
+  }
+  if (pos < 0) return 0;
+  // Skip whitespace and opening quote
+  while (pos < line.length && (line.charCodeAt(pos) === 32 || line.charCodeAt(pos) === 9)) pos += 1;
+  if (pos >= line.length || line.charCodeAt(pos) !== 34) return 0;
+  pos += 1;
+  // Read type value
+  if (pos >= line.length) return 0;
+  const ch0 = line.charCodeAt(pos);
+  // system: s(115)
+  if (ch0 === 115) return 1;
+  // assistant: a(97)
+  if (ch0 === 97) return 2;
+  // result: r(114)
+  if (ch0 === 114) return 3;
+  // user: u(117)
+  if (ch0 === 117) return 4;
+  return 0;
+}
+
+function lineContainsRelay(line: string, sub: string): number {
+  if (sub.length > line.length) return 0;
+  for (let i = 0; i <= line.length - sub.length; i++) {
+    let m: number = 1;
+    for (let j = 0; j < sub.length; j++) {
+      if (line.charCodeAt(i + j) !== sub.charCodeAt(j)) { m = 0; break; }
+    }
+    if (m > 0) return 1;
+  }
+  return 0;
+}
+
+/** Send a claude stream event to guest via relay. */
+function sendClaudeRelayStream(delta: string, deltaType: string, toolName: string): void {
+  let msg = '{"domain":"ai","operation":"claudeStream","payload":{"delta":"';
+  msg += jsonEscapeRelay(delta);
+  msg += '","deltaType":"';
+  msg += deltaType;
+  msg += '","toolName":"';
+  msg += jsonEscapeRelay(toolName);
+  msg += '"}}';
+  sendToRelay(msg);
+}
+
+/** Send a claude result event to guest via relay. */
+function sendClaudeRelayResult(resultText: string, costUsd: number, numTurns: number): void {
+  let msg = '{"domain":"ai","operation":"claudeResult","payload":{"result":"';
+  msg += jsonEscapeRelay(resultText);
+  msg += '","costUsd":';
+  msg += String(costUsd);
+  msg += ',"numTurns":';
+  msg += String(numTurns);
+  msg += '}}';
+  sendToRelay(msg);
+}
+
+/** Send a claude error event to guest via relay. */
+function sendClaudeRelayError(error: string): void {
+  let msg = '{"domain":"ai","operation":"claudeError","payload":{"error":"';
+  msg += jsonEscapeRelay(error);
+  msg += '"}}';
+  sendToRelay(msg);
+}
+
+/** JSON-escape a string for relay payloads. */
+function jsonEscapeRelay(s: string): string {
+  let result = '';
+  for (let i = 0; i < s.length; i++) {
+    const ch = s.charCodeAt(i);
+    if (ch === 92) { result += '\\\\'; }
+    else if (ch === 34) { result += '\\"'; }
+    else if (ch === 10) { result += '\\n'; }
+    else if (ch === 13) { result += '\\r'; }
+    else if (ch === 9) { result += '\\t'; }
+    else { result += s.slice(i, i + 1); }
+  }
+  return result;
+}
+
+/**
+ * Guest callback: send Claude Code prompt to host via relay.
+ * Called from chat-panel.ts via setChatRelaySendFn.
+ */
+function onChatRelayClaudeSend(prompt: string): void {
+  sendClaudeRequest(prompt, workspaceRoot, '');
+}
+
+/**
+ * Host callback: stop Claude Code relay session.
+ */
+function onClaudeRelayStopFromGuest(guestId: string, sessionId: string): void {
+  syncDebugLog('Claude relay stop from guest');
+  claudeRelayDone = 1;
+  if (claudeRelayPollTimer > 0) {
+    clearInterval(claudeRelayPollTimer);
+    claudeRelayPollTimer = 0;
+  }
+  if (claudeRelayPid > 0) {
+    try {
+      let killCmd = 'kill ';
+      killCmd += String(claudeRelayPid);
+      execSync(killCmd);
+    } catch (e) {}
+    claudeRelayPid = 0;
+  }
 }
 
 function onRelayConnectedImpl(): void {
@@ -1804,6 +2219,41 @@ function onRelayMessageImpl(data: string): void {
     }
     return;
   }
+  // Handle FILE_SAVE_OK|relPath — host confirms save (check before FILE_SAVE| to avoid prefix match)
+  if (payload.indexOf('FILE_SAVE_OK|') === 0) {
+    if (isSelf < 1) handleFileSaveOk(payload);
+    return;
+  }
+  // Handle FILE_SAVE|relPath\ncontent — guest sends edited file to host
+  if (payload.indexOf('FILE_SAVE|') === 0) {
+    if (isSelf < 1) handleFileSave(payload);
+    return;
+  }
+
+  // Handle AI domain messages: {"domain":"ai","operation":"...","payload":{...}}
+  // Check for "domain":"ai" (charCodeAt for { = 123, " = 34, d = 100)
+  if (payload.length > 20 && payload.charCodeAt(0) === 123) {
+    // Check if it starts with {"domain":"ai"
+    // We look for "domain" key with "ai" value
+    let isDomainAi: number = 0;
+    let domainIdx = payload.indexOf('"domain"');
+    if (domainIdx >= 0) {
+      let afterDomain = domainIdx + 8;
+      // Skip :"
+      while (afterDomain < payload.length && payload.charCodeAt(afterDomain) !== 34) afterDomain += 1;
+      afterDomain += 1;
+      // Check if value starts with "ai"
+      if (afterDomain + 1 < payload.length) {
+        if (payload.charCodeAt(afterDomain) === 97 && payload.charCodeAt(afterDomain + 1) === 105) {
+          isDomainAi = 1;
+        }
+      }
+    }
+    if (isDomainAi > 0 && isSelf < 1) {
+      handleAiRelayMessage(payload, msgFrom);
+      return;
+    }
+  }
 
   refreshSyncPanelDeferred();
 }
@@ -1899,10 +2349,11 @@ function handleFileTreeRequest(): void {
   setSyncStatusText('Sent file tree');
 
   // --- Bulk sync: send all text/source files after the tree ---
-  // Collect file relPaths from the tree entries
+  // Collect file relPaths from the tree entries (capped at 200 files)
   let textFiles: string[] = [];
   let textFileCount = 0;
   for (let i = 0; i < entryCount; i++) {
+    if (textFileCount >= 200) break;
     if (!syncTreeEntries.has(i)) continue;
     const entry = syncTreeEntries.get(i) as string;
     if (entry.length < 3) continue;
@@ -1925,10 +2376,11 @@ function handleFileTreeRequest(): void {
   bulkSyncIdx = 0;
   bulkSyncFiles = textFiles;
   bulkSyncFileCount = textFileCount;
-  // Drip-feed files: send a batch every 50ms via setInterval
+  bulkSyncTotalSent = 0;
+  // Drip-feed files: send 1 file every 100ms via setInterval (reduced from 3/50ms)
   if (textFileCount > 0) {
     setSyncStatusText('Syncing ' + String(textFileCount) + ' files...');
-    bulkSyncTimerId = setInterval(() => { bulkSyncTick(); }, 50);
+    bulkSyncTimerId = setInterval(() => { bulkSyncTick(); }, 100);
   }
 }
 
@@ -1937,10 +2389,20 @@ let bulkSyncIdx: number = 0;
 let bulkSyncFiles: string[] = [];
 let bulkSyncFileCount: number = 0;
 let bulkSyncTimerId: number = 0;
-const BULK_SYNC_BATCH = 3; // files per tick
-const BULK_FILE_MAX_SIZE = 1048576; // 1MB
+let bulkSyncTotalSent: number = 0;
+const BULK_SYNC_BATCH = 1; // files per tick (reduced from 3 to limit memory pressure)
+const BULK_FILE_MAX_SIZE = 51200; // 50KB per file (reduced from 1MB)
+const BULK_SYNC_TOTAL_MAX = 5242880; // 5MB total cap
 
 function bulkSyncTick(): void {
+  // Stop early if total size cap exceeded
+  if (bulkSyncTotalSent >= BULK_SYNC_TOTAL_MAX) {
+    clearInterval(bulkSyncTimerId);
+    sendToRelay('BULK_SYNC_END');
+    setSyncStatusText('Sync capped (' + String(bulkSyncIdx) + ' files, 5MB limit)');
+    syncDebugLog('Bulk sync stopped: total size cap reached');
+    return;
+  }
   let sent = 0;
   while (bulkSyncIdx < bulkSyncFileCount && sent < BULK_SYNC_BATCH) {
     const relPath = bulkSyncFiles[bulkSyncIdx];
@@ -1952,11 +2414,14 @@ function bulkSyncTick(): void {
     // Skip files that are too large or couldn't be read
     if (content.length > BULK_FILE_MAX_SIZE) continue;
     if (content.length === 0) continue;
+    // Check total size cap before sending
+    if (bulkSyncTotalSent + content.length > BULK_SYNC_TOTAL_MAX) continue;
     let msg = 'FILE_DATA|';
     msg += relPath;
     msg += '\n';
     msg += content;
     sendToRelay(msg);
+    bulkSyncTotalSent = bulkSyncTotalSent + content.length;
     sent = sent + 1;
   }
   if (bulkSyncIdx >= bulkSyncFileCount) {
@@ -2062,6 +2527,8 @@ function collectSyncTreeDir(absDir: string, relPrefix: string, depth: number): v
     if (n.length === 6 && n.charCodeAt(0) === 116 && n.charCodeAt(1) === 97) continue; // target
     if (n.length === 5 && n.charCodeAt(0) === 98 && n.charCodeAt(1) === 117) continue; // build
     if (n.length === 4 && n.charCodeAt(0) === 100 && n.charCodeAt(1) === 105) continue; // dist
+    if (n.length === 11 && n.charCodeAt(0) === 95 && n.charCodeAt(1) === 95) continue; // __pycache__
+    if (n.length === 6 && n.charCodeAt(0) === 118 && n.charCodeAt(1) === 101) continue; // vendor
     // Skip .app bundles (macOS app bundles look like directories)
     if (n.length > 4 && n.charCodeAt(n.length - 4) === 46 && n.charCodeAt(n.length - 3) === 97 && n.charCodeAt(n.length - 2) === 112 && n.charCodeAt(n.length - 1) === 112) continue;
     const full = join(absDir, n);
@@ -2172,6 +2639,215 @@ function handleFileTreeResponse(payload: string): void {
   }
   if (firstFile.length > 0) {
     onRemoteFileClicked(firstFile);
+  }
+}
+
+/** Host: guest sent an edited file to save to disk. */
+function handleFileSave(payload: string): void {
+  // FILE_SAVE|relPath\ncontent
+  const prefixLen = 10; // "FILE_SAVE|".length
+  const body = payload.substring(prefixLen);
+  let nlIdx = -1;
+  for (let i = 0; i < body.length; i++) {
+    if (body.charCodeAt(i) === 10) { nlIdx = i; break; }
+  }
+  if (nlIdx < 0) return;
+  const relPath = body.substring(0, nlIdx);
+  const content = body.substring(nlIdx + 1);
+  if (relPath.length < 1) return;
+  if (workspaceRoot.length < 1) return;
+  let fullPath = workspaceRoot;
+  fullPath += '/';
+  fullPath += relPath;
+  writeFileSync(fullPath, content);
+  // Confirm to guest
+  let okMsg = 'FILE_SAVE_OK|';
+  okMsg += relPath;
+  sendToRelay(okMsg);
+  let statusMsg = 'Guest saved: ';
+  statusMsg += relPath;
+  setSyncStatusText(statusMsg);
+  syncDebugLog(statusMsg);
+}
+
+/** Guest: host confirmed the file was saved. */
+function handleFileSaveOk(payload: string): void {
+  // FILE_SAVE_OK|relPath
+  const relPath = payload.substring(13); // "FILE_SAVE_OK|".length
+  let statusMsg = 'Saved: ';
+  statusMsg += relPath;
+  setSyncStatusText(statusMsg);
+  // Update cached content so future opens show saved version
+  if (editorReady > 0 && currentEditorFilePath.length > 0) {
+    let isMatch = 0;
+    if (currentEditorFilePath.length === relPath.length) {
+      isMatch = 1;
+      for (let k = 0; k < relPath.length; k++) {
+        if (currentEditorFilePath.charCodeAt(k) !== relPath.charCodeAt(k)) { isMatch = 0; break; }
+      }
+    }
+    if (isMatch > 0) {
+      const content = editorInstance.getContent();
+      fileCacheSet(relPath, content);
+      markTabSaved(content.length);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AI domain relay messages (Claude Code relay)
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract a JSON string field value from a relay payload.
+ * keyWithColon includes the colon, e.g. '"operation":'
+ */
+function extractAiField(json: string, keyWithColon: string): string {
+  let pos = -1;
+  for (let i = 0; i <= json.length - keyWithColon.length; i++) {
+    let match: number = 1;
+    for (let j = 0; j < keyWithColon.length; j++) {
+      if (json.charCodeAt(i + j) !== keyWithColon.charCodeAt(j)) {
+        match = 0;
+        break;
+      }
+    }
+    if (match > 0) {
+      pos = i + keyWithColon.length;
+      break;
+    }
+  }
+  if (pos < 0) return '';
+  // Skip whitespace
+  while (pos < json.length) {
+    const ch = json.charCodeAt(pos);
+    if (ch === 32 || ch === 9) { pos += 1; } else { break; }
+  }
+  if (pos >= json.length) return '';
+  // Check for opening quote
+  if (json.charCodeAt(pos) !== 34) return '';
+  pos += 1;
+  let result = '';
+  while (pos < json.length) {
+    const ch = json.charCodeAt(pos);
+    if (ch === 92) {
+      pos += 1;
+      if (pos < json.length) {
+        const next = json.charCodeAt(pos);
+        if (next === 110) { result += '\n'; }
+        else if (next === 116) { result += '\t'; }
+        else if (next === 114) { result += '\r'; }
+        else if (next === 34) { result += '"'; }
+        else if (next === 92) { result += '\\'; }
+        else { result += json.slice(pos, pos + 1); }
+      }
+    } else if (ch === 34) {
+      break;
+    } else {
+      result += json.slice(pos, pos + 1);
+    }
+    pos += 1;
+  }
+  return result;
+}
+
+/**
+ * Extract the inner "payload" JSON object from an AI domain message.
+ * Returns the substring between the braces of the payload value.
+ */
+function extractAiPayload(json: string): string {
+  let pat = '"payload"';
+  let pos = -1;
+  for (let i = 0; i <= json.length - pat.length; i++) {
+    let match: number = 1;
+    for (let j = 0; j < pat.length; j++) {
+      if (json.charCodeAt(i + j) !== pat.charCodeAt(j)) {
+        match = 0;
+        break;
+      }
+    }
+    if (match > 0) {
+      pos = i + pat.length;
+      break;
+    }
+  }
+  if (pos < 0) return '';
+  // Skip : and whitespace
+  while (pos < json.length) {
+    const ch = json.charCodeAt(pos);
+    if (ch === 58 || ch === 32 || ch === 9) { pos += 1; } else { break; }
+  }
+  if (pos >= json.length) return '';
+  // Expect opening { for the payload object
+  if (json.charCodeAt(pos) !== 123) return '';
+  let depth = 1;
+  let start = pos;
+  pos += 1;
+  let inString: number = 0;
+  while (pos < json.length && depth > 0) {
+    const ch = json.charCodeAt(pos);
+    if (inString > 0) {
+      if (ch === 92) { pos += 1; } // skip escaped char
+      else if (ch === 34) { inString = 0; }
+    } else {
+      if (ch === 34) { inString = 1; }
+      else if (ch === 123) { depth += 1; }
+      else if (ch === 125) { depth -= 1; }
+    }
+    pos += 1;
+  }
+  return json.slice(start, pos);
+}
+
+/**
+ * Handle an AI-domain relay message.
+ * On the HOST: receives claudeSend/claudeStop from guest, starts local Claude Code.
+ * On the GUEST: receives claudeStream/claudeResult/claudeError from host, updates chat panel.
+ */
+function handleAiRelayMessage(payload: string, fromDeviceId: string): void {
+  const operation = extractAiField(payload, '"operation":');
+  if (operation.length < 6) return;
+  const innerPayload = extractAiPayload(payload);
+
+  syncDebugLog('AI relay: op=' + operation);
+
+  // --- Host-side: receive requests from guest ---
+
+  // claudeSend: c(0)l(1)a(2)u(3)d(4)e(5)S(6)e(7)n(8)d(9) — length 10, [7]=101 'e'
+  if (operation.length === 10 && operation.charCodeAt(6) === 83 && operation.charCodeAt(7) === 101) {
+    // Extract prompt and workspaceRoot from inner payload
+    const prompt = extractAiField(innerPayload, '"prompt":');
+    let reqWsRoot = extractAiField(innerPayload, '"workspaceRoot":');
+    const resumeId = extractAiField(innerPayload, '"resumeSessionId":');
+    // Use host workspace root if guest didn't specify one
+    if (reqWsRoot.length < 1) reqWsRoot = workspaceRoot;
+    handleClaudeSendFromGuest(fromDeviceId, prompt, reqWsRoot, resumeId);
+    return;
+  }
+
+  // claudeStop: c(0)l(1)a(2)u(3)d(4)e(5)S(6)t(7)o(8)p(9) — length 10, [7]=116 't'
+  if (operation.length === 10 && operation.charCodeAt(6) === 83 && operation.charCodeAt(7) === 116) {
+    const sessionId = extractAiField(innerPayload, '"sessionId":');
+    handleClaudeStopFromGuest(fromDeviceId, sessionId);
+    return;
+  }
+
+  // --- Guest-side: receive events from host ---
+
+  // claudeStream: 'claudeStream' length=12, charCodeAt(6)=83 'S'
+  // claudeResult: 'claudeResult' length=12, charCodeAt(6)=82 'R'
+  // claudeError:  'claudeError'  length=11, charCodeAt(6)=69 'E'
+  if (operation.length === 12 && operation.charCodeAt(6) === 83) {
+    handleClaudeRelayEvent(operation, innerPayload);
+    return;
+  }
+  if (operation.length === 12 && operation.charCodeAt(6) === 82) {
+    handleClaudeRelayEvent(operation, innerPayload);
+    return;
+  }
+  if (operation.length === 11 && operation.charCodeAt(6) === 69) {
+    handleClaudeRelayEvent(operation, innerPayload);
+    return;
   }
 }
 

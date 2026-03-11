@@ -248,6 +248,61 @@ export function updateSessionMode(id: string, mode: number): void {
   writeIndex(result);
 }
 
+export function updateSessionTimestamp(id: string): void {
+  const idx = readIndex();
+  let result = '';
+  let lineStart = 0;
+  let firstLine: number = 1;
+  const nowStr = String(Date.now());
+
+  for (let i = 0; i <= idx.length; i++) {
+    if (i === idx.length || idx.charCodeAt(i) === 10) {
+      const line = idx.slice(lineStart, i);
+
+      if (firstLine < 1) result += '\n';
+      firstLine = 0;
+
+      if (lineMatchesId(line, id) > 0) {
+        // Parse existing fields: S|id|mode|timestamp|title[|model]
+        let field0 = '';
+        let field1 = '';
+        let field2 = '';
+        let field4 = '';
+        let field5 = '';
+        let fieldIdx = 0;
+        let fStart = 0;
+        for (let j = 0; j <= line.length; j++) {
+          if (j === line.length || line.charCodeAt(j) === 124) {
+            const fVal = line.slice(fStart, j);
+            if (fieldIdx === 0) field0 = fVal;
+            if (fieldIdx === 1) field1 = fVal;
+            if (fieldIdx === 2) field2 = fVal;
+            if (fieldIdx === 4) field4 = fVal;
+            if (fieldIdx === 5) field5 = fVal;
+            fieldIdx += 1;
+            fStart = j + 1;
+          }
+        }
+        let newLine = field0;
+        newLine += '|'; newLine += field1;
+        newLine += '|'; newLine += field2;
+        newLine += '|'; newLine += nowStr;
+        newLine += '|'; newLine += field4;
+        if (field5.length > 0) {
+          newLine += '|'; newLine += field5;
+        }
+        result += newLine;
+      } else {
+        result += line;
+      }
+
+      lineStart = i + 1;
+    }
+  }
+
+  writeIndex(result);
+}
+
 export function updateSessionModel(id: string, model: number): void {
   const idx = readIndex();
   let result = '';
@@ -426,18 +481,37 @@ function parseIndexLine(line: string): void {
 // ---------------------------------------------------------------------------
 
 export function generateTitle(firstMsg: string): string {
-  let title = '';
-  let len = firstMsg.length;
-  if (len > 40) len = 40;
-  for (let i = 0; i < len; i++) {
+  // Find first sentence or line (whichever is shorter), max 50 chars
+  let end = firstMsg.length;
+  if (end > 50) end = 50;
+
+  // Look for sentence-ending punctuation or newline
+  let sentenceEnd = -1;
+  for (let i = 0; i < end; i++) {
     const ch = firstMsg.charCodeAt(i);
-    // Strip pipes (124) and newlines (10, 13)
+    if (ch === 10 || ch === 13) { sentenceEnd = i; break; }
+    if (ch === 46 || ch === 63 || ch === 33) { sentenceEnd = i + 1; break; } // . ? !
+  }
+  if (sentenceEnd > 0 && sentenceEnd < end) end = sentenceEnd;
+
+  // Build title, stripping pipes and control chars
+  let title = '';
+  for (let i = 0; i < end; i++) {
+    const ch = firstMsg.charCodeAt(i);
     if (ch === 124 || ch === 10 || ch === 13) {
       title += ' ';
     } else {
       title += firstMsg.slice(i, i + 1);
     }
   }
+
+  // Trim trailing whitespace
+  while (title.length > 0) {
+    const last = title.charCodeAt(title.length - 1);
+    if (last === 32) { title = title.slice(0, title.length - 1); }
+    else { break; }
+  }
+
   return title;
 }
 

@@ -186,6 +186,14 @@ let historySearchText = '';
 let historyDropdown: unknown = null;
 let historyDropdownVisible: number = 0;
 
+// Remote guest mode — Claude relay (set from render.ts)
+let isRemoteGuest: number = 0;
+let _relaySendFn: (payload: string) => void = _noopRelay;
+let _relayForwardFn: (line: string) => void = _noopRelay;
+let isRelayHostMode: number = 0;
+
+function _noopRelay(p: string): void {}
+
 // ---------------------------------------------------------------------------
 // Public setters (called from render.ts)
 // ---------------------------------------------------------------------------
@@ -201,6 +209,228 @@ export function setChatFilePathGetter(fn: () => string): void {
 
 export function setChatFileContentGetter(fn: () => string): void {
   getCurrentFileContent = fn;
+}
+
+/** Mark this chat panel as running on a remote guest device. */
+export function setChatRemoteGuest(isGuest: number): void {
+  isRemoteGuest = isGuest;
+}
+
+/** Set the relay send function for forwarding Claude requests to host. */
+export function setChatRelaySendFn(fn: (payload: string) => void): void {
+  _relaySendFn = fn;
+}
+
+/** Set the relay forward function — host calls this to forward NDJSON lines to guest. */
+export function setChatRelayForwardFn(fn: (line: string) => void): void {
+  _relayForwardFn = fn;
+}
+
+/**
+ * Host: start Claude subprocess on behalf of remote guest.
+ * Called from render.ts when host receives CLAUDE_REQ from guest.
+ */
+export function startClaudeForRelay(prompt: string): void {
+  isRelayHostMode = 1;
+  claudeModeActive = 1;
+  claudeProcessDone = 0;
+  claudeNoDataCount = 0;
+  claudeLineBuffer = '';
+  claudeLogOffset = 0;
+  streamAccumulated = '';
+
+  let logPath = getAppDataDir();
+  logPath += '/claude-relay-';
+  logPath += String(Date.now());
+  logPath += '.log';
+  claudeLogFilePath = logPath;
+
+  const storedUUID = loadClaudeSessionUUID(getActiveSessionId());
+  claudeSpawnedPid = startClaudeSession(prompt, wsRoot, storedUUID, logPath);
+  claudePollTimer = setInterval(() => { claudePollTick(); }, 50);
+}
+
+/**
+ * Guest: process a raw NDJSON line forwarded from host via relay.
+ * This is the same as the host's handleClaudeLine but exposed publicly.
+ */
+export function handleClaudeRelayLine(line: string): void {
+  handleClaudeLine(line);
+}
+
+/**
+ * Handle a Claude relay event from the host (called by render.ts message dispatcher).
+ * operation: 'claudeStream', 'claudeResult', 'claudeError'
+ * data: the JSON payload string from the relay message
+ */
+export function handleClaudeRelayEvent(operation: string, data: string): void {
+  // claudeStream: charCodeAt(6) === 83 'S' (length 12)
+  if (operation.length === 12 && operation.charCodeAt(6) === 83) {
+    // Extract delta text
+    let delta = inlineExtractRelayField(data, '"delta":');
+    let deltaType = inlineExtractRelayField(data, '"deltaType":');
+    let toolName = inlineExtractRelayField(data, '"toolName":');
+
+    // 'text' deltaType: charCodeAt(0) === 116 't'
+    if (deltaType.length >= 4 && deltaType.charCodeAt(0) === 116) {
+      streamAccumulated += delta;
+      updateStreamingDisplay();
+    }
+    // 'tool' deltaType: charCodeAt(0) === 116 't', charCodeAt(1) === 111 'o'
+    if (deltaType.length >= 4 && deltaType.charCodeAt(0) === 116 && deltaType.charCodeAt(1) === 111) {
+      if (toolName.length > 0) {
+        onClaudeToolActivity(toolName, 'running', '');
+      }
+    }
+    // 'toolDone' deltaType: charCodeAt(4) === 68 'D'
+    if (deltaType.length >= 8 && deltaType.charCodeAt(4) === 68) {
+      onClaudeToolActivity('', 'done', '');
+    }
+    return;
+  }
+
+  // claudeResult: charCodeAt(6) === 82 'R' (length 12)
+  if (operation.length === 12 && operation.charCodeAt(6) === 82) {
+    let resultText = inlineExtractRelayField(data, '"result":');
+    let costStr = inlineExtractRelayField(data, '"costUsd":');
+    let turnsStr = inlineExtractRelayField(data, '"numTurns":');
+    let costVal: number = -1;
+    let turnsVal: number = -1;
+    if (costStr.length > 0) costVal = Number(costStr);
+    if (turnsStr.length > 0) turnsVal = Number(turnsStr);
+
+    // Finalize
+    stopThinking();
+    claudeModeActive = 0;
+
+    if (streamAccumulated.length > 0) {
+      appendMessage(0, streamAccumulated);
+    } else if (resultText.length > 0) {
+      appendMessage(0, resultText);
+    }
+    streamAccumulated = '';
+    streamDisplayLabel = null;
+    streamContainer = null;
+
+    // Show cost
+    if (chatMessagesContainer && costVal >= 0) {
+      let costLabel = 'Cost: $';
+      let costInt = Math.floor(costVal * 10000);
+      let costMain = Math.floor(costInt / 10000);
+      let costFrac = costInt % 10000;
+      costLabel += String(costMain);
+      costLabel += '.';
+      if (costFrac < 1000) costLabel += '0';
+      if (costFrac < 100) costLabel += '0';
+      if (costFrac < 10) costLabel += '0';
+      costLabel += String(costFrac);
+      if (turnsVal >= 0) {
+        costLabel += ' | Turns: ';
+        costLabel += String(turnsVal);
+      }
+      claudeCostLabel = Text(costLabel);
+      textSetFontSize(claudeCostLabel, 10);
+      textSetFontFamily(claudeCostLabel, 10, 'Menlo');
+      setFg(claudeCostLabel, getSideBarForeground());
+      widgetAddChild(chatMessagesContainer, claudeCostLabel);
+      lastAddedWidget = claudeCostLabel;
+    }
+    updateMessages();
+    return;
+  }
+
+  // claudeError: charCodeAt(6) === 69 'E' (length 11)
+  if (operation.length === 11 && operation.charCodeAt(6) === 69) {
+    let errMsg = inlineExtractRelayField(data, '"error":');
+    if (errMsg.length < 1) errMsg = 'Claude Code error from host.';
+
+    stopThinking();
+    claudeModeActive = 0;
+    streamAccumulated = '';
+    streamDisplayLabel = null;
+    streamContainer = null;
+
+    if (chatMessagesContainer) {
+      const errBlock = VStackWithInsets(4, 8, 8, 8, 8);
+      widgetSetBackgroundColor(errBlock, 0.3, 0.12, 0.12, 1.0);
+      const errLabel = Text(errMsg);
+      textSetFontSize(errLabel, 12);
+      textSetWraps(errLabel, 300);
+      setFg(errLabel, getSideBarForeground());
+      widgetAddChild(errBlock, errLabel);
+      widgetAddChild(chatMessagesContainer, errBlock);
+      lastAddedWidget = errBlock;
+      scrollToBottom();
+    }
+    return;
+  }
+}
+
+/**
+ * Extract a JSON string field value from relay data.
+ * Pattern: "key":"value" — keyWithColon includes the colon, e.g. '"delta":'
+ * Inline to avoid cross-module string-return issues in Perry.
+ */
+function inlineExtractRelayField(json: string, keyWithColon: string): string {
+  let pos = -1;
+  for (let i = 0; i <= json.length - keyWithColon.length; i++) {
+    let match: number = 1;
+    for (let j = 0; j < keyWithColon.length; j++) {
+      if (json.charCodeAt(i + j) !== keyWithColon.charCodeAt(j)) {
+        match = 0;
+        break;
+      }
+    }
+    if (match > 0) {
+      pos = i + keyWithColon.length;
+      break;
+    }
+  }
+  if (pos < 0) return '';
+
+  // Skip whitespace
+  while (pos < json.length) {
+    const ch = json.charCodeAt(pos);
+    if (ch === 32 || ch === 9) { pos += 1; } else { break; }
+  }
+  if (pos >= json.length) return '';
+
+  // Check for opening quote — if not a string, read until , or }
+  if (json.charCodeAt(pos) !== 34) {
+    // Numeric or boolean value — read until comma or closing brace
+    let numStart = pos;
+    while (pos < json.length) {
+      const ch = json.charCodeAt(pos);
+      if (ch === 44 || ch === 125) break;  // , or }
+      pos += 1;
+    }
+    return json.slice(numStart, pos);
+  }
+
+  // String value
+  pos += 1; // skip opening quote
+  let result = '';
+  while (pos < json.length) {
+    const ch = json.charCodeAt(pos);
+    if (ch === 92) {
+      pos += 1;
+      if (pos < json.length) {
+        const next = json.charCodeAt(pos);
+        if (next === 110) { result += '\n'; }
+        else if (next === 116) { result += '\t'; }
+        else if (next === 114) { result += '\r'; }
+        else if (next === 34) { result += '"'; }
+        else if (next === 92) { result += '\\'; }
+        else { result += json.slice(pos, pos + 1); }
+      }
+    } else if (ch === 34) {
+      break;
+    } else {
+      result += json.slice(pos, pos + 1);
+    }
+    pos += 1;
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -1789,6 +2019,11 @@ function handleClaudeLine(line: string): void {
   const evtType = detectClaudeEventType(line);
   if (evtType < 1) return;
 
+  // If host is running Claude for a remote guest, forward the raw line
+  if (isRelayHostMode > 0) {
+    _relayForwardFn(line);
+  }
+
   // System event (1) — session init
   if (evtType === 1) {
     // Extract session_id using exact pattern "session_id":"
@@ -1881,6 +2116,7 @@ function handleClaudeLine(line: string): void {
     // Finalize UI
     stopThinking();
     claudeModeActive = 0;
+    isRelayHostMode = 0;
 
     if (isError > 0) {
       // Show error message
@@ -1990,6 +2226,7 @@ function claudePollTick(): void {
         // Finalize with whatever we have
         if (claudeModeActive > 0) {
           claudeModeActive = 0;
+          isRelayHostMode = 0;
           stopThinking();
           if (streamAccumulated.length > 0) {
             appendMessage(0, streamAccumulated);
@@ -2074,7 +2311,7 @@ function onSend(): void {
   let toolsJson = '';
 
   if (panelMode === 3) {
-    // Claude Code mode — spawn subprocess instead of API call
+    // Claude Code mode
     claudeModeActive = 1;
     streamAccumulated = '';
     streamDisplayLabel = null;
@@ -2085,6 +2322,14 @@ function onSend(): void {
     claudeNoDataCount = 0;
     startThinking();
 
+    // Remote guest: forward prompt to host via relay instead of local subprocess
+    if (isRemoteGuest > 0) {
+      _relaySendFn(sendText);
+      // No local polling — host will stream events back via handleClaudeRelayEvent()
+      return;
+    }
+
+    // Local host: spawn subprocess
     // Build log file path in THIS module (avoids cross-module string returns)
     let logPath = getAppDataDir();
     logPath += '/claude-session-';

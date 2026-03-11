@@ -41,6 +41,7 @@ let _themeLabel: unknown = null;
 let _syncLabel: unknown = null;
 let _syncDesc: unknown = null;
 let _syncDesc2: unknown = null;
+let _syncDesc3: unknown = null;
 
 let _parentRoot: unknown = null;
 
@@ -56,6 +57,8 @@ let _pollInterval: number = 0;
 let _setupDone: number = 0;
 let _pollCount: number = 0; // timeout counter (50 × 200ms = 10s)
 
+declare const __platform__: number;
+
 // ---------------------------------------------------------------------------
 // Callbacks (module-level functions for Perry)
 // ---------------------------------------------------------------------------
@@ -68,6 +71,7 @@ function applyDarkColors(): void {
   if (_syncLabel !== null) setFg(_syncLabel, '#CCCCCC');
   if (_syncDesc !== null) setFg(_syncDesc, '#888888');
   if (_syncDesc2 !== null) setFg(_syncDesc2, '#888888');
+  if (_syncDesc3 !== null) setFg(_syncDesc3, '#888888');
   if (_statusText !== null) setFg(_statusText, '#66BB6A');
   if (_statsLabel !== null) setFg(_statsLabel, '#CCCCCC');
   if (_statsDesc !== null) setFg(_statsDesc, '#888888');
@@ -82,6 +86,7 @@ function applyLightColors(): void {
   if (_syncLabel !== null) setFg(_syncLabel, '#333333');
   if (_syncDesc !== null) setFg(_syncDesc, '#666666');
   if (_syncDesc2 !== null) setFg(_syncDesc2, '#666666');
+  if (_syncDesc3 !== null) setFg(_syncDesc3, '#666666');
   if (_statusText !== null) setFg(_statusText, '#2E7D32');
   if (_statsLabel !== null) setFg(_statsLabel, '#333333');
   if (_statsDesc !== null) setFg(_statsDesc, '#666666');
@@ -134,8 +139,15 @@ function onSyncYes(): void {
 
   // Start auto-registration via fetch stream API
   const s = getWorkbenchSettings();
+  let platName = 'unknown';
+  if (__platform__ === 0) platName = 'macos';
+  if (__platform__ === 1) platName = 'ios';
+  if (__platform__ === 2) platName = 'android';
+  if (__platform__ === 3) platName = 'windows';
+  if (__platform__ === 4) platName = 'linux';
   let url = s.syncAuthUrl;
-  url += '/auth/quick-setup?deviceName=HoneIDE&platform=linux';
+  url += '/auth/quick-setup?deviceName=HoneIDE&platform=';
+  url += platName;
   _fetchHandle = streamStart(url, 'GET', '', '{}');
   _pollCount = 0;
   _pollInterval = setInterval(pollSetupResponse, 200);
@@ -279,15 +291,20 @@ export function createSetupScreen(): unknown {
   setFg(syncLabel, '#CCCCCC');
   _syncLabel = syncLabel;
 
-  const syncDesc = Text('Sync your workspace between desktop and mobile in real time.');
+  const syncDesc = Text('Your first project syncs free between desktop and mobile.');
   textSetFontSize(syncDesc, 13);
   setFg(syncDesc, '#888888');
   _syncDesc = syncDesc;
 
-  const syncDesc2 = Text('No account or payment required. You can change this later in Settings.');
+  const syncDesc2 = Text('No email or payment needed. Upgrade to Pro ($3/mo) for unlimited.');
   textSetFontSize(syncDesc2, 13);
   setFg(syncDesc2, '#888888');
   _syncDesc2 = syncDesc2;
+
+  const syncDesc3 = Text('Files, AI chat, and editor state sync — all end-to-end encrypted.');
+  textSetFontSize(syncDesc3, 13);
+  setFg(syncDesc3, '#888888');
+  _syncDesc3 = syncDesc3;
 
   const yesBtn = Button('Enable Sync', () => { onSyncYes(); });
   buttonSetBordered(yesBtn, 1);
@@ -327,6 +344,7 @@ export function createSetupScreen(): unknown {
   widgetAddChild(content, syncLabel);
   widgetAddChild(content, syncDesc);
   widgetAddChild(content, syncDesc2);
+  widgetAddChild(content, syncDesc3);
   widgetAddChild(content, syncBtnRow);
   widgetAddChild(content, statusTxt);
   widgetAddChild(content, Spacer());
