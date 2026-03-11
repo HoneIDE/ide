@@ -104,7 +104,14 @@ function collapseAllDirs(): void {
   setTimeout(() => { refreshSidebar(); }, 0);
 }
 
+// IDs >= 900000000 are file click IDs — subtract 900000000 to get file index
 function onDirToggle(id: number): void {
+  if (id >= 900000000) {
+    // This is a file click — decode the index
+    const fIdx = id - 900000000;
+    onFileClick(fIdx);
+    return;
+  }
   toggleExpById(id);
   setTimeout(() => { deferredRefreshSidebar(); }, 0);
 }
@@ -112,10 +119,6 @@ function onDirToggle(id: number): void {
 function deferredRefreshSidebar(): void {
   refreshSidebar();
 }
-
-// ---------------------------------------------------------------------------
-// File click handlers
-// ---------------------------------------------------------------------------
 
 function onFileClick(idx: number): void {
   if (idx < 0) return;
@@ -381,6 +384,8 @@ function renderTreeLevel(dirPath: string, depth: number): void {
 
   if (isRemoteMode > 0) {
     // Remote: scan remoteEntryPaths for direct children of dirPath
+    // Paths are tagged: "D/relpath" or "F/relpath" — the tag is 2 chars
+    // For prefix matching, we use the relpath portion (after tag)
     let prefix = dirPath;
     if (dirPath.length > 0) {
       prefix += '/';
@@ -388,43 +393,48 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     const prefixLen = prefix.length;
 
     for (let ri = 0; ri < remoteEntryCount; ri++) {
-      const p = remoteEntryPaths[ri];
+      const tagged = remoteEntryPaths[ri];
+      if (tagged.length < 3) continue;
+      // relPath starts at index 2 (after "D/" or "F/")
+      const relPath = tagged.substring(2);
 
       if (dirPath.length === 0) {
-        // Root level: entries with no slash
+        // Root level: entries with no slash in relPath
         let hasSlash = 0;
-        for (let c = 0; c < p.length; c++) {
-          if (p.charCodeAt(c) === 47) { hasSlash = 1; break; }
+        for (let c = 0; c < relPath.length; c++) {
+          if (relPath.charCodeAt(c) === 47) { hasSlash = 1; break; }
         }
         if (hasSlash > 0) continue;
       } else {
         // Must start with prefix (dirPath + '/')
-        if (p.length <= prefixLen) continue;
+        if (relPath.length <= prefixLen) continue;
         let pmatch = 1;
         for (let c = 0; c < prefixLen; c++) {
-          if (p.charCodeAt(c) !== prefix.charCodeAt(c)) { pmatch = 0; break; }
+          if (relPath.charCodeAt(c) !== prefix.charCodeAt(c)) { pmatch = 0; break; }
         }
         if (pmatch < 1) continue;
         // Must not have more slashes after prefix (direct child only)
         let hasMoreSlash = 0;
-        for (let c = prefixLen; c < p.length; c++) {
-          if (p.charCodeAt(c) === 47) { hasMoreSlash = 1; break; }
+        for (let c = prefixLen; c < relPath.length; c++) {
+          if (relPath.charCodeAt(c) === 47) { hasMoreSlash = 1; break; }
         }
         if (hasMoreSlash > 0) continue;
       }
 
-      // Direct child — extract name
-      let childName = p;
+      // Direct child — extract display name
+      let childName = relPath;
       if (dirPath.length > 0) {
-        childName = p.substring(prefixLen);
+        childName = relPath.substring(prefixLen);
       }
 
-      if (remoteEntryIsDir[ri] > 0) {
+      // Check type tag: 68='D' → dir, else file
+      const typeTag = tagged.charCodeAt(0);
+      if (typeTag === 68) {
         dirNames.push(childName);
-        dirFullPaths.push(p);
+        dirFullPaths.push(relPath);
       } else {
         fileNames.push(childName);
-        fileFullPaths.push(p);
+        fileFullPaths.push(relPath);
       }
     }
   } else {
@@ -488,7 +498,7 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     }
   }
 
-  // Render files — icon + name (fewer widgets per row for speed)
+  // Render files — use onDirToggle with encoded IDs (same callback as dirs = reliable in Perry)
   for (let i = 0; i < fileCount; i++) {
     const name = fileNames[i];
     const full = fileFullPaths[i];
@@ -497,27 +507,18 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     fileEntryLabels.push(name);
     fileEntryCount = fileEntryCount + 1;
 
-    // Indent: depth*16 + 14 for chevron space + 4 base
+    const displayName = truncateName(name, 30);
     const indentPx = depth * 16 + 18;
     const row = HStackWithInsets(4, 0, indentPx, 0, 4);
     widgetSetHeight(row, 22);
 
-    // File icon (16px wide)
-    const fIcon = getFileIcon(name);
-    const iconBtn = Button('', () => { onFileClick(idx); });
-    buttonSetBordered(iconBtn, 0);
-    buttonSetImage(iconBtn, fIcon);
-    textSetFontSize(iconBtn, 11);
-    widgetSetWidth(iconBtn, 16);
-    const fColor = getFileIconColor(name);
-    if (fColor.length > 0) {
-      setBtnTint(iconBtn, fColor);
-    } else {
-      setBtnTint(iconBtn, getSideBarForeground());
-    }
-    widgetAddChild(row, iconBtn);
+    // Encode file index as 900000000 + idx so onDirToggle can distinguish file clicks
+    const fileId = 900000000 + idx;
+    const nameBtn = Button(displayName, () => { onDirToggle(fileId); });
+    buttonSetBordered(nameBtn, 0);
+    textSetFontSize(nameBtn, 13);
 
-    // File name button — git status coloring only in local mode
+    // Git status coloring only in local mode
     let fileColor = getSideBarForeground();
     if (isRemoteMode < 1 && sidebarWorkspaceRoot.length > 0 && full.length > sidebarWorkspaceRoot.length + 1) {
       const relPath = full.slice(sidebarWorkspaceRoot.length + 1);
@@ -527,14 +528,8 @@ function renderTreeLevel(dirPath: string, depth: number): void {
       if (gStatus === 3) { fileColor = getStatusAddedColor(); }
       if (gStatus === 4) { fileColor = getStatusDeletedColor(); }
     }
-
-    const displayName = truncateName(name, 30);
-    const nameBtn = Button(displayName, () => { onFileClick(idx); });
-    buttonSetBordered(nameBtn, 0);
-    textSetFontSize(nameBtn, 13);
     if (fileColor.length > 0) setBtnFg(nameBtn, fileColor);
     widgetAddChild(row, nameBtn);
-
     widgetAddChild(row, Spacer());
 
     fileTreeButtons.push(nameBtn);
@@ -583,7 +578,8 @@ export function refreshSidebarContent(): void {
 
 // Remote entries: parallel arrays of relative paths + isDir flags
 let remoteEntryPaths: string[] = [];
-let remoteEntryIsDir: number[] = [];
+// Note: dir/file type is encoded in remoteEntryPaths as "D/relpath" or "F/relpath" prefix
+// (Perry number[].push(0) reads back as >0 from module-level arrays, so we avoid separate isDirs array)
 let remoteEntryCount: number = 0;
 let remoteRootName = '';
 let isRemoteMode: number = 0;
@@ -601,23 +597,16 @@ export function setRemoteFileClickCallback(cb: (relPath: string) => void): void 
  * Each entry is "D|rel/path" (directory) or "F|rel/path" (file).
  * Entries are newline-separated in the raw message.
  */
-export function setRemoteFileTree(rootName: string, entries: string[], count: number): void {
+export function setRemoteFileTree(rootName: string, taggedPaths: string[], count: number): void {
+  // taggedPaths: "D/relpath" for dirs, "F/relpath" for files
+  // Store tagged paths directly — avoids Perry number[] read-back bug (push(0) reads as >0)
   remoteEntryPaths = [];
-  remoteEntryIsDir = [];
+  // remoteEntryIsDir removed — type is encoded in path prefix
   remoteEntryCount = 0;
   remoteRootName = rootName;
   isRemoteMode = 1;
   for (let i = 0; i < count; i++) {
-    const entry = entries[i];
-    if (entry.length < 3) continue;
-    const typeChar = entry.charCodeAt(0);
-    const relPath = entry.substring(2);
-    remoteEntryPaths.push(relPath);
-    if (typeChar === 68) { // 'D'
-      remoteEntryIsDir.push(1);
-    } else {
-      remoteEntryIsDir.push(0);
-    }
+    remoteEntryPaths.push(taggedPaths[i]);
     remoteEntryCount = remoteEntryCount + 1;
   }
   // Set workspace root to a virtual name so sidebar renders
@@ -627,5 +616,44 @@ export function setRemoteFileTree(rootName: string, entries: string[], count: nu
 
 export function isRemoteExplorerMode(): number {
   return isRemoteMode;
+}
+
+/** Programmatically toggle a directory by its relPath. Returns 1 if toggled, 0 if not found. */
+export function toggleRemoteDir(dirRelPath: string): number {
+  if (isRemoteMode < 1) return 0;
+  const id = pathId(dirRelPath);
+  toggleExpById(id);
+  setTimeout(() => { deferredRefreshSidebar(); }, 0);
+  return 1;
+}
+
+/** Programmatically click a file by its relPath. Returns 1 if found in entries. */
+export function clickRemoteFile(fileRelPath: string): number {
+  if (isRemoteMode < 1) return 0;
+  for (let i = 0; i < fileEntryCount; i++) {
+    if (fileEntryPaths[i].length === fileRelPath.length) {
+      let match = 1;
+      for (let j = 0; j < fileRelPath.length; j++) {
+        if (fileEntryPaths[i].charCodeAt(j) !== fileRelPath.charCodeAt(j)) { match = 0; break; }
+      }
+      if (match > 0) {
+        onFileClick(i);
+        return 1;
+      }
+    }
+  }
+  // File not visible (in collapsed dir) — trigger via remote callback
+  _remoteFileClickCallback(fileRelPath);
+  return 1;
+}
+
+/** Get the number of currently expanded directories. */
+export function getExpandedDirCount(): number {
+  return expandedDirs.size;
+}
+
+/** Get number of visible file entries. */
+export function getVisibleFileCount(): number {
+  return fileEntryCount;
 }
 

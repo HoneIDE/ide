@@ -23,6 +23,8 @@ let joinSent: number = 0;
 let nextHandleGuess: number = 1;
 let seqCounter: number = 0;
 let pollCount: number = 0;
+let keepAliveTimerId: number = 0;
+let lastPingSent: number = 0;
 
 // Event callbacks
 let _onRelayConnected: () => void = _noopVoid;
@@ -246,5 +248,17 @@ function onConnectedToRelay(): void {
     _onDebug(dbg);
     sendToClient(wsHandle, msg);
   }
+
+  // Start keep-alive ping every 30s to prevent idle disconnect
+  if (keepAliveTimerId < 1) {
+    keepAliveTimerId = 1;
+    setInterval(() => { sendKeepAlive(); }, 30000);
+  }
+
   _onRelayConnected();
+}
+
+function sendKeepAlive(): void {
+  if (wsConnected < 1 || wsHandle < 1) return;
+  sendToClient(wsHandle, '{"type":"ping"}');
 }

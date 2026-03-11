@@ -26,7 +26,7 @@ import {
   textfieldFocus,
   frameSplitCreate, frameSplitAddChild,
 } from 'perry/ui';
-import { Editor } from '@honeide/editor/perry';
+import { Editor, editorSetBgColor, editorSetFgColor, editorSetGutterFgColor, editorSetSelectionColor, editorSetCursorColor } from '@honeide/editor/perry';
 import { getActiveTheme, setActiveTheme } from './theme/theme-loader';
 import {
   getEditorBackground, getEditorForeground,
@@ -52,13 +52,13 @@ import { readFileSync, writeFileSync, readdirSync, isDirectory, existsSync, unli
 import { join } from 'path';
 import { spawnBackground } from 'child_process';
 import { execSync } from 'child_process';
-import { getTempDir, getCwd, getHomeDir } from './paths';
+import { getTempDir, getCwd, getHomeDir, getAppDataDir } from './paths';
 import { getPlatformContext } from '../platform';
 
 import { registerBuiltinCommands, registerCommand } from '../commands';
 
 // Extracted modules
-import { setBg, setFg, setBtnFg, setBtnTint, getFileName, detectLanguage, getFileIcon, getFileIconColor } from './ui-helpers';
+import { setBg, setFg, setBtnFg, setBtnTint, hexToRGBA, getFileName, detectLanguage, getFileIcon, getFileIconColor } from './ui-helpers';
 import {
   renderSearchPanel as renderSearchPanelImpl,
   setSearchWorkspaceRoot, setSearchFileOpener, setSearchEditorReloader,
@@ -79,6 +79,7 @@ import {
   setSidebarWorkspaceRoot, setSidebarFileClickCallback, setSidebarOpenFolderCallback,
   setSidebarNewFileCallback, setSidebarThemeColors, setSidebarCurrentEditorPath,
   setRemoteFileTree, setRemoteFileClickCallback, isRemoteExplorerMode,
+  toggleRemoteDir, clickRemoteFile, getExpandedDirCount, getVisibleFileCount,
 } from './views/explorer/sidebar-render';
 import {
   initTabBar, setTabDisplayCallback, setTabThemeColors,
@@ -96,7 +97,7 @@ import {
 } from './views/status-bar/status-bar';
 // Extensions panel hidden for now — no runtime extension system yet
 import { renderChatPanel, focusChatInput, getChatInputHandle, setChatWorkspaceRoot, setChatFilePathGetter, setChatFileContentGetter, setChatRemoteGuest, setChatRelaySendFn, setChatRelayForwardFn, startClaudeForRelay, handleClaudeRelayLine, handleClaudeRelayEvent } from './views/ai-chat/chat-panel';
-import { renderTerminalPanel, setTerminalCwd, destroyTerminalPanel, setTerminalCloseCallback, setTerminalProblemsFileOpener } from './views/terminal/terminal-panel';
+import { renderTerminalPanel, setTerminalCwd, destroyTerminalPanel, setTerminalCloseCallback, setTerminalProblemsFileOpener, applyTerminalThemeColors } from './views/terminal/terminal-panel';
 import { renderSettingsTab } from './views/settings-ui/settings-panel';
 import { setWelcomeActions, createWelcomeContent } from './views/welcome/welcome-tab';
 import { initNotifications, showNotification } from './views/notifications/notifications';
@@ -105,7 +106,7 @@ import { setDiagnosticsFileOpener } from './views/lsp/diagnostics-panel';
 import { createAutocompletePopup, setAutocompleteAcceptHandler } from './views/lsp/autocomplete-popup';
 import { initTelemetry, telemetryTrackFileOpen, telemetryTrackSettingsOpen, telemetryTrackStartup, telemetryTrackThemeChange, telemetryTrackTerminalOpen } from './telemetry';
 import { buildSyncPanel, refreshSyncPanel, setSyncStatusText, setSyncPairCallback, setSyncJoinCallback, setSyncPairingCode, addSyncDevice, removeSyncDevice } from './views/sync/sync-panel';
-import { initSyncHost, setOnGuestConnected, setOnGuestDisconnected, getHostRoomId, getHostRelayUrl, generateHostPairingCode, validatePairingAttempt, addGuest, handleClaudeSendFromGuest, handleClaudeStopFromGuest, setOnClaudeRelayRequest, setOnClaudeRelayStop } from './sync-host';
+import { initSyncHost, setOnGuestConnected, setOnGuestDisconnected, addGuest, handleClaudeSendFromGuest, handleClaudeStopFromGuest, setOnClaudeRelayRequest, setOnClaudeRelayStop } from './sync-host';
 import { initSyncGuest, sendClaudeRequest } from './sync-guest';
 import { getOrCreateDeviceId } from './paths';
 import {
@@ -154,6 +155,7 @@ let sidebarContainer: unknown = null;
 let editorInstance: Editor = null as any;
 let editorReady: number = 0;
 let editorWidget: unknown = null;
+let editorNativeHandle: number = 0;
 let currentEditorFilePath = '';
 
 // Sidebar toggling (full/split layouts)
@@ -1184,12 +1186,23 @@ function renderEditorArea(): unknown {
 
   const ed = new Editor(800, 600);
   editorInstance = ed;
+  editorNativeHandle = ed.nativeHandle as number;
   editorReady = 1;
+
+  // Set syntax token colors based on current theme
+  if (isCurrentThemeDark() > 0) {
+    ed.setThemeMode(0);
+  } else {
+    ed.setThemeMode(1);
+  }
 
   const nsviewPtr = hone_editor_nsview(ed.nativeHandle as number);
   editorWidget = embedNSView(nsviewPtr);
 
   displayFileContent(defaultFile);
+
+  // Apply native editor view colors AFTER content is displayed
+  applyEditorColors();
 
   // Poll cursor position for status bar
   setInterval(() => { pollCursorPositionImpl(); }, 250);
@@ -1363,6 +1376,25 @@ function renderBottomToolbar(): unknown {
 // Live theme recoloring
 // ---------------------------------------------------------------------------
 
+/** Apply theme colors to the embedded editor NSView (background, gutter, text, selection, cursor). */
+function applyEditorColors(): void {
+  if (editorReady < 1) return;
+  const h = editorNativeHandle;
+  if (isCurrentThemeDark() > 0) {
+    editorSetBgColor(h, 0.118, 0.118, 0.18);
+    editorSetFgColor(h, 0.804, 0.839, 0.957);
+    editorSetGutterFgColor(h, 0.525, 0.525, 0.525);
+    editorSetSelectionColor(h, 0.153, 0.306, 0.482, 0.4);
+    editorSetCursorColor(h, 0.918, 0.918, 0.918);
+  } else {
+    editorSetBgColor(h, 1.0, 1.0, 1.0);
+    editorSetFgColor(h, 0.2, 0.2, 0.2);
+    editorSetGutterFgColor(h, 0.59, 0.59, 0.59);
+    editorSetSelectionColor(h, 0.68, 0.82, 1.0, 0.5);
+    editorSetCursorColor(h, 0.0, 0.0, 0.0);
+  }
+}
+
 /** Re-apply theme colors to all stored widget refs. Called after theme switch. */
 function recolorUI(): void {
   // Shell containers
@@ -1402,6 +1434,20 @@ function recolorUI(): void {
 
   // Diff view
   setDiffThemeColors(null as any);
+
+  // Embedded editor NSView colors
+  applyEditorColors();
+  // Switch syntax token colors
+  if (editorReady > 0) {
+    if (isCurrentThemeDark() > 0) {
+      editorInstance.setThemeMode(0);
+    } else {
+      editorInstance.setThemeMode(1);
+    }
+  }
+
+  // Terminal colors
+  applyTerminalThemeColors();
 
   // Re-render active sidebar panel with new colors
   switchSidebarPanel(activeActivityIdx);
@@ -1470,8 +1516,19 @@ let syncDeviceId = '';
 let syncDeviceName = 'Hone Desktop';
 let syncStatusOverride = '';
 let syncAutoJoinPending: number = 0;
+// 0 = host, 1 = guest (set during pairing / auto-pair / session restore)
+let syncIsGuest: number = 0;
 let fileTreeReceived: number = 0;
 let fileTreeRetries: number = 0;
+// Relay URL — inline to avoid cross-module string return issues in Perry
+let syncRelayUrl = 'wss://sync.hone.codes/ws';
+// Persistent connection state
+let syncPairedRoomId = '';
+let syncPairedDeviceName = '';
+// Inline pairing code (avoid cross-module string returns)
+const PAIR_CHARS = '0123456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+let localPairingCode = '';
+let localPairingExpiry: number = 0;
 
 // --- Guest file cache (bulk sync) ---
 // Maps relPath → file content. Populated during initial bulk sync from host.
@@ -1546,6 +1603,114 @@ function syncDebugLog(msg: string): void {
   } catch (e: any) {}
 }
 
+function saveSyncSession(roomId: string, partnerName: string): void {
+  // Save to ~/.hone/sync-session so we can auto-restore on restart
+  // Format: roomId\npartnerName\nrole (role = 'host' or 'guest')
+  let path = getAppDataDir();
+  path += '/sync-session';
+  let role = 'host';
+  if (syncIsGuest > 0) {
+    role = 'guest';
+  }
+  let data = roomId;
+  data += '\n';
+  data += partnerName;
+  data += '\n';
+  data += role;
+  try { writeFileSync(path, data); } catch (e: any) {}
+  syncDebugLog('Saved sync session: room=' + roomId + ' partner=' + partnerName + ' role=' + role);
+}
+
+function clearSyncSession(): void {
+  let path = getAppDataDir();
+  path += '/sync-session';
+  try { unlinkSync(path); } catch (e: any) {}
+}
+
+// 0 = host, 1 = guest (restored from session)
+let syncRestoredRole: number = 0;
+
+function tryRestoreSyncSession(): void {
+  let path = getAppDataDir();
+  path += '/sync-session';
+  try {
+    if (!existsSync(path)) return;
+    const data = readFileSync(path);
+    if (data.length < 3) return;
+    // Parse: roomId\npartnerName\nrole
+    // Find first newline (Perry nested-if-in-for bug: use separate loops)
+    let nlIdx1 = -1;
+    for (let i = 0; i < data.length; i++) {
+      if (data.charCodeAt(i) === 10) { nlIdx1 = i; break; }
+    }
+    if (nlIdx1 < 1) return;
+    // Find second newline (start after first)
+    let nlIdx2 = -1;
+    for (let j = nlIdx1 + 1; j < data.length; j++) {
+      if (data.charCodeAt(j) === 10) { nlIdx2 = j; break; }
+    }
+    const roomId = data.substring(0, nlIdx1);
+    // Validate room ID — must be non-empty and at least 4 chars
+    if (roomId.length < 4) return;
+    let partnerName = '';
+    let role = '';
+    if (nlIdx2 > 0) {
+      partnerName = data.substring(nlIdx1 + 1, nlIdx2);
+      role = data.substring(nlIdx2 + 1);
+    } else {
+      partnerName = data.substring(nlIdx1 + 1);
+    }
+    // role starts with 'g' (103) = guest
+    if (role.length > 0 && role.charCodeAt(0) === 103) {
+      syncRestoredRole = 1;
+      syncIsGuest = 1;
+    }
+    syncDebugLog('Restoring sync session: room=' + roomId + ' partner=' + partnerName + ' role=' + role);
+    syncPairedRoomId = roomId;
+    syncPairedDeviceName = partnerName;
+    // Reconnect to the same relay room
+    connectToRelay(syncRelayUrl, roomId, syncDeviceId);
+    addSyncDevice(partnerName, 'reconnecting');
+    setSyncStatusText('Reconnecting...');
+    // After connecting, request fresh file tree (for guests)
+    if (syncRestoredRole > 0) {
+      setTimeout(() => { requestFileTreeAfterRestore(); }, 2000);
+    }
+  } catch (e: any) {}
+}
+
+function requestFileTreeAfterRestore(): void {
+  if (isRelayConnected() < 1) {
+    // Retry after a bit if not connected yet
+    setTimeout(() => { requestFileTreeAfterRestoreRetry(); }, 3000);
+    return;
+  }
+  onRestoredConnection();
+}
+
+function requestFileTreeAfterRestoreRetry(): void {
+  if (isRelayConnected() < 1) {
+    setSyncStatusText('Reconnect failed — try Pair Device');
+    removeSyncDevice(syncPairedDeviceName);
+    return;
+  }
+  onRestoredConnection();
+}
+
+function onRestoredConnection(): void {
+  // Update device status
+  removeSyncDevice(syncPairedDeviceName);
+  addSyncDevice(syncPairedDeviceName, 'connected');
+  setSyncStatusText('Reconnected');
+  // Guest: request file tree from host (use saved role, not deviceClass — desktop can be guest)
+  if (syncRestoredRole > 0) {
+    sendToRelay('FILE_TREE_REQ');
+    setSyncStatusText('Requesting files...');
+    fileTreeRetries = 0;
+    setInterval(() => { retryFileTreeReq(); }, 3000);
+  }
+}
+
 function initSyncSystem(layoutMode: LayoutMode): void {
   syncDeviceId = getOrCreateDeviceId();
   const ctx = getPlatformContext();
@@ -1586,9 +1751,49 @@ function initSyncSystem(layoutMode: LayoutMode): void {
   // Wire remote file click callback (for sync guest)
   setRemoteFileClickCallback(onRemoteFileClicked);
 
-  // --- DEBUG AUTO-CONNECT (disabled for testing) ---
-  // Manual pairing: click "Pair Device" on host, enter code on guest
-  setSyncStatusText('Ready — click Pair Device or Join');
+  // Try to restore a previous sync session
+  tryRestoreSyncSession();
+
+  // Debug auto-pair: if /tmp/hone-auto-pair exists, auto-connect to debug room
+  if (syncPairedRoomId.length < 1) {
+    let autoPair = 0;
+    try {
+      if (existsSync('/tmp/hone-auto-pair')) autoPair = 1;
+    } catch (e: any) {}
+    if (autoPair > 0) {
+      syncDebugLog('Auto-pair: connecting to debug room');
+      // To detect guest: check if /tmp/hone-auto-pair-guest contains OUR device ID
+      // (avoids race condition where host reads guest file before its own initSyncSystem)
+      let isGuest = 0;
+      try {
+        if (existsSync('/tmp/hone-auto-pair-guest')) {
+          const guestContent = readFileSync('/tmp/hone-auto-pair-guest');
+          if (guestContent.length < 2) {
+            // Empty file = old-style flag: check if our device ID matches the guest's device-id file
+            // Use heuristic: guest has HOME env pointing to a temp dir
+            // Safest: check if file content matches our device ID prefix
+            isGuest = 0; // Don't auto-detect without explicit ID
+          } else {
+            // File contains a device ID — match against ours
+            if (guestContent.length >= 8 && syncDeviceId.length >= 8) {
+              let match = 1;
+              for (let ci = 0; ci < 8; ci++) {
+                if (guestContent.charCodeAt(ci) !== syncDeviceId.charCodeAt(ci)) { match = 0; break; }
+              }
+              if (match > 0) isGuest = 1;
+            }
+          }
+        }
+      } catch (e: any) {}
+      if (isGuest > 0) {
+        syncAutoJoinPending = 1;
+        syncIsGuest = 1;
+      }
+      autoConnectDebug();
+    } else {
+      setSyncStatusText('Ready — click Pair Device or Join');
+    }
+  }
 
   // Poll sync panel refresh every 5s
   setInterval(() => { refreshSyncPanelDeferred(); }, 5000);
@@ -1596,16 +1801,11 @@ function initSyncSystem(layoutMode: LayoutMode): void {
 
 function autoConnectDebug(): void {
   const debugRoom = 'pair-DEBUG2';
-  const relayUrl = getHostRelayUrl();
-  let dbg = 'autoConnectDebug: url=';
-  dbg += relayUrl;
-  dbg += ' room=';
-  dbg += debugRoom;
-  dbg += ' device=';
-  dbg += syncDeviceId;
-  // Write debug to file so we can read it from terminal
-  try { writeFileSync('/tmp/hone-sync-debug.log', dbg); } catch (e: any) {}
-  setSyncStatusText(dbg);
+  const relayUrl = syncRelayUrl;
+  // Disconnect first if a stale session restore already connected to a different room
+  disconnectFromRelay();
+  syncPairedRoomId = debugRoom;
+  syncDebugLog('autoConnectDebug: room=' + debugRoom);
   connectToRelay(relayUrl, debugRoom, syncDeviceId);
 }
 
@@ -1632,16 +1832,25 @@ function onTransportDebugImpl(msg: string): void {
 }
 
 function onSyncPairClicked(): void {
-  // Generate code and use it as the relay room name
-  const code = generateHostPairingCode();
+  // Generate 6-char pairing code inline (avoid cross-module string return)
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    const idx = Math.floor(Math.random() * PAIR_CHARS.length);
+    code += PAIR_CHARS.charAt(idx);
+  }
+  localPairingCode = code;
+  localPairingExpiry = Date.now() + 300000; // 5 minutes
   setSyncPairingCode(code);
+
   let roomId = 'pair-';
   roomId += code;
 
+  // Track room for persistent session
+  syncPairedRoomId = roomId;
+
   // Disconnect any existing connection, then connect with code-based room
   disconnectFromRelay();
-  const relayUrl = getHostRelayUrl();
-  connectToRelay(relayUrl, roomId, syncDeviceId);
+  connectToRelay(syncRelayUrl, roomId, syncDeviceId);
 
   syncStatusOverride = 'Waiting for guest...';
   setSyncStatusText('Waiting for guest...');
@@ -1661,9 +1870,12 @@ function onSyncJoinClicked(code: string): void {
   let roomId = 'pair-';
   roomId += upper;
 
+  // Track room for persistent session
+  syncPairedRoomId = roomId;
+
   // Connect to the same room as the host
   disconnectFromRelay();
-  const relayUrl = getHostRelayUrl();
+  const relayUrl = syncRelayUrl;
   let dbg2 = 'Connecting to ';
   dbg2 += relayUrl;
   dbg2 += ' room=';
@@ -2113,9 +2325,22 @@ function onRelayConnectedImpl(): void {
 }
 
 function onRelayDisconnectedImpl(): void {
-  setSyncStatusText('Disconnected');
+  syncDebugLog('WS disconnected — will auto-reconnect in 2s');
+  setSyncStatusText('Reconnecting...');
   syncStatusOverride = '';
   refreshSyncPanelDeferred();
+
+  // Auto-reconnect after 2 seconds if we had an active room
+  if (syncPairedRoomId.length > 0) {
+    setTimeout(() => { attemptReconnect(); }, 2000);
+  }
+}
+
+function attemptReconnect(): void {
+  if (isRelayConnected() > 0) return; // already reconnected
+  if (syncPairedRoomId.length < 1) return;
+  syncDebugLog('Auto-reconnecting to room ' + syncPairedRoomId);
+  connectToRelay(syncRelayUrl, syncPairedRoomId, syncDeviceId);
 }
 
 function onRelayMessageImpl(data: string): void {
@@ -2132,7 +2357,15 @@ function onRelayMessageImpl(data: string): void {
     while (fEnd < data.length && data.charCodeAt(fEnd) !== 34) fEnd = fEnd + 1;
     msgFrom = data.substring(fStart, fEnd);
   }
-  const isSelf = (msgFrom === syncDeviceId) ? 1 : 0;
+  // Use charCodeAt comparison — Perry '===' unreliable for dynamically-sliced strings
+  let isSelf = 0;
+  if (msgFrom.length === syncDeviceId.length && msgFrom.length > 0) {
+    let selfMatch = 1;
+    for (let si = 0; si < msgFrom.length; si++) {
+      if (msgFrom.charCodeAt(si) !== syncDeviceId.charCodeAt(si)) { selfMatch = 0; break; }
+    }
+    if (selfMatch > 0) isSelf = 1;
+  }
 
   // Extract payload from relay envelope: find "payload" key and its string value
   const pkIdx = data.indexOf('"payload"');
@@ -2176,14 +2409,14 @@ function onRelayMessageImpl(data: string): void {
     }
   }
 
-  // Handle PAIR_REQ|code|deviceId|deviceName
+  // Handle PAIR_REQ|code|deviceId|deviceName (only from others)
   if (payload.indexOf('PAIR_REQ|') === 0) {
-    handlePairRequest(payload);
+    if (isSelf < 1) handlePairRequest(payload);
     return;
   }
-  // Handle PAIR_OK|deviceId|deviceName
+  // Handle PAIR_OK|deviceId|deviceName (only from others)
   if (payload.indexOf('PAIR_OK|') === 0) {
-    handlePairAccepted(payload);
+    if (isSelf < 1) handlePairAccepted(payload);
     return;
   }
   // Handle FILE_TREE_REQ — guest asks host for file tree (only from others)
@@ -2279,8 +2512,22 @@ function handlePairRequest(payload: string): void {
   const guestDeviceId = rest2.substring(0, sep3);
   const guestName = rest2.substring(sep3 + 1);
 
-  // Validate the code
-  if (validatePairingAttempt(code) > 0) {
+  // Validate the code inline (avoid cross-module string comparison issues)
+  let codeValid = 0;
+  if (localPairingCode.length > 0 && Date.now() < localPairingExpiry) {
+    const upperCode = code.toUpperCase();
+    if (upperCode.length === localPairingCode.length) {
+      let codeMatch = 1;
+      for (let ci = 0; ci < upperCode.length; ci++) {
+        if (upperCode.charCodeAt(ci) !== localPairingCode.charCodeAt(ci)) { codeMatch = 0; break; }
+      }
+      if (codeMatch > 0) codeValid = 1;
+    }
+  }
+  if (codeValid > 0) {
+    // Mark code as used
+    localPairingCode = '';
+    localPairingExpiry = 0;
     // Accept — add guest and send confirmation
     addGuest(guestDeviceId, guestName);
     addSyncDevice(guestName, 'connected');
@@ -2294,6 +2541,10 @@ function handlePairRequest(payload: string): void {
     msg += '|Hone Desktop';
     sendToRelay(msg);
     refreshSyncPanelDeferred();
+
+    // Save session for auto-restore on restart
+    syncPairedDeviceName = guestName;
+    saveSyncSession(syncPairedRoomId, guestName);
   } else {
     // Reject
     sendToRelay('PAIR_NO|invalid code');
@@ -2311,7 +2562,13 @@ function handlePairAccepted(payload: string): void {
   addSyncDevice(hostName, 'connected');
   syncStatusOverride = '';
   setSyncStatusText('Paired!');
+  syncIsGuest = 1; // This device is the guest (received PAIR_OK from host)
   refreshSyncPanelDeferred();
+
+  // Save session for auto-restore on restart
+  syncPairedDeviceName = hostName;
+  saveSyncSession(syncPairedRoomId, hostName);
+
   // Guest: request file tree from host after pairing
   setTimeout(() => { requestFileTreeFromHost(); }, 500);
 }
@@ -2358,8 +2615,17 @@ function handleFileTreeRequest(): void {
   sendToRelay(msg);
   setSyncStatusText('Sent file tree');
 
+  // Save host session for persistent restore
+  if (syncPairedRoomId.length > 0 && syncPairedDeviceName.length < 1) {
+    syncPairedDeviceName = 'Device';
+  }
+  if (syncPairedRoomId.length > 0) {
+    saveSyncSession(syncPairedRoomId, syncPairedDeviceName);
+  }
+
   // --- Bulk sync: send all text/source files after the tree ---
   // Collect file relPaths from the tree entries (capped at 200 files)
+  // Pre-filter: only include files that are text AND within size limit
   let textFiles: string[] = [];
   let textFileCount = 0;
   for (let i = 0; i < entryCount; i++) {
@@ -2371,8 +2637,15 @@ function handleFileTreeRequest(): void {
     if (entry.charCodeAt(0) !== 70) continue;
     const relPath = entry.substring(2);
     if (isTextFile(relPath) > 0) {
-      textFiles.push(relPath);
-      textFileCount = textFileCount + 1;
+      // Pre-check file size to ensure announced count matches sent count
+      let fullPath = workspaceRoot;
+      fullPath += '/';
+      fullPath += relPath;
+      const content = safeReadFile(fullPath);
+      if (content.length > 0 && content.length <= BULK_FILE_MAX_SIZE) {
+        textFiles.push(relPath);
+        textFileCount = textFileCount + 1;
+      }
     }
   }
 
@@ -2401,8 +2674,8 @@ let bulkSyncFileCount: number = 0;
 let bulkSyncTimerId: number = 0;
 let bulkSyncTotalSent: number = 0;
 const BULK_SYNC_BATCH = 1; // files per tick (reduced from 3 to limit memory pressure)
-const BULK_FILE_MAX_SIZE = 51200; // 50KB per file (reduced from 1MB)
-const BULK_SYNC_TOTAL_MAX = 5242880; // 5MB total cap
+const BULK_FILE_MAX_SIZE = 262144; // 256KB per file (covers render.ts at 124KB, chat-panel.ts at 100KB)
+const BULK_SYNC_TOTAL_MAX = 10485760; // 10MB total cap
 
 function bulkSyncTick(): void {
   // Stop early if total size cap exceeded
@@ -2463,6 +2736,7 @@ function isTextFile(relPath: string): number {
     if (ext === 'md') return 1;
     if (ext === 'sh') return 1;
     if (ext === 'cs') return 1;
+    if (ext === 'kt') return 1;
   }
   if (ext.length === 3) {
     if (ext === 'tsx') return 1;
@@ -2592,6 +2866,8 @@ function collectSyncTreeDir(absDir: string, relPrefix: string, depth: number): v
 
 /** Guest: receive file tree from host and populate explorer. */
 function handleFileTreeResponse(payload: string): void {
+  // Only process the first FILE_TREE response (relay may replay old deltas)
+  if (fileTreeReceived > 0) return;
   fileTreeReceived = 1;
   // Parse FILE_TREE|rootName;;D|dir;;F|file;;...
   const prefixLen = 10; // "FILE_TREE|".length
@@ -2617,39 +2893,219 @@ function handleFileTreeResponse(payload: string): void {
   if (parts.length < 1) return;
   const rootName = parts[0];
 
-  // Remaining parts are entries
-  let entries: string[] = [];
+  // Remaining parts are entries — classify D vs F HERE (same module that created the strings)
+  // Perry charCodeAt on cross-module substring arrays is unreliable, so extract paths+types locally
+  // Encode type as 2-char prefix in path: "D/" for dir, "F/" for file
+  // This avoids Perry's cross-module number[] read-back bug (0 values read as >0)
+  let taggedPaths: string[] = [];
+  let entryCount = 0;
+  let firstFile = '';
   for (let i = 1; i < parts.length; i++) {
-    entries.push(parts[i]);
+    const e = parts[i];
+    if (e.length < 3) continue;
+    const tc = e.charCodeAt(0);
+    const relPath = e.substring(2);
+    if (tc === 68) { // 'D'
+      let tagged = 'D/';
+      tagged += relPath;
+      taggedPaths.push(tagged);
+    } else {
+      let tagged = 'F/';
+      tagged += relPath;
+      taggedPaths.push(tagged);
+      // Track first file for auto-open (prefer .ts)
+      if (firstFile.length === 0) firstFile = relPath;
+      if (relPath.length > 3 && relPath.charCodeAt(relPath.length - 3) === 46 && relPath.charCodeAt(relPath.length - 2) === 116 && relPath.charCodeAt(relPath.length - 1) === 115) {
+        firstFile = relPath;
+      }
+    }
+    entryCount = entryCount + 1;
   }
 
   let dbgMsg = 'Tree: ';
-  dbgMsg += String(entries.length);
+  dbgMsg += String(entryCount);
   dbgMsg += ' entries from ';
   dbgMsg += rootName;
   setSyncStatusText(dbgMsg);
   syncDebugLog(dbgMsg);
-  setRemoteFileTree(rootName, entries, entries.length);
+  setRemoteFileTree(rootName, taggedPaths, entryCount);
   // Auto-switch to explorer panel to show the remote file tree
   switchSidebarPanel(0);
 
-  // Auto-open the first source file in the tree (prefer .ts, then any text file)
-  let firstFile = '';
-  for (let i = 0; i < entries.length; i++) {
-    const e = entries[i];
-    if (e.length > 2 && e.charCodeAt(0) === 70) { // 'F' = file entry
-      const relPath = e.substring(2);
-      // Prefer .ts files
-      if (relPath.length > 3 && relPath.charCodeAt(relPath.length - 3) === 46 && relPath.charCodeAt(relPath.length - 2) === 116 && relPath.charCodeAt(relPath.length - 1) === 115) {
-        firstFile = relPath;
-        break;
-      }
-      if (firstFile.length === 0) firstFile = relPath;
-    }
+  // Save session so persistent restore works (guest received tree = paired + syncing)
+  if (syncIsGuest > 0 && syncPairedRoomId.length > 0 && syncPairedDeviceName.length < 1) {
+    // Auto-pair debug path: set partner name + save session
+    syncPairedDeviceName = 'Debug Host';
+    saveSyncSession(syncPairedRoomId, syncPairedDeviceName);
   }
+
+  // Auto-open the first source file
   if (firstFile.length > 0) {
     onRemoteFileClicked(firstFile);
   }
+
+  // Auto-test: if /tmp/hone-auto-test exists, run programmatic tests
+  let doAutoTest = 0;
+  try { if (existsSync('/tmp/hone-auto-test')) doAutoTest = 1; } catch (e: any) {}
+  if (doAutoTest > 0) {
+    setTimeout(() => { runAutoTest(taggedPaths, entryCount); }, 2000);
+  }
+}
+
+function runAutoTest(taggedPaths: string[], entryCount: number): void {
+  let log = 'AUTO-TEST START\n';
+  log += 'entryCount=' + String(entryCount) + '\n';
+
+  // Find directories and files to test
+  let testDir = '';
+  let testFile = '';
+  let testFile2 = '';
+  let dirCount = 0;
+  let fileCount = 0;
+  for (let i = 0; i < entryCount; i++) {
+    const tagged = taggedPaths[i];
+    if (tagged.length < 3) continue;
+    const tag = tagged.charCodeAt(0);
+    const relPath = tagged.substring(2);
+    if (tag === 68) {
+      dirCount = dirCount + 1;
+      if (testDir.length === 0) testDir = relPath;
+    }
+    if (tag === 70) {
+      fileCount = fileCount + 1;
+      if (testFile.length === 0) testFile = relPath;
+      else if (testFile2.length === 0) testFile2 = relPath;
+    }
+  }
+  log += 'dirs=' + String(dirCount) + ' files=' + String(fileCount) + '\n';
+  log += 'testDir=' + testDir + '\n';
+  log += 'testFile=' + testFile + '\n';
+  log += 'testFile2=' + testFile2 + '\n';
+
+  // Test 1: isRemoteExplorerMode
+  const remoteMode = isRemoteExplorerMode();
+  log += 'TEST1-remoteMode: ' + String(remoteMode) + (remoteMode > 0 ? ' PASS' : ' FAIL') + '\n';
+
+  // Test 2: File click via onRemoteFileClicked
+  if (testFile2.length > 0) {
+    log += 'TEST2-fileClick: clicking ' + testFile2 + '\n';
+    onRemoteFileClicked(testFile2);
+  }
+
+  // Test 3: Visible file count (only root-level files visible initially — dirs are collapsed)
+  const visFiles = getVisibleFileCount();
+  log += 'TEST3-visibleFiles: ' + String(visFiles) + '\n';
+
+  // Test 4: Expanded dir count (should be 0 initially)
+  const expDirs = getExpandedDirCount();
+  log += 'TEST4-expandedDirs: ' + String(expDirs) + (expDirs === 0 ? ' PASS (all collapsed)' : ' NOTE (' + String(expDirs) + ' expanded)') + '\n';
+
+  try { writeFileSync('/tmp/hone-auto-test-result.log', log); } catch (e: any) {}
+
+  // Test 5: Expand a directory
+  if (testDir.length > 0) {
+    setTimeout(() => { runAutoTestExpand(testDir, testFile2); }, 1500);
+  }
+}
+
+function runAutoTestExpand(dirPath: string, testFile2: string): void {
+  let log = '';
+  try { log = readFileSync('/tmp/hone-auto-test-result.log'); } catch (e: any) {}
+
+  // Verify file click from test 2 completed
+  log += 'TEST2-result: currentEditorFilePath=' + currentEditorFilePath + '\n';
+  if (currentEditorFilePath.length > 0) {
+    log += 'TEST2-result: PASS — file loaded in editor\n';
+  } else {
+    log += 'TEST2-result: FAIL — no file in editor\n';
+  }
+
+  // Test 5: Expand a directory
+  const beforeCount = getVisibleFileCount();
+  log += 'TEST5-expand: before visibleFiles=' + String(beforeCount) + '\n';
+  const toggled = toggleRemoteDir(dirPath);
+  log += 'TEST5-expand: toggleRemoteDir returned ' + String(toggled) + '\n';
+
+  try { writeFileSync('/tmp/hone-auto-test-result.log', log); } catch (e: any) {}
+
+  // Wait for refresh then check
+  setTimeout(() => { runAutoTestExpandCheck(dirPath, beforeCount); }, 500);
+}
+
+function runAutoTestExpandCheck(dirPath: string, beforeCount: number): void {
+  let log = '';
+  try { log = readFileSync('/tmp/hone-auto-test-result.log'); } catch (e: any) {}
+
+  const afterCount = getVisibleFileCount();
+  const expDirs = getExpandedDirCount();
+  log += 'TEST5-expand: after visibleFiles=' + String(afterCount) + ' expandedDirs=' + String(expDirs) + '\n';
+  if (afterCount > beforeCount) {
+    log += 'TEST5-expand: PASS — dir expanded (files: ' + String(beforeCount) + ' -> ' + String(afterCount) + ')\n';
+  } else if (afterCount === beforeCount) {
+    log += 'TEST5-expand: NOTE — same file count (dir may have no files)\n';
+  } else {
+    log += 'TEST5-expand: UNEXPECTED — fewer files after expand\n';
+  }
+
+  // Test 6: Collapse the directory back
+  toggleRemoteDir(dirPath);
+
+  try { writeFileSync('/tmp/hone-auto-test-result.log', log); } catch (e: any) {}
+  setTimeout(() => { runAutoTestCollapse(dirPath, afterCount); }, 500);
+}
+
+function runAutoTestCollapse(dirPath: string, expandedCount: number): void {
+  let log = '';
+  try { log = readFileSync('/tmp/hone-auto-test-result.log'); } catch (e: any) {}
+
+  const afterCollapse = getVisibleFileCount();
+  const expDirs = getExpandedDirCount();
+  log += 'TEST6-collapse: visibleFiles=' + String(afterCollapse) + ' expandedDirs=' + String(expDirs) + '\n';
+  if (afterCollapse < expandedCount) {
+    log += 'TEST6-collapse: PASS — dir collapsed (files: ' + String(expandedCount) + ' -> ' + String(afterCollapse) + ')\n';
+  } else {
+    log += 'TEST6-collapse: NOTE — same or more files after collapse\n';
+  }
+
+  // Test 7: Click a file inside a directory (programmatically)
+  // Use clickRemoteFile to test the sidebar-to-editor path
+  log += 'TEST7-clickRemoteFile: clicking src/app.ts\n';
+  const clickResult = clickRemoteFile('src/app.ts');
+  log += 'TEST7-clickRemoteFile: returned ' + String(clickResult) + '\n';
+
+  try { writeFileSync('/tmp/hone-auto-test-result.log', log); } catch (e: any) {}
+  setTimeout(() => { runAutoTestFinal(); }, 1500);
+}
+
+function runAutoTestFinal(): void {
+  let log = '';
+  try { log = readFileSync('/tmp/hone-auto-test-result.log'); } catch (e: any) {}
+
+  log += 'TEST7-result: currentEditorFilePath=' + currentEditorFilePath + '\n';
+
+  // Check if file was loaded
+  let fileMatch = 0;
+  const expected = 'src/app.ts';
+  if (currentEditorFilePath.length === expected.length) {
+    fileMatch = 1;
+    for (let i = 0; i < expected.length; i++) {
+      if (currentEditorFilePath.charCodeAt(i) !== expected.charCodeAt(i)) { fileMatch = 0; break; }
+    }
+  }
+  if (fileMatch > 0) {
+    log += 'TEST7-result: PASS — src/app.ts loaded\n';
+  } else {
+    log += 'TEST7-result: NOTE — different file loaded: ' + currentEditorFilePath + '\n';
+  }
+
+  // Summary
+  log += '\n--- SUMMARY ---\n';
+  log += 'Remote mode: ' + String(isRemoteExplorerMode()) + '\n';
+  log += 'File cache: ' + String(fileCacheCount) + ' entries\n';
+  log += 'Editor ready: ' + String(editorReady) + '\n';
+  log += 'Current file: ' + currentEditorFilePath + '\n';
+  log += 'AUTO-TEST END\n';
+  try { writeFileSync('/tmp/hone-auto-test-result.log', log); } catch (e: any) {}
 }
 
 /** Host: guest sent an edited file to save to disk. */
@@ -2954,13 +3410,17 @@ function displayFileFromCache(relPath: string, content: string): void {
 
 /** Guest clicked a remote file in the explorer. */
 function onRemoteFileClicked(relPath: string): void {
+  syncDebugLog('onRemoteFileClicked: ' + relPath);
+  setSyncStatusText('Opening: ' + relPath);
   // Check local cache first — instant open if already synced
   if (fileCacheHas(relPath) > 0) {
+    syncDebugLog('Found in cache');
     const content = fileCacheGet(relPath);
     displayFileFromCache(relPath, content);
     return;
   }
   // Not cached — request from host
+  syncDebugLog('Not in cache, requesting');
   setSyncStatusText('Loading: ' + relPath);
   pendingOpenPath = relPath;
   let msg = 'FILE_REQ|';

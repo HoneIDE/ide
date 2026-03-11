@@ -25,7 +25,7 @@ import {
   onDiagnosticsUpdate,
 } from '../lsp/diagnostics-panel';
 import { getFileName } from '../../ui-helpers';
-import { getEditorForeground, getSideBarForeground, getPanelBackground, getPanelBorder, getStatusAddedColor, getStatusModifiedColor, getStatusDeletedColor, getSecondaryTextColor } from '../../theme/theme-colors';
+import { getEditorBackground, getEditorForeground, getEditorCursorForeground, getEditorSelectionBackground, getSideBarForeground, getPanelBackground, getPanelBorder, getStatusAddedColor, getStatusModifiedColor, getStatusDeletedColor, getSecondaryTextColor, isCurrentThemeDark } from '../../theme/theme-colors';
 
 // FFI declarations — LiveTerminal API
 declare function hone_terminal_open(rows: number, cols: number, shell: number, cwd: number): number;
@@ -34,6 +34,8 @@ declare function hone_terminal_poll(handle: number): number;
 declare function hone_terminal_write(handle: number, data: number): number;
 declare function hone_terminal_resize(handle: number, rows: number, cols: number): number;
 declare function hone_terminal_close(handle: number): number;
+declare function hone_terminal_live_set_theme(handle: number, themeJson: number): void;
+declare function hone_terminal_set_bg_fg(handle: number, bgR: number, bgG: number, bgB: number, fgR: number, fgG: number, fgB: number): void;
 
 // Module-level state (Perry closures capture by value)
 let termHandle: number = 0;
@@ -320,6 +322,26 @@ export function renderTerminalPanel(container: unknown, colors: any): void {
 
   // Poll every 16ms for PTY output
   pollInterval = setInterval(() => { doPoll(); }, 16);
+
+  // Apply theme colors after a delay to ensure NSView is fully initialized
+  setTimeout(() => { applyTermColors(); }, 500);
+}
+
+/** Module-level function for deferred terminal theme application. */
+function applyTermColors(): void {
+  if (termHandle === 0) return;
+  if (isCurrentThemeDark() > 0) {
+    // Dark theme: Catppuccin Mocha bg=#1e1e2e, fg=#cdd6f4
+    hone_terminal_set_bg_fg(termHandle, 0.118, 0.118, 0.18, 0.804, 0.839, 0.957);
+  } else {
+    // Light theme: white bg, dark fg
+    hone_terminal_set_bg_fg(termHandle, 1.0, 1.0, 1.0, 0.2, 0.2, 0.2);
+  }
+}
+
+/** Apply the current theme colors to the terminal's native view. */
+export function applyTerminalThemeColors(): void {
+  applyTermColors();
 }
 
 export function destroyTerminalPanel(): void {
