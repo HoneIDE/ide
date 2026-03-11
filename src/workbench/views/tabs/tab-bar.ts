@@ -15,6 +15,7 @@ import {
 import { readFileSync } from 'fs';
 import { setBg, setBtnFg, setBtnTint, getFileIcon, getFileIconColor } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
+import { getTabActiveForeground, getTabActiveBackground, getTabInactiveForeground, getTabInactiveBackground, getFocusBorder } from '../../theme/theme-colors';
 
 // ---------------------------------------------------------------------------
 // Module-level state (must be declared BEFORE any function — Perry no-hoist)
@@ -75,19 +76,48 @@ export function getTabCount(): number {
   return openTabCount;
 }
 
+export function getOpenTabCount(): number {
+  return openTabCount;
+}
+
+export function getOpenTabPath(idx: number): string {
+  if (idx >= 0 && idx < openTabCount) {
+    return openTabs[idx];
+  }
+  return '';
+}
+
+export function setActiveTabByIndex(idx: number): void {
+  if (idx >= 0 && idx < openTabCount) {
+    activeTabIdx = idx;
+    if (tabBarReady > 0) {
+      applyTabColors(openTabCount);
+    }
+  }
+}
+
 /**
  * Open a tab for the given file. If already open, switch to it.
  * Returns 1 if the tab was already open, 0 if newly added.
  */
 export function openTab(filePath: string, fileName: string): number {
-  // Check if already open
+  // Check if already open (use length + charCodeAt — Perry === can fail for array strings)
   for (let i = 0; i < openTabCount; i++) {
-    if (openTabs[i] === filePath) {
-      activeTabIdx = i;
-      if (tabBarReady > 0) {
-        applyTabColors(openTabCount);
+    const stored = openTabs[i];
+    if (stored.length === filePath.length && stored.length > 0) {
+      let match = 1;
+      for (let j = 0; j < stored.length; j++) {
+        if (stored.charCodeAt(j) !== filePath.charCodeAt(j)) {
+          match = 0; break;
+        }
       }
-      return 1;
+      if (match > 0) {
+        activeTabIdx = i;
+        if (tabBarReady > 0) {
+          applyTabColors(openTabCount);
+        }
+        return 1;
+      }
     }
   }
 
@@ -99,11 +129,13 @@ export function openTab(filePath: string, fileName: string): number {
   let displayName = filePath;
   if (lastSlash >= 0) {
     displayName = filePath.slice(lastSlash + 1);
+  } else if (fileName.length > 0) {
+    displayName = fileName;
   }
 
-  // Add to tracking arrays
-  openTabs[openTabCount] = filePath;
-  openTabNames[openTabCount] = displayName;
+  // Add to tracking arrays — use .push() (Perry AOT indexed assignment broken)
+  openTabs.push(filePath);
+  openTabNames.push(displayName);
   openTabCount = openTabCount + 1;
   activeTabIdx = openTabCount - 1;
 
@@ -193,21 +225,21 @@ function rebuildTabBarDirect(count: number, names: string[], paths: string[], co
 
     if (panelColors) {
       if (i === activeTabIdx) {
-        setBtnFg(tabBtn, panelColors.tabActiveForeground);
-        setBg(tabGroup, panelColors.tabActiveBackground);
-        setBg(accent, panelColors.focusBorder);
+        setBtnFg(tabBtn, getTabActiveForeground());
+        setBg(tabGroup, getTabActiveBackground());
+        setBg(accent, getFocusBorder());
       } else {
-        setBtnFg(tabBtn, panelColors.tabInactiveForeground);
-        setBg(tabGroup, panelColors.tabInactiveBackground);
-        setBg(accent, panelColors.tabInactiveBackground);
+        setBtnFg(tabBtn, getTabInactiveForeground());
+        setBg(tabGroup, getTabInactiveBackground());
+        setBg(accent, getTabInactiveBackground());
       }
-      setBtnFg(closeBtn, panelColors.tabActiveForeground);
+      setBtnFg(closeBtn, getTabActiveForeground());
       // Color the file icon
       const tColor = getFileIconColor(name);
       if (tColor.length > 0) {
         setBtnTint(tabIcon, tColor);
       } else {
-        setBtnTint(tabIcon, panelColors.tabActiveForeground);
+        setBtnTint(tabIcon, getTabActiveForeground());
       }
     }
 
@@ -223,15 +255,9 @@ function rebuildTabBarDirect(count: number, names: string[], paths: string[], co
     tabAccentBars.push(accent);
     tabCloseButtons.push(closeBtn);
     tabDirty.push(0);
-    // Initialize saved length: try to read the file length
-    let savedLen = 0;
-    try {
-      const fc = readFileSync(path);
-      savedLen = fc.length;
-    } catch (e) {
-      savedLen = 0;
-    }
-    tabSavedLengths.push(savedLen);
+    // Perry: readFileSync crashes on Windows (segfault instead of throwing).
+    // Defer saved length initialization to first dirty check.
+    tabSavedLengths.push(0);
   }
 }
 
@@ -239,11 +265,11 @@ function applyTabColors(count: number): void {
   if (!panelColors) return;
   for (let i = 0; i < count; i++) {
     if (i === activeTabIdx) {
-      setBg(tabBarButtons[i], panelColors.tabActiveBackground);
-      if (i < tabAccentBars.length) setBg(tabAccentBars[i], panelColors.focusBorder);
+      setBg(tabBarButtons[i], getTabActiveBackground());
+      if (i < tabAccentBars.length) setBg(tabAccentBars[i], getFocusBorder());
     } else {
-      setBg(tabBarButtons[i], panelColors.tabInactiveBackground);
-      if (i < tabAccentBars.length) setBg(tabAccentBars[i], panelColors.tabInactiveBackground);
+      setBg(tabBarButtons[i], getTabInactiveBackground());
+      if (i < tabAccentBars.length) setBg(tabAccentBars[i], getTabInactiveBackground());
     }
   }
 }
@@ -277,14 +303,12 @@ function onTabCloseDeferred(): void {
   if (openTabCount < 2) return;
   const newTabs: string[] = [];
   const newNames: string[] = [];
-  let j = 0;
   for (let i = 0; i < openTabCount; i++) {
     if (i === idx) continue;
-    newTabs[j] = openTabs[i];
-    newNames[j] = openTabNames[i];
-    j = j + 1;
+    newTabs.push(openTabs[i]);
+    newNames.push(openTabNames[i]);
   }
-  const newCount = j;
+  const newCount = newTabs.length;
   openTabs = newTabs;
   openTabNames = newNames;
   openTabCount = newCount;
@@ -355,9 +379,9 @@ export function initTabBar(container: unknown, colors: ResolvedUIColors, default
   panelColors = colors;
   tabBarContainer = container;
   tabBarReady = 1;
-  setBg(container, colors.tabInactiveBackground);
+  setBg(container, getTabInactiveBackground());
 
-  // Open default tab
+  // Open default tab — skip rebuild for bisect
   openTabs = [defaultPath];
   openTabNames = [defaultName];
   openTabCount = 1;

@@ -12,6 +12,7 @@
  */
 import { extractJsonString, jsonEscape, getSSEData, parseSSEEventType, parseSSETextDelta, parseSSEToolUse, parseSSEToolId, parseSSEToolDelta, isSSEDone } from './sse-parser';
 import { executeTool, isDestructiveTool, buildToolDefinitionsJSON, buildReadOnlyToolsJSON, getToolWorkspaceRoot } from './agent-tools';
+import { getAppDataDir } from '../../paths';
 
 // --- Module-level state ---
 
@@ -26,7 +27,8 @@ let toolCallArgsAccumulator = '';
 let lastToolResult = '';
 
 // Conversation messages stored as file (same pattern as chat-panel)
-let agentMsgFilePath = '/tmp/hone-agent-msgs.txt';
+// Path set lazily via getAppDataDir() on first use
+let agentMsgFilePath = '';
 
 // Current stream accumulated text
 let agentStreamText = '';
@@ -83,6 +85,8 @@ export function processAgentSSELine(line: string): void {
     if (agentStatus === 2) {
       // Finish tool accumulation
       onToolBlockComplete();
+    } else if (agentStatus === 5 || agentStatus === 3) {
+      // NEEDS_CONTINUE or AWAITING_APPROVAL — don't reset
     } else {
       agentStatus = 0;
       if (onStreamDoneCb) onStreamDoneCb();
@@ -128,18 +132,20 @@ export function processAgentSSELine(line: string): void {
     return;
   }
 
-  // "content_block_stop"
-  if (evtType.charCodeAt(0) === 99 && evtType.length > 17 && evtType.charCodeAt(14) === 115 && evtType.charCodeAt(15) === 116) {
+  // "content_block_stop" (charCodeAt(16) === 111 'o' to distinguish from 'start' which has 'a'=97)
+  if (evtType.charCodeAt(0) === 99 && evtType.length >= 18 && evtType.charCodeAt(14) === 115 && evtType.charCodeAt(16) === 111) {
     if (agentStatus === 2) {
       onToolBlockComplete();
     }
     return;
   }
 
-  // "message_stop"
-  if (evtType.charCodeAt(0) === 109 && evtType.length >= 12) {
+  // "message_stop" (charCodeAt(10)===111 'o' to distinguish from "message_start" which has 'r'=114)
+  if (evtType.charCodeAt(0) === 109 && evtType.length >= 12 && evtType.charCodeAt(10) === 111) {
     if (agentStatus === 2) {
       onToolBlockComplete();
+    } else if (agentStatus === 5 || agentStatus === 3) {
+      // NEEDS_CONTINUE or AWAITING_APPROVAL — don't reset, let chat-panel handle it
     } else {
       agentStatus = 0;
       if (onStreamDoneCb) onStreamDoneCb();

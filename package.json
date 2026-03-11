@@ -1,6 +1,7 @@
 {
   "name": "@honeide/ide",
   "version": "0.1.0",
+  "bundleId": "com.hone.ide",
   "description": "Hone IDE — AI-native code editor for all platforms",
   "main": "src/app.ts",
   "types": "src/app.ts",

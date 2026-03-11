@@ -17,6 +17,7 @@ import { readFileSync, readdirSync, isDirectory, writeFileSync } from 'fs';
 import { join } from 'path';
 import { hexToRGBA, setBg, setFg, setBtnFg, pathId, getFileName, toLowerCode, isTextFile } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
+import { getSideBarForeground } from '../../theme/theme-colors';
 
 // ---------------------------------------------------------------------------
 // Module-level state (must be declared BEFORE any function — Perry no-hoist)
@@ -204,7 +205,7 @@ function updateSearchResultsUI(): void {
       textSetFontSize(header, 12);
       textSetFontWeight(header, 12, 0.6);
       if (panelColors) {
-        setFg(header, panelColors.sideBarForeground);
+        setFg(header, getSideBarForeground());
       }
       widgetAddChild(searchResultsContainer, header);
     }
@@ -225,7 +226,7 @@ function updateSearchResultsUI(): void {
     textSetFontSize(btn, 11);
     textSetFontFamily(btn, 11, 'Menlo');
     if (panelColors) {
-      setBtnFg(btn, panelColors.sideBarForeground);
+      setBtnFg(btn, getSideBarForeground());
     }
     widgetAddChild(searchResultsContainer, btn);
   }
@@ -349,7 +350,7 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   const title = Text('SEARCH');
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.7);
-  if (colors) setFg(title, colors.sideBarForeground);
+  if (colors) setFg(title, getSideBarForeground());
   widgetAddChild(container, title);
 
   // Search text field
@@ -363,11 +364,11 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   const caseBtn = Button('Aa', () => { toggleCaseSensitive(); });
   buttonSetBordered(caseBtn, 0);
   textSetFontSize(caseBtn, 11);
-  if (colors) setBtnFg(caseBtn, colors.sideBarForeground);
+  if (colors) setBtnFg(caseBtn, getSideBarForeground());
   const replToggleBtn = Button('Replace', () => { toggleReplaceField(); });
   buttonSetBordered(replToggleBtn, 0);
   textSetFontSize(replToggleBtn, 11);
-  if (colors) setBtnFg(replToggleBtn, colors.sideBarForeground);
+  if (colors) setBtnFg(replToggleBtn, getSideBarForeground());
   const controlsRow = HStack(4, [caseBtn, replToggleBtn]);
   widgetAddChild(container, controlsRow);
 
@@ -382,11 +383,11 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   const replOneBtn = Button('Replace', () => { onReplaceOne(); });
   buttonSetBordered(replOneBtn, 0);
   textSetFontSize(replOneBtn, 11);
-  if (colors) setBtnFg(replOneBtn, colors.sideBarForeground);
+  if (colors) setBtnFg(replOneBtn, getSideBarForeground());
   const replAllBtn = Button('Replace All', () => { onReplaceAll(); });
   buttonSetBordered(replAllBtn, 0);
   textSetFontSize(replAllBtn, 11);
-  if (colors) setBtnFg(replAllBtn, colors.sideBarForeground);
+  if (colors) setBtnFg(replAllBtn, getSideBarForeground());
   const replBtnRow = HStack(4, [replOneBtn, replAllBtn]);
   widgetAddChild(replContainer, replBtnRow);
   widgetAddChild(container, replContainer);
@@ -397,7 +398,7 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   // Result count label
   searchResultCountLabel = Text('Type to search');
   textSetFontSize(searchResultCountLabel, 11);
-  if (colors) setFg(searchResultCountLabel, colors.sideBarForeground);
+  if (colors) setFg(searchResultCountLabel, getSideBarForeground());
   widgetAddChild(container, searchResultCountLabel);
 
   // Results container

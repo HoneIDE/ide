@@ -96,7 +96,7 @@ function refreshDeviceList(): void {
 function buildDeviceRow(name: string, platform: string, status: string): unknown {
   const nameLabel = Text(name);
   textSetFontSize(nameLabel, 12);
-  if (deviceListColors) setFg(nameLabel, deviceListColors.sidebarForeground);
+  if (deviceListColors) setFg(nameLabel, deviceListColors.sideBarForeground);
 
   const platformLabel = Text(platform);
   textSetFontSize(platformLabel, 10);
@@ -109,7 +109,7 @@ function buildDeviceRow(name: string, platform: string, status: string): unknown
   } else if (status === 'offline') {
     textSetColor(statusLabel, 0.5, 0.5, 0.5, 1.0); // gray
   } else {
-    if (deviceListColors) setFg(statusLabel, deviceListColors.sidebarForeground);
+    if (deviceListColors) setFg(statusLabel, deviceListColors.sideBarForeground);
   }
 
   const row = HStack(8, [nameLabel, platformLabel, Spacer(), statusLabel]);

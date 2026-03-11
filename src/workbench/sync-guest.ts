@@ -9,7 +9,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { execSync } from 'child_process';
+import { getHomeDir, getAppDataDir } from './paths';
 
 // --- Module-level state ---
 
@@ -34,6 +34,9 @@ let offlinePayloads: string[] = [];
 let offlineCount: number = 0;
 const MAX_OFFLINE = 100;
 
+// Message ID counter for deduplication
+let msgIdCounter: number = 0;
+
 // Transport send function
 let _sendFn: (data: string) => void = _noopData;
 
@@ -42,45 +45,30 @@ let _onConnected: () => void = _noopVoid;
 let _onDisconnected: (reason: string) => void = _noopReason;
 let _onMessage: (data: string) => void = _noopData;
 let _onReconnecting: (attempt: number) => void = _noopAttempt;
+let _onQueueWarning: (count: number, max: number) => void = _noopAttempt2;
+let _onQueueFull: (count: number, max: number) => void = _noopAttempt2;
+
+// App lifecycle state (background/foreground)
+let appInBackground: number = 0;
+let foregroundReconnectPending: number = 0;
 
 function _noopVoid(): void {}
 function _noopReason(r: string): void {}
 function _noopData(d: string): void {}
 function _noopAttempt(n: number): void {}
+function _noopAttempt2(count: number, max: number): void {}
 
 // --- Persistence ---
 
-let _homeDir = '';
-
-function getHomeDir(): string {
-  if (_homeDir.length > 0) return _homeDir;
-  try {
-    const result = execSync('/bin/echo $HOME');
-    let dir = result;
-    if (dir.length > 0 && dir.charCodeAt(dir.length - 1) === 10) {
-      dir = dir.slice(0, dir.length - 1);
-    }
-    _homeDir = dir;
-  } catch (e: any) {
-    _homeDir = '/tmp';
-  }
-  return _homeDir;
-}
-
 function getSyncPath(): string {
-  let p = '';
-  p += getHomeDir();
-  p += '/.hone/sync-connection.ini';
+  let p = getAppDataDir();
+  p += '/sync-connection.ini';
   return p;
 }
 
 function ensureHoneDir(): void {
-  let dir = '';
-  dir += getHomeDir();
-  dir += '/.hone';
-  if (!existsSync(dir)) {
-    try { mkdirSync(dir); } catch (e: any) { /* ignore */ }
-  }
+  // getAppDataDir() already creates ~/.hone/ if needed
+  getAppDataDir();
 }
 
 function persistConnection(): void {
@@ -277,10 +265,19 @@ export function resetReconnectAttempts(): void {
 
 // --- Offline queue ---
 
+const QUEUE_WARNING_THRESHOLD = 90;
+
 export function enqueueOffline(payload: string): void {
-  if (offlineCount >= MAX_OFFLINE) return;
+  if (offlineCount >= MAX_OFFLINE) {
+    _onQueueFull(offlineCount, MAX_OFFLINE);
+    return;
+  }
   offlinePayloads.push(payload);
   offlineCount = offlineCount + 1;
+  // Warn when approaching capacity
+  if (offlineCount >= QUEUE_WARNING_THRESHOLD) {
+    _onQueueWarning(offlineCount, MAX_OFFLINE);
+  }
 }
 
 export function getOfflineCount(): number {
@@ -318,6 +315,17 @@ export function getGuestDeviceId(): string {
   return guestDeviceId;
 }
 
+/** Generate a unique message ID for deduplication (deviceId + counter). */
+export function generateMsgId(): string {
+  msgIdCounter = msgIdCounter + 1;
+  let id = guestDeviceId;
+  id += ':';
+  id += String(Date.now());
+  id += ':';
+  id += String(msgIdCounter);
+  return id;
+}
+
 // --- Event setters ---
 
 export function setOnConnected(fn: () => void): void {
@@ -338,4 +346,207 @@ export function setSendFn(fn: (data: string) => void): void {
 
 export function setOnReconnecting(fn: (attempt: number) => void): void {
   _onReconnecting = fn;
+}
+
+export function setOnQueueWarning(fn: (count: number, max: number) => void): void {
+  _onQueueWarning = fn;
+}
+
+export function setOnQueueFull(fn: (count: number, max: number) => void): void {
+  _onQueueFull = fn;
+}
+
+// --- Claude Code relay (guest side) ---
+
+// Callbacks for Claude Code events received from host
+let _onClaudeStream: (sessionId: string, delta: string, deltaType: string, toolName: string) => void = _noopClaudeStream;
+let _onClaudeResult: (sessionId: string, result: string, costUsd: number, numTurns: number) => void = _noopClaudeResult;
+let _onClaudeError: (sessionId: string, error: string) => void = _noopClaudeError;
+
+function _noopClaudeStream(sessionId: string, delta: string, deltaType: string, toolName: string): void {}
+function _noopClaudeResult(sessionId: string, result: string, costUsd: number, numTurns: number): void {}
+function _noopClaudeError(sessionId: string, error: string): void {}
+
+export function setOnClaudeStream(fn: (sessionId: string, delta: string, deltaType: string, toolName: string) => void): void {
+  _onClaudeStream = fn;
+}
+
+export function setOnClaudeResult(fn: (sessionId: string, result: string, costUsd: number, numTurns: number) => void): void {
+  _onClaudeResult = fn;
+}
+
+export function setOnClaudeError(fn: (sessionId: string, error: string) => void): void {
+  _onClaudeError = fn;
+}
+
+/**
+ * Send a Claude Code prompt request to the host via relay.
+ * Wraps in the standard ApiMessage envelope format.
+ */
+export function sendClaudeRequest(prompt: string, workspaceRoot: string, resumeSessionId: string): void {
+  let payload = '{"domain":"ai","operation":"claudeSend","payload":{"prompt":"';
+  payload += jsonEscapeSync(prompt);
+  payload += '","workspaceRoot":"';
+  payload += jsonEscapeSync(workspaceRoot);
+  payload += '"';
+  if (resumeSessionId.length > 0) {
+    payload += ',"resumeSessionId":"';
+    payload += jsonEscapeSync(resumeSessionId);
+    payload += '"';
+  }
+  payload += '},"id":"';
+  payload += generateMsgId();
+  payload += '"}';
+  sendOrQueue(payload);
+}
+
+/**
+ * Send a Claude Code stop request to the host via relay.
+ */
+export function sendClaudeStop(sessionId: string): void {
+  let payload = '{"domain":"ai","operation":"claudeStop","payload":{"sessionId":"';
+  payload += jsonEscapeSync(sessionId);
+  payload += '"},"id":"';
+  payload += generateMsgId();
+  payload += '"}';
+  sendOrQueue(payload);
+}
+
+/**
+ * Process an incoming Claude Code event from host (called by message dispatcher).
+ */
+export function processClaudeRelayEvent(operation: string, data: string): void {
+  // Inline JSON extraction using charCodeAt (Perry-safe)
+  // Operations: claudeStream, claudeResult, claudeError
+
+  // claudeStream: charCodeAt(6) === 83 'S'
+  if (operation.length === 12 && operation.charCodeAt(6) === 83) {
+    const sessionId = extractSyncField(data, 'sessionId');
+    const delta = extractSyncField(data, 'delta');
+    const deltaType = extractSyncField(data, 'deltaType');
+    const toolName = extractSyncField(data, 'toolName');
+    _onClaudeStream(sessionId, delta, deltaType, toolName);
+    return;
+  }
+  // claudeResult: charCodeAt(6) === 82 'R'
+  if (operation.length === 12 && operation.charCodeAt(6) === 82) {
+    const sessionId = extractSyncField(data, 'sessionId');
+    const result = extractSyncField(data, 'result');
+    const costStr = extractSyncField(data, 'costUsd');
+    const turnsStr = extractSyncField(data, 'numTurns');
+    let cost = -1;
+    let turns = -1;
+    if (costStr.length > 0) cost = Number(costStr);
+    if (turnsStr.length > 0) turns = Number(turnsStr);
+    _onClaudeResult(sessionId, result, cost, turns);
+    return;
+  }
+  // claudeError: charCodeAt(6) === 69 'E'
+  if (operation.length === 11 && operation.charCodeAt(6) === 69) {
+    const sessionId = extractSyncField(data, 'sessionId');
+    const error = extractSyncField(data, 'error');
+    _onClaudeError(sessionId, error);
+    return;
+  }
+}
+
+/** Simple JSON string escape for sync payloads. */
+function jsonEscapeSync(s: string): string {
+  let result = '';
+  for (let i = 0; i < s.length; i++) {
+    const ch = s.charCodeAt(i);
+    if (ch === 92) { result += '\\\\'; }
+    else if (ch === 34) { result += '\\"'; }
+    else if (ch === 10) { result += '\\n'; }
+    else if (ch === 13) { result += '\\r'; }
+    else if (ch === 9) { result += '\\t'; }
+    else { result += s.slice(i, i + 1); }
+  }
+  return result;
+}
+
+/** Extract a JSON string field from a payload string. Perry-safe charCodeAt scanning. */
+function extractSyncField(json: string, key: string): string {
+  let pattern = '"';
+  pattern += key;
+  pattern += '"';
+
+  let pos = -1;
+  for (let i = 0; i <= json.length - pattern.length; i++) {
+    let match: number = 1;
+    for (let j = 0; j < pattern.length; j++) {
+      if (json.charCodeAt(i + j) !== pattern.charCodeAt(j)) {
+        match = 0;
+        break;
+      }
+    }
+    if (match > 0) { pos = i; break; }
+  }
+  if (pos < 0) return '';
+
+  let afterKey = pos + pattern.length;
+  // Skip whitespace + colon + whitespace
+  while (afterKey < json.length && (json.charCodeAt(afterKey) === 32 || json.charCodeAt(afterKey) === 9)) afterKey += 1;
+  if (afterKey >= json.length || json.charCodeAt(afterKey) !== 58) return '';
+  afterKey += 1;
+  while (afterKey < json.length && (json.charCodeAt(afterKey) === 32 || json.charCodeAt(afterKey) === 9)) afterKey += 1;
+  if (afterKey >= json.length || json.charCodeAt(afterKey) !== 34) return '';
+  afterKey += 1;
+
+  let result = '';
+  while (afterKey < json.length) {
+    const ch = json.charCodeAt(afterKey);
+    if (ch === 92) {
+      afterKey += 1;
+      if (afterKey < json.length) {
+        const next = json.charCodeAt(afterKey);
+        if (next === 110) { result += '\n'; }
+        else if (next === 116) { result += '\t'; }
+        else if (next === 34) { result += '"'; }
+        else if (next === 92) { result += '\\'; }
+        else { result += json.slice(afterKey, afterKey + 1); }
+      }
+    } else if (ch === 34) {
+      break;
+    } else {
+      result += json.slice(afterKey, afterKey + 1);
+    }
+    afterKey += 1;
+  }
+  return result;
+}
+
+// --- App lifecycle (background/foreground) ---
+
+/** Call when app enters background (iOS/Android). Gracefully closes connection. */
+export function onAppBackground(): void {
+  appInBackground = 1;
+  if (guestConnected === 1) {
+    markDisconnected('app_background');
+  }
+}
+
+/** Call when app returns to foreground. Triggers immediate reconnect (no backoff). */
+export function onAppForeground(): void {
+  appInBackground = 0;
+  if (guestActive === 1 && guestConnected === 0 && guestRoomId.length > 0) {
+    // Reset backoff for immediate reconnect
+    reconnectAttempts = 0;
+    foregroundReconnectPending = 1;
+    _onReconnecting(0);
+  }
+}
+
+/** Check if a foreground reconnect is pending (caller should initiate connect). */
+export function consumeForegroundReconnect(): number {
+  if (foregroundReconnectPending > 0) {
+    foregroundReconnectPending = 0;
+    return 1;
+  }
+  return 0;
+}
+
+/** Whether the app is currently in background. */
+export function isAppInBackground(): number {
+  return appInBackground;
 }

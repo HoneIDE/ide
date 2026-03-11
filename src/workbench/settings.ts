@@ -7,7 +7,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { execSync } from 'child_process';
+import { getHomeDir, getAppDataDir } from './paths';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -42,8 +42,59 @@ export interface WorkbenchSettings {
   aiModel: string;
   /** AI inline completion enabled */
   aiInlineCompletionEnabled: boolean;
+  /** Editor: insert spaces instead of tabs */
+  editorInsertSpaces: boolean;
+  /** Editor: word wrap mode */
+  editorWordWrap: string;
+  /** Editor: minimap enabled */
+  editorMinimapEnabled: boolean;
+  /** Editor: format on save */
+  editorFormatOnSave: boolean;
+  /** Editor: cursor style */
+  editorCursorStyle: string;
+  /** Files: auto save mode */
+  filesAutoSave: string;
+  /** Files: auto save delay in ms */
+  filesAutoSaveDelay: number;
+  /** Files: trim trailing whitespace on save */
+  filesTrimTrailingWhitespace: boolean;
+  /** Terminal: font size */
+  terminalFontSize: number;
+  /** Terminal: cursor style */
+  terminalCursorStyle: string;
+  /** AI: inline completion delay in ms */
+  aiInlineCompletionDelay: number;
+  /** Search: use ignore files (.gitignore) */
+  searchUseIgnoreFiles: boolean;
+  /** Search: follow symlinks */
+  searchFollowSymlinks: boolean;
   /** Last opened folder path */
   lastOpenFolder: string;
+  /** AI API key (Anthropic) — legacy, migrated to aiKeyAnthropic */
+  aiApiKey: string;
+  /** AI: per-provider API keys */
+  aiKeyAnthropic: string;
+  aiKeyOpenai: string;
+  aiKeyGoogle: string;
+  aiKeyDeepseek: string;
+  aiKeyXai: string;
+  /** AI: Ollama settings */
+  aiOllamaUrl: string;
+  aiOllamaModel: string;
+  /** AI: Custom endpoint settings */
+  aiCustomUrl: string;
+  aiCustomKey: string;
+  aiCustomModel: string;
+  /** Sync: enabled */
+  syncEnabled: boolean;
+  /** Sync: relay server URL */
+  syncRelayUrl: string;
+  /** Sync: auth server URL */
+  syncAuthUrl: string;
+  /** Sync: device token (set after login) */
+  syncDeviceToken: string;
+  /** Whether the first-run setup has been completed */
+  setupComplete: boolean;
 }
 
 type SettingsChangeListener = (settings: WorkbenchSettings) => void;
@@ -52,36 +103,14 @@ type SettingsChangeListener = (settings: WorkbenchSettings) => void;
 // Persistence helpers
 // ---------------------------------------------------------------------------
 
-let _homeDir: string = '';
-
-function getHomeDir(): string {
-  if (_homeDir.length > 0) return _homeDir;
-  try {
-    const result = execSync('/bin/echo $HOME');
-    // Trim trailing newline
-    let dir = result;
-    if (dir.length > 0 && dir.charCodeAt(dir.length - 1) === 10) {
-      dir = dir.slice(0, dir.length - 1);
-    }
-    _homeDir = dir;
-  } catch (e: any) {
-    _homeDir = '/tmp';
-  }
-  return _homeDir;
-}
-
 function getSettingsPath(): string {
-  let p = '';
-  p += getHomeDir();
-  p += '/.hone/settings.ini';
+  let p = getAppDataDir();
+  p += '/settings.ini';
   return p;
 }
 
 function getSettingsDir(): string {
-  let p = '';
-  p += getHomeDir();
-  p += '/.hone';
-  return p;
+  return getAppDataDir();
 }
 
 function ensureDir(dir: string): void {
@@ -110,7 +139,36 @@ let _settings_editorLineNumbers: string = 'on';
 let _settings_aiProvider: string = 'anthropic';
 let _settings_aiModel: string = 'claude-sonnet-4-6';
 let _settings_aiInlineCompletionEnabled: number = 1;
+let _settings_editorInsertSpaces: number = 1;
+let _settings_editorWordWrap: string = 'off';
+let _settings_editorMinimapEnabled: number = 1;
+let _settings_editorFormatOnSave: number = 0;
+let _settings_editorCursorStyle: string = 'line';
+let _settings_filesAutoSave: string = 'off';
+let _settings_filesAutoSaveDelay: number = 1000;
+let _settings_filesTrimTrailingWhitespace: number = 0;
+let _settings_terminalFontSize: number = 13;
+let _settings_terminalCursorStyle: string = 'block';
+let _settings_aiInlineCompletionDelay: number = 300;
+let _settings_searchUseIgnoreFiles: number = 1;
+let _settings_searchFollowSymlinks: number = 1;
 let _settings_lastOpenFolder: string = '';
+let _settings_aiApiKey: string = '';
+let _settings_aiKeyAnthropic: string = '';
+let _settings_aiKeyOpenai: string = '';
+let _settings_aiKeyGoogle: string = '';
+let _settings_aiKeyDeepseek: string = '';
+let _settings_aiKeyXai: string = '';
+let _settings_aiOllamaUrl: string = 'http://localhost:11434';
+let _settings_aiOllamaModel: string = 'llama3:8b';
+let _settings_aiCustomUrl: string = '';
+let _settings_aiCustomKey: string = '';
+let _settings_aiCustomModel: string = '';
+let _settings_syncEnabled: number = 0;
+let _settings_syncRelayUrl: string = 'wss://sync.hone.codes/ws';
+let _settings_syncAuthUrl: string = 'https://auth.hone.codes';
+let _settings_syncDeviceToken: string = '';
+let _settings_setupComplete: number = 0;
 let _settingsLoaded: number = 0;
 
 const _listeners: SettingsChangeListener[] = [];
@@ -159,7 +217,41 @@ export function initSettings(): void {
     if (key === 'aiProvider') _settings_aiProvider = val;
     if (key === 'aiModel') _settings_aiModel = val;
     if (key === 'aiInlineCompletionEnabled') _settings_aiInlineCompletionEnabled = val === '1' ? 1 : 0;
+    if (key === 'editorInsertSpaces') _settings_editorInsertSpaces = val === '1' ? 1 : 0;
+    if (key === 'editorWordWrap') _settings_editorWordWrap = val;
+    if (key === 'editorMinimapEnabled') _settings_editorMinimapEnabled = val === '1' ? 1 : 0;
+    if (key === 'editorFormatOnSave') _settings_editorFormatOnSave = val === '1' ? 1 : 0;
+    if (key === 'editorCursorStyle') _settings_editorCursorStyle = val;
+    if (key === 'filesAutoSave') _settings_filesAutoSave = val;
+    if (key === 'filesAutoSaveDelay') { const n = parseInt(val); if (n >= 0) _settings_filesAutoSaveDelay = n; }
+    if (key === 'filesTrimTrailingWhitespace') _settings_filesTrimTrailingWhitespace = val === '1' ? 1 : 0;
+    if (key === 'terminalFontSize') { const n = parseInt(val); if (n > 0) _settings_terminalFontSize = n; }
+    if (key === 'terminalCursorStyle') _settings_terminalCursorStyle = val;
+    if (key === 'aiInlineCompletionDelay') { const n = parseInt(val); if (n >= 0) _settings_aiInlineCompletionDelay = n; }
+    if (key === 'searchUseIgnoreFiles') _settings_searchUseIgnoreFiles = val === '1' ? 1 : 0;
+    if (key === 'searchFollowSymlinks') _settings_searchFollowSymlinks = val === '1' ? 1 : 0;
     if (key === 'lastOpenFolder') _settings_lastOpenFolder = val;
+    if (key === 'aiApiKey') _settings_aiApiKey = val;
+    if (key === 'aiKeyAnthropic') _settings_aiKeyAnthropic = val;
+    if (key === 'aiKeyOpenai') _settings_aiKeyOpenai = val;
+    if (key === 'aiKeyGoogle') _settings_aiKeyGoogle = val;
+    if (key === 'aiKeyDeepseek') _settings_aiKeyDeepseek = val;
+    if (key === 'aiKeyXai') _settings_aiKeyXai = val;
+    if (key === 'aiOllamaUrl') _settings_aiOllamaUrl = val;
+    if (key === 'aiOllamaModel') _settings_aiOllamaModel = val;
+    if (key === 'aiCustomUrl') _settings_aiCustomUrl = val;
+    if (key === 'aiCustomKey') _settings_aiCustomKey = val;
+    if (key === 'aiCustomModel') _settings_aiCustomModel = val;
+    if (key === 'syncEnabled') _settings_syncEnabled = val === '1' ? 1 : 0;
+    if (key === 'syncRelayUrl') _settings_syncRelayUrl = val;
+    if (key === 'syncAuthUrl') _settings_syncAuthUrl = val;
+    if (key === 'syncDeviceToken') _settings_syncDeviceToken = val;
+    if (key === 'setupComplete') _settings_setupComplete = val === '1' ? 1 : 0;
+  }
+
+  // Migrate legacy aiApiKey → aiKeyAnthropic
+  if (_settings_aiKeyAnthropic.length < 5 && _settings_aiApiKey.length > 5) {
+    _settings_aiKeyAnthropic = _settings_aiApiKey;
   }
 }
 
@@ -180,7 +272,36 @@ function buildSnapshot(): WorkbenchSettings {
     aiProvider: _settings_aiProvider,
     aiModel: _settings_aiModel,
     aiInlineCompletionEnabled: _settings_aiInlineCompletionEnabled > 0,
+    editorInsertSpaces: _settings_editorInsertSpaces > 0,
+    editorWordWrap: _settings_editorWordWrap,
+    editorMinimapEnabled: _settings_editorMinimapEnabled > 0,
+    editorFormatOnSave: _settings_editorFormatOnSave > 0,
+    editorCursorStyle: _settings_editorCursorStyle,
+    filesAutoSave: _settings_filesAutoSave,
+    filesAutoSaveDelay: _settings_filesAutoSaveDelay,
+    filesTrimTrailingWhitespace: _settings_filesTrimTrailingWhitespace > 0,
+    terminalFontSize: _settings_terminalFontSize,
+    terminalCursorStyle: _settings_terminalCursorStyle,
+    aiInlineCompletionDelay: _settings_aiInlineCompletionDelay,
+    searchUseIgnoreFiles: _settings_searchUseIgnoreFiles > 0,
+    searchFollowSymlinks: _settings_searchFollowSymlinks > 0,
     lastOpenFolder: _settings_lastOpenFolder,
+    aiApiKey: _settings_aiApiKey,
+    aiKeyAnthropic: _settings_aiKeyAnthropic,
+    aiKeyOpenai: _settings_aiKeyOpenai,
+    aiKeyGoogle: _settings_aiKeyGoogle,
+    aiKeyDeepseek: _settings_aiKeyDeepseek,
+    aiKeyXai: _settings_aiKeyXai,
+    aiOllamaUrl: _settings_aiOllamaUrl,
+    aiOllamaModel: _settings_aiOllamaModel,
+    aiCustomUrl: _settings_aiCustomUrl,
+    aiCustomKey: _settings_aiCustomKey,
+    aiCustomModel: _settings_aiCustomModel,
+    syncEnabled: _settings_syncEnabled > 0,
+    syncRelayUrl: _settings_syncRelayUrl,
+    syncAuthUrl: _settings_syncAuthUrl,
+    syncDeviceToken: _settings_syncDeviceToken,
+    setupComplete: _settings_setupComplete > 0,
   };
 }
 
@@ -257,8 +378,95 @@ function serializeFromVars(): string {
   out += 'aiInlineCompletionEnabled=';
   out += _settings_aiInlineCompletionEnabled > 0 ? '1' : '0';
   out += '\n';
+  out += 'editorInsertSpaces=';
+  out += _settings_editorInsertSpaces > 0 ? '1' : '0';
+  out += '\n';
+  out += 'editorWordWrap=';
+  out += _settings_editorWordWrap;
+  out += '\n';
+  out += 'editorMinimapEnabled=';
+  out += _settings_editorMinimapEnabled > 0 ? '1' : '0';
+  out += '\n';
+  out += 'editorFormatOnSave=';
+  out += _settings_editorFormatOnSave > 0 ? '1' : '0';
+  out += '\n';
+  out += 'editorCursorStyle=';
+  out += _settings_editorCursorStyle;
+  out += '\n';
+  out += 'filesAutoSave=';
+  out += _settings_filesAutoSave;
+  out += '\n';
+  out += 'filesAutoSaveDelay=';
+  out += intToStr(_settings_filesAutoSaveDelay);
+  out += '\n';
+  out += 'filesTrimTrailingWhitespace=';
+  out += _settings_filesTrimTrailingWhitespace > 0 ? '1' : '0';
+  out += '\n';
+  out += 'terminalFontSize=';
+  out += intToStr(_settings_terminalFontSize);
+  out += '\n';
+  out += 'terminalCursorStyle=';
+  out += _settings_terminalCursorStyle;
+  out += '\n';
+  out += 'aiInlineCompletionDelay=';
+  out += intToStr(_settings_aiInlineCompletionDelay);
+  out += '\n';
+  out += 'searchUseIgnoreFiles=';
+  out += _settings_searchUseIgnoreFiles > 0 ? '1' : '0';
+  out += '\n';
+  out += 'searchFollowSymlinks=';
+  out += _settings_searchFollowSymlinks > 0 ? '1' : '0';
+  out += '\n';
   out += 'lastOpenFolder=';
   out += _settings_lastOpenFolder;
+  out += '\n';
+  out += 'aiApiKey=';
+  out += _settings_aiApiKey;
+  out += '\n';
+  out += 'aiKeyAnthropic=';
+  out += _settings_aiKeyAnthropic;
+  out += '\n';
+  out += 'aiKeyOpenai=';
+  out += _settings_aiKeyOpenai;
+  out += '\n';
+  out += 'aiKeyGoogle=';
+  out += _settings_aiKeyGoogle;
+  out += '\n';
+  out += 'aiKeyDeepseek=';
+  out += _settings_aiKeyDeepseek;
+  out += '\n';
+  out += 'aiKeyXai=';
+  out += _settings_aiKeyXai;
+  out += '\n';
+  out += 'aiOllamaUrl=';
+  out += _settings_aiOllamaUrl;
+  out += '\n';
+  out += 'aiOllamaModel=';
+  out += _settings_aiOllamaModel;
+  out += '\n';
+  out += 'aiCustomUrl=';
+  out += _settings_aiCustomUrl;
+  out += '\n';
+  out += 'aiCustomKey=';
+  out += _settings_aiCustomKey;
+  out += '\n';
+  out += 'aiCustomModel=';
+  out += _settings_aiCustomModel;
+  out += '\n';
+  out += 'syncEnabled=';
+  out += _settings_syncEnabled > 0 ? '1' : '0';
+  out += '\n';
+  out += 'syncRelayUrl=';
+  out += _settings_syncRelayUrl;
+  out += '\n';
+  out += 'syncAuthUrl=';
+  out += _settings_syncAuthUrl;
+  out += '\n';
+  out += 'syncDeviceToken=';
+  out += _settings_syncDeviceToken;
+  out += '\n';
+  out += 'setupComplete=';
+  out += _settings_setupComplete > 0 ? '1' : '0';
   out += '\n';
   return out;
 }
@@ -279,9 +487,32 @@ export function setStringSetting(key: string, value: string): void {
   if (key === 'editorLineNumbers') _settings_editorLineNumbers = value;
   if (key === 'aiProvider') _settings_aiProvider = value;
   if (key === 'aiModel') _settings_aiModel = value;
+  if (key === 'editorWordWrap') _settings_editorWordWrap = value;
+  if (key === 'editorCursorStyle') _settings_editorCursorStyle = value;
+  if (key === 'filesAutoSave') _settings_filesAutoSave = value;
+  if (key === 'terminalCursorStyle') _settings_terminalCursorStyle = value;
   if (key === 'lastOpenFolder') _settings_lastOpenFolder = value;
+  if (key === 'aiApiKey') _settings_aiApiKey = value;
+  if (key === 'aiKeyAnthropic') _settings_aiKeyAnthropic = value;
+  if (key === 'aiKeyOpenai') _settings_aiKeyOpenai = value;
+  if (key === 'aiKeyGoogle') _settings_aiKeyGoogle = value;
+  if (key === 'aiKeyDeepseek') _settings_aiKeyDeepseek = value;
+  if (key === 'aiKeyXai') _settings_aiKeyXai = value;
+  if (key === 'aiOllamaUrl') _settings_aiOllamaUrl = value;
+  if (key === 'aiOllamaModel') _settings_aiOllamaModel = value;
+  if (key === 'aiCustomUrl') _settings_aiCustomUrl = value;
+  if (key === 'aiCustomKey') _settings_aiCustomKey = value;
+  if (key === 'aiCustomModel') _settings_aiCustomModel = value;
+  if (key === 'syncRelayUrl') _settings_syncRelayUrl = value;
+  if (key === 'syncAuthUrl') _settings_syncAuthUrl = value;
+  if (key === 'syncDeviceToken') _settings_syncDeviceToken = value;
   persistToDisk();
   notifyListeners();
+}
+
+/** Check if first-run setup is complete. */
+export function isSetupComplete(): number {
+  return _settings_setupComplete;
 }
 
 /** Update a number setting. */
@@ -289,6 +520,9 @@ export function setNumberSetting(key: string, value: number): void {
   if (key === 'activePanelIndex') _settings_activePanelIndex = value;
   if (key === 'editorFontSize') _settings_editorFontSize = value;
   if (key === 'editorTabSize') _settings_editorTabSize = value;
+  if (key === 'filesAutoSaveDelay') _settings_filesAutoSaveDelay = value;
+  if (key === 'terminalFontSize') _settings_terminalFontSize = value;
+  if (key === 'aiInlineCompletionDelay') _settings_aiInlineCompletionDelay = value;
   persistToDisk();
   notifyListeners();
 }
@@ -299,6 +533,14 @@ export function setBoolSetting(key: string, value: number): void {
   if (key === 'sidebarVisible') _settings_sidebarVisible = value;
   if (key === 'terminalVisible') _settings_terminalVisible = value;
   if (key === 'aiInlineCompletionEnabled') _settings_aiInlineCompletionEnabled = value;
+  if (key === 'editorInsertSpaces') _settings_editorInsertSpaces = value;
+  if (key === 'editorMinimapEnabled') _settings_editorMinimapEnabled = value;
+  if (key === 'editorFormatOnSave') _settings_editorFormatOnSave = value;
+  if (key === 'filesTrimTrailingWhitespace') _settings_filesTrimTrailingWhitespace = value;
+  if (key === 'searchUseIgnoreFiles') _settings_searchUseIgnoreFiles = value;
+  if (key === 'searchFollowSymlinks') _settings_searchFollowSymlinks = value;
+  if (key === 'syncEnabled') _settings_syncEnabled = value;
+  if (key === 'setupComplete') _settings_setupComplete = value;
   persistToDisk();
   notifyListeners();
 }
@@ -324,7 +566,36 @@ export function updateSettings(patch: Partial<WorkbenchSettings>): void {
     if (k === 'aiProvider') _settings_aiProvider = (patch as any).aiProvider;
     if (k === 'aiModel') _settings_aiModel = (patch as any).aiModel;
     if (k === 'aiInlineCompletionEnabled') _settings_aiInlineCompletionEnabled = (patch as any).aiInlineCompletionEnabled ? 1 : 0;
+    if (k === 'editorInsertSpaces') _settings_editorInsertSpaces = (patch as any).editorInsertSpaces ? 1 : 0;
+    if (k === 'editorWordWrap') _settings_editorWordWrap = (patch as any).editorWordWrap;
+    if (k === 'editorMinimapEnabled') _settings_editorMinimapEnabled = (patch as any).editorMinimapEnabled ? 1 : 0;
+    if (k === 'editorFormatOnSave') _settings_editorFormatOnSave = (patch as any).editorFormatOnSave ? 1 : 0;
+    if (k === 'editorCursorStyle') _settings_editorCursorStyle = (patch as any).editorCursorStyle;
+    if (k === 'filesAutoSave') _settings_filesAutoSave = (patch as any).filesAutoSave;
+    if (k === 'filesAutoSaveDelay') _settings_filesAutoSaveDelay = (patch as any).filesAutoSaveDelay;
+    if (k === 'filesTrimTrailingWhitespace') _settings_filesTrimTrailingWhitespace = (patch as any).filesTrimTrailingWhitespace ? 1 : 0;
+    if (k === 'terminalFontSize') _settings_terminalFontSize = (patch as any).terminalFontSize;
+    if (k === 'terminalCursorStyle') _settings_terminalCursorStyle = (patch as any).terminalCursorStyle;
+    if (k === 'aiInlineCompletionDelay') _settings_aiInlineCompletionDelay = (patch as any).aiInlineCompletionDelay;
+    if (k === 'searchUseIgnoreFiles') _settings_searchUseIgnoreFiles = (patch as any).searchUseIgnoreFiles ? 1 : 0;
+    if (k === 'searchFollowSymlinks') _settings_searchFollowSymlinks = (patch as any).searchFollowSymlinks ? 1 : 0;
     if (k === 'lastOpenFolder') _settings_lastOpenFolder = (patch as any).lastOpenFolder;
+    if (k === 'aiApiKey') _settings_aiApiKey = (patch as any).aiApiKey;
+    if (k === 'aiKeyAnthropic') _settings_aiKeyAnthropic = (patch as any).aiKeyAnthropic;
+    if (k === 'aiKeyOpenai') _settings_aiKeyOpenai = (patch as any).aiKeyOpenai;
+    if (k === 'aiKeyGoogle') _settings_aiKeyGoogle = (patch as any).aiKeyGoogle;
+    if (k === 'aiKeyDeepseek') _settings_aiKeyDeepseek = (patch as any).aiKeyDeepseek;
+    if (k === 'aiKeyXai') _settings_aiKeyXai = (patch as any).aiKeyXai;
+    if (k === 'aiOllamaUrl') _settings_aiOllamaUrl = (patch as any).aiOllamaUrl;
+    if (k === 'aiOllamaModel') _settings_aiOllamaModel = (patch as any).aiOllamaModel;
+    if (k === 'aiCustomUrl') _settings_aiCustomUrl = (patch as any).aiCustomUrl;
+    if (k === 'aiCustomKey') _settings_aiCustomKey = (patch as any).aiCustomKey;
+    if (k === 'aiCustomModel') _settings_aiCustomModel = (patch as any).aiCustomModel;
+    if (k === 'syncEnabled') _settings_syncEnabled = (patch as any).syncEnabled ? 1 : 0;
+    if (k === 'syncRelayUrl') _settings_syncRelayUrl = (patch as any).syncRelayUrl;
+    if (k === 'syncAuthUrl') _settings_syncAuthUrl = (patch as any).syncAuthUrl;
+    if (k === 'syncDeviceToken') _settings_syncDeviceToken = (patch as any).syncDeviceToken;
+    if (k === 'setupComplete') _settings_setupComplete = (patch as any).setupComplete ? 1 : 0;
   }
   persistToDisk();
   notifyListeners();
@@ -350,3 +621,6 @@ export function toggleSidebarLocation(): void {
     setStringSetting('sidebarLocation', 'left');
   }
 }
+
+// Auto-load settings from disk on module init
+initSettings();

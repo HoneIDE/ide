@@ -66,32 +66,83 @@ const SPLIT_MAX_WIDTH = 1023;
 // Detection
 // ---------------------------------------------------------------------------
 
+// Compile-time platform ID injected by Perry codegen:
+// 0 = macOS, 1 = iOS, 2 = Android, 3 = Windows, 4 = Linux, 5 = Web
+declare const __platform__: number;
+
+// Screen detection FFI — implemented in perry-ui-ios (and perry-ui-gtk4, web).
+// Returns real values on iOS; stubs return TAG_UNDEF on platforms without implementation.
+declare function perry_get_screen_width(): number;
+declare function perry_get_screen_height(): number;
+declare function perry_get_scale_factor(): number;
+declare function perry_get_orientation(): string;
+declare function perry_on_layout_change(callback: () => void): void;
+declare function perry_get_device_idiom(): number;
+
 export function detectPlatform(): Platform {
-  // Hardcoded for Windows build — perry_get_platform() FFI not available
-  return 'windows';
+  if (__platform__ === 0) return 'macos';
+  if (__platform__ === 1) {
+    // Use UIDevice.userInterfaceIdiom to distinguish iPhone from iPad.
+    // UIScreen.mainScreen.bounds returns 320x480 on iPad before scene connection,
+    // so we can't rely on screen dimensions during early init.
+    const idiom = perry_get_device_idiom();
+    if (idiom === 1) return 'ipados'; // UIUserInterfaceIdiomPad
+    return 'ios';
+  }
+  if (__platform__ === 2) return 'android';
+  if (__platform__ === 3) return 'windows';
+  if (__platform__ === 4) return 'linux';
+  if (__platform__ === 5) return 'web';
+  return 'macos'; // default for unknown
 }
 
 export function detectScreen(): ScreenInfo {
-  try {
-    const w = perry_get_screen_width();
-    const h = perry_get_screen_height();
-    const s = perry_get_scale_factor();
-    const o = perry_get_orientation();
-    // Validate — if FFI stubs returned 0, fall through to defaults
-    if (w > 0 && h > 0) {
-      return {
-        width: w,
-        height: h,
-        scaleFactor: s > 0 ? s : 2,
-        orientation: o === 'landscape' ? 'landscape' : 'portrait',
-      };
+  // Call platform FFI — on platforms without real implementation, stubs return TAG_UNDEF (NaN).
+  const w = perry_get_screen_width();
+  const h = perry_get_screen_height();
+  const s = perry_get_scale_factor();
+  // Validate — NaN and 0 both fail the > 0 check.
+  // Also reject 320x480 on iPad (UIScreen.mainScreen returns bogus values before scene connection).
+  let validScreen = 0;
+  if (w > 0) {
+    if (h > 0) {
+      // On iPad, reject 320x480 (pre-scene default)
+      if (__platform__ === 1) {
+        const idiom = perry_get_device_idiom();
+        if (idiom === 1) {
+          // iPad: only accept if short side >= 600
+          const short = w < h ? w : h;
+          if (short >= 600) {
+            validScreen = 1;
+          }
+        } else {
+          validScreen = 1;
+        }
+      } else {
+        validScreen = 1;
+      }
     }
-  } catch {
-    // FFI not available
   }
-  // Platform-appropriate defaults
+  if (validScreen > 0) {
+    let orient: Orientation = 'portrait';
+    if (w > h) {
+      orient = 'landscape';
+    }
+    return {
+      width: w,
+      height: h,
+      scaleFactor: s > 0 ? s : 2,
+      orientation: orient,
+    };
+  }
+  // Platform-appropriate defaults (FFI unavailable or returned invalid values)
   if (__platform__ === 1) {
-    // iOS (iPhone) — compact portrait
+    const idiom = perry_get_device_idiom();
+    if (idiom === 1) {
+      // iPad default (1024×1366 = iPad Air 13" portrait)
+      return { width: 1024, height: 1366, scaleFactor: 2, orientation: 'portrait' };
+    }
+    // iPhone default (393×852 = iPhone 15)
     return { width: 393, height: 852, scaleFactor: 3, orientation: 'portrait' };
   }
   // Desktop fallback
@@ -131,11 +182,9 @@ export function selectLayoutMode(
     return 'compact';
   }
   if (deviceClass === 'tablet') {
-    // Tablet in landscape with sufficient width gets full layout.
-    // Narrow landscape or any portrait gets split.
-    if (screen.orientation === 'landscape' && screen.width > SPLIT_MAX_WIDTH) {
-      return 'full';
-    }
+    // iPad landscape has enough room for full workbench layout
+    if (screen.orientation === 'landscape') return 'full';
+    // iPad portrait: split layout (sidebar + editor side by side)
     return 'split';
   }
   // Desktop: always full layout (macOS, Windows, Linux)
@@ -156,7 +205,7 @@ export function detectInputMode(
 }
 
 // ---------------------------------------------------------------------------
-// PlatformContext — observable state
+// PlatformContext -- observable state
 // ---------------------------------------------------------------------------
 
 type Listener = (ctx: PlatformContext) => void;
@@ -170,6 +219,34 @@ export function getPlatformContext(): PlatformContext {
     installNativeListeners();
   }
   return _current;
+}
+
+// Numeric getters — cross-module string returns are broken in Perry iOS.
+// Return numbers that the caller maps to strings in the same module.
+// Layout: 0=compact, 1=split, 2=full
+export function getLayoutModeNum(): number {
+  const ctx = getPlatformContext();
+  if (ctx.layoutMode === 'compact') return 0;
+  if (ctx.layoutMode === 'split') return 1;
+  return 2;
+}
+
+// Device: 0=phone, 1=tablet, 2=desktop
+export function getDeviceClassNum(): number {
+  const ctx = getPlatformContext();
+  if (ctx.deviceClass === 'phone') return 0;
+  if (ctx.deviceClass === 'tablet') return 1;
+  return 2;
+}
+
+export function getScreenWidth(): number {
+  const ctx = getPlatformContext();
+  return ctx.screen.width;
+}
+
+export function getScreenHeight(): number {
+  const ctx = getPlatformContext();
+  return ctx.screen.height;
 }
 
 /**

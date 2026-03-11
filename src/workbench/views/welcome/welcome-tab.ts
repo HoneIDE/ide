@@ -9,6 +9,7 @@ import {
 } from 'perry/ui';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
+import { getEditorForeground, getEditorBackground } from '../../theme/theme-colors';
 
 let _onOpenFolder: () => void = () => {};
 let _onOpenFile: () => void = () => {};
@@ -32,53 +33,53 @@ export function createWelcomeContent(colors: ResolvedUIColors): unknown {
   const titleText = Text('Hone IDE');
   textSetFontSize(titleText, 24);
   textSetFontWeight(titleText, 24, 0.7);
-  setFg(titleText, colors.editorForeground);
+  setFg(titleText, getEditorForeground());
 
   const subtitle = Text('A lightweight, native code editor');
   textSetFontSize(subtitle, 14);
-  setFg(subtitle, colors.editorForeground);
+  setFg(subtitle, getEditorForeground());
 
   // Quick actions
   const actionsTitle = Text('Quick Actions');
   textSetFontSize(actionsTitle, 14);
   textSetFontWeight(actionsTitle, 14, 0.6);
-  setFg(actionsTitle, colors.editorForeground);
+  setFg(actionsTitle, getEditorForeground());
 
   const openFolderBtn = Button('Open Folder', () => { onOpenFolderClick(); });
   buttonSetBordered(openFolderBtn, 0);
   textSetFontSize(openFolderBtn, 13);
-  setBtnFg(openFolderBtn, colors.editorForeground);
+  setBtnFg(openFolderBtn, getEditorForeground());
 
   const openFileBtn = Button('Open File', () => { onOpenFileClick(); });
   buttonSetBordered(openFileBtn, 0);
   textSetFontSize(openFileBtn, 13);
-  setBtnFg(openFileBtn, colors.editorForeground);
+  setBtnFg(openFileBtn, getEditorForeground());
 
   const newFileBtn = Button('New File', () => { onNewFileClick(); });
   buttonSetBordered(newFileBtn, 0);
   textSetFontSize(newFileBtn, 13);
-  setBtnFg(newFileBtn, colors.editorForeground);
+  setBtnFg(newFileBtn, getEditorForeground());
 
   // Tips
   const tipsTitle = Text('Tips');
   textSetFontSize(tipsTitle, 14);
   textSetFontWeight(tipsTitle, 14, 0.6);
-  setFg(tipsTitle, colors.editorForeground);
+  setFg(tipsTitle, getEditorForeground());
 
   const tip1 = Text('Cmd+P to quick open files');
   textSetFontSize(tip1, 12);
-  setFg(tip1, colors.editorForeground);
+  setFg(tip1, getEditorForeground());
 
   const tip2 = Text('Cmd+Shift+P for command palette');
   textSetFontSize(tip2, 12);
-  setFg(tip2, colors.editorForeground);
+  setFg(tip2, getEditorForeground());
 
   const tip3 = Text('Cmd+B to toggle sidebar');
   textSetFontSize(tip3, 12);
-  setFg(tip3, colors.editorForeground);
+  setFg(tip3, getEditorForeground());
 
   const content = VStackWithInsets(12, 40, 40, 40, 40);
-  setBg(content, colors.editorBackground);
+  setBg(content, getEditorBackground());
   widgetAddChild(content, Spacer());
   widgetAddChild(content, titleText);
   widgetAddChild(content, subtitle);

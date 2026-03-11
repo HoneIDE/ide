@@ -7,6 +7,7 @@
 import { spawnBackground } from 'child_process';
 import { readFileSync, existsSync, unlinkSync } from 'fs';
 import { updateDiagnostics } from './diagnostics-panel';
+import { getTempDir, canRunShellCommands } from '../../paths';
 
 // Module-level state
 let lspReady: number = 0;
@@ -18,8 +19,15 @@ let lastDiagHashLen: number = 0;
 
 // Background process tracking
 let diagRunning: number = 0;
-const DIAG_LOG_FILE = '/tmp/hone-tsc-diag.txt';
-const DIAG_DONE_FILE = '/tmp/hone-tsc-done';
+let DIAG_LOG_FILE = '';
+let DIAG_DONE_FILE = '';
+
+function ensureDiagPaths(): void {
+  if (DIAG_LOG_FILE.length > 0) return;
+  const tmp = getTempDir();
+  DIAG_LOG_FILE = tmp + '/hone-tsc-diag.txt';
+  DIAG_DONE_FILE = tmp + '/hone-tsc-done';
+}
 
 // Status updater callback
 let _statusUpdater: (errorCount: number, warningCount: number) => void = () => {};
@@ -80,6 +88,10 @@ function onLspTick(): void {
 function startDiagnostics(): void {
   if (lspWorkspaceRoot.length < 1) return;
   if (diagRunning > 0) return;
+  // Shell commands not available on iOS/Android
+  if (!canRunShellCommands()) return;
+
+  ensureDiagPaths();
 
   // Check if tsconfig.json exists
   let hasTsConfig: number = 0;
@@ -97,7 +109,7 @@ function startDiagnostics(): void {
 
   // Spawn tsc in background — output goes to log file, sentinel written on completion
   const cmd = '/bin/sh';
-  const shellCmd = 'cd ' + lspWorkspaceRoot + ' && npx tsc --noEmit --pretty false > /tmp/hone-tsc-diag.txt 2>&1; touch /tmp/hone-tsc-done';
+  const shellCmd = 'cd ' + lspWorkspaceRoot + ' && npx tsc --noEmit --pretty false > ' + DIAG_LOG_FILE + ' 2>&1; touch ' + DIAG_DONE_FILE;
   const args = ['-c', shellCmd];
   spawnBackground(cmd, args, '/dev/null');
   diagRunning = 1;

@@ -18,18 +18,39 @@ import {
   textSetFontSize, textSetFontWeight,
   buttonSetBordered, buttonSetImage, buttonSetImagePosition,
   widgetAddChild, widgetClearChildren, widgetRemoveChild,
-  widgetSetWidth, widgetSetHeight, widgetSetHugging, widgetSetHidden,
-  stackSetDetachesHidden, widgetMatchParentHeight,
+  widgetSetWidth, widgetSetHeight, widgetSetHugging, widgetSetHidden, widgetSetBackgroundColor,
+  stackSetDetachesHidden, stackSetDistribution,
+  widgetMatchParentHeight, widgetMatchParentWidth,
   embedNSView,
-  openFolderDialog, openFileDialog, saveFileDialog,
+  openFolderDialog, openFileDialog, saveFileDialog, pollOpenFile,
+  textfieldFocus,
+  frameSplitCreate, frameSplitAddChild,
 } from 'perry/ui';
 import { Editor } from '@honeide/editor/perry';
-import { getActiveTheme, setActiveTheme, type ResolvedUIColors } from './theme/theme-loader';
+import { getActiveTheme, setActiveTheme } from './theme/theme-loader';
+import {
+  getEditorBackground, getEditorForeground,
+  getActivityBarBackground, getActivityBarForeground, getActivityBarInactiveForeground,
+  getSideBarBackground, getSideBarForeground,
+  getStatusBarBackground, getStatusBarForeground,
+  getPanelBorder, getPanelBackground,
+  getTabActiveBackground, getTabActiveForeground,
+  getTabInactiveBackground, getTabInactiveForeground, getTabBorder,
+  getInputBackground, getInputForeground, getInputBorder, getInputPlaceholderForeground,
+  getButtonBackground, getButtonForeground, getButtonHoverBackground,
+  getListActiveSelectionBackground, getListActiveSelectionForeground, getListHoverBackground,
+  getCommandPaletteBackground, getCommandPaletteForeground,
+  getFocusBorder, getBadgeBackground, getBadgeForeground,
+  getTitleBarBackground, getTitleBarForeground,
+  getEditorSelectionBackground, getEditorLineHighlightBackground,
+  getEditorCursorForeground, getEditorLineNumberForeground, getEditorLineNumberActiveForeground,
+} from './theme/theme-colors';
 import type { LayoutMode } from '../platform';
 import { getWorkbenchSettings, updateSettings, onSettingsChange } from './settings';
-import { readFileSync, writeFileSync, readdirSync, isDirectory } from 'fs';
+import { readFileSync, writeFileSync, readdirSync, isDirectory, existsSync } from 'fs';
 import { join } from 'path';
-import { execSync } from 'child_process';
+import { getTempDir, getCwd, getHomeDir } from './paths';
+import { getPlatformContext } from '../platform';
 
 import { registerBuiltinCommands, registerCommand } from '../commands';
 
@@ -54,10 +75,12 @@ import {
   renderExplorerPanel, refreshSidebarContent, updateSidebarSelection,
   setSidebarWorkspaceRoot, setSidebarFileClickCallback, setSidebarOpenFolderCallback,
   setSidebarNewFileCallback, setSidebarThemeColors, setSidebarCurrentEditorPath,
+  setRemoteFileTree, setRemoteFileClickCallback, isRemoteExplorerMode,
 } from './views/explorer/sidebar-render';
 import {
   initTabBar, setTabDisplayCallback, setTabThemeColors,
   openTab, getActiveTabPath, getActiveTabIdx, getTabCount,
+  getOpenTabCount, getOpenTabPath, setActiveTabByIndex,
   markTabSaved, updateTabDirtyIcon, applyAllTabColors, closeActiveTab,
 } from './views/tabs/tab-bar';
 import {
@@ -69,14 +92,23 @@ import {
   recolorStatusBar, getStatusBarWidget,
 } from './views/status-bar/status-bar';
 // Extensions panel hidden for now — no runtime extension system yet
-import { renderChatPanel, setChatWorkspaceRoot, setChatFilePathGetter, setChatFileContentGetter } from './views/ai-chat/chat-panel';
+import { renderChatPanel, focusChatInput, getChatInputHandle, setChatWorkspaceRoot, setChatFilePathGetter, setChatFileContentGetter } from './views/ai-chat/chat-panel';
 import { renderTerminalPanel, setTerminalCwd, destroyTerminalPanel, setTerminalCloseCallback, setTerminalProblemsFileOpener } from './views/terminal/terminal-panel';
-import { renderSettingsPanel } from './views/settings-ui/settings-panel';
+import { renderSettingsTab } from './views/settings-ui/settings-panel';
 import { setWelcomeActions, createWelcomeContent } from './views/welcome/welcome-tab';
 import { initNotifications, showNotification } from './views/notifications/notifications';
 import { setLspWorkspaceRoot, initLspBridge, triggerDiagnostics, getCompletions, setDiagnosticsStatusUpdater } from './views/lsp/lsp-bridge';
 import { setDiagnosticsFileOpener } from './views/lsp/diagnostics-panel';
 import { createAutocompletePopup, setAutocompleteAcceptHandler } from './views/lsp/autocomplete-popup';
+import { buildSyncPanel, refreshSyncPanel, setSyncStatusText, setSyncPairCallback, setSyncJoinCallback, setSyncPairingCode, addSyncDevice, removeSyncDevice } from './views/sync/sync-panel';
+import { initSyncHost, setOnGuestConnected, setOnGuestDisconnected, getHostRoomId, getHostRelayUrl, generateHostPairingCode, validatePairingAttempt, addGuest } from './sync-host';
+import { initSyncGuest } from './sync-guest';
+import { getOrCreateDeviceId } from './paths';
+import {
+  connectToRelay, disconnectFromRelay, sendToRelay,
+  setOnRelayConnected, setOnRelayDisconnected,
+  setOnRelayMessage, isRelayConnected, setOnTransportDebug,
+} from './sync-transport';
 
 // Compile-time platform ID injected by Perry codegen:
 // 0 = macOS, 1 = iOS, 2 = Android, 3 = Windows, 4 = Linux, 5 = Web
@@ -85,8 +117,15 @@ declare const __platform__: number;
 // FFI function from @honeide/editor — returns raw NSView* for an EditorView
 declare function hone_editor_nsview(handle: number): number;
 
+
 // Dynamic file tree — loaded from opened folder
 let workspaceRoot = '';
+
+// DEBUG info from app.ts
+let _debugInfo = '';
+export function setDebugInfo(info: string): void {
+  _debugInfo = info;
+}
 
 // ---------------------------------------------------------------------------
 // Data
@@ -96,7 +135,8 @@ let workspaceRoot = '';
 // Module-level widget refs
 // ---------------------------------------------------------------------------
 
-let themeColors: ResolvedUIColors | null = null;
+// themeColors removed — use getter functions from theme-colors.ts instead
+// (Perry crashes on property access of objects with >16 fields)
 
 // Activity bar
 let activityButtons: unknown[] = [];
@@ -120,7 +160,14 @@ let sidebarToggleReady: number = 0;
 // Compact layout panel toggling
 let compactEditorPane: unknown = null;
 let compactExplorerPane: unknown = null;
+let compactChatPane: unknown = null;
 let compactShowingExplorer: number = 0;
+let compactShowingChat: number = 0;
+// Track which compact panel is active: 0=editor, 1=files, 2=search, 3=sync, 4=settings, 5=chat
+let compactActivePanel: number = 0;
+let compactChatRendered: number = 0;
+let compactShell: unknown = null;
+let compactContentContainer: unknown = null;
 
 // Breadcrumb bar
 let breadcrumbContainer: unknown = null;
@@ -137,6 +184,7 @@ let rightPanelBorder: unknown = null;
 let rightPanelContainer: unknown = null;
 let rightPanelVisible: number = 0;
 let rightPanelRendered: number = 0;
+let chatInputWidget: unknown = null;
 let mainRowWidget: unknown = null;
 
 // Notification overlay
@@ -163,17 +211,16 @@ let pendingActivityIdx: number = -1;
 // ---------------------------------------------------------------------------
 
 function updateActivityBar(): void {
-  if (!themeColors) return;
   for (let i = 0; i < activityButtons.length; i++) {
     if (i === activeActivityIdx) {
-      setBtnTint(activityButtons[i], themeColors.activityBarForeground);
+      setBtnTint(activityButtons[i], getActivityBarForeground());
       if (i < activityIndicators.length) {
         setBg(activityIndicators[i], '#ffffff');
       }
     } else {
-      setBtnTint(activityButtons[i], themeColors.activityBarInactiveForeground);
+      setBtnTint(activityButtons[i], getActivityBarInactiveForeground());
       if (i < activityIndicators.length) {
-        setBg(activityIndicators[i], themeColors.activityBarBackground);
+        setBg(activityIndicators[i], getActivityBarBackground());
       }
     }
   }
@@ -205,12 +252,12 @@ function updateBreadcrumb(): void {
     buttonSetImage(dirIcon, 'folder.fill');
     buttonSetImagePosition(dirIcon, 1);
     textSetFontSize(dirIcon, 9);
-    if (themeColors) setBtnTint(dirIcon, '#E8AB53');
+    setBtnTint(dirIcon, '#E8AB53');
     widgetAddChild(breadcrumbContainer, dirIcon);
 
     const dirText = Text(dirName);
     textSetFontSize(dirText, 11);
-    if (themeColors) setFg(dirText, themeColors.editorForeground);
+    setFg(dirText, getEditorForeground());
     widgetAddChild(breadcrumbContainer, dirText);
 
     // Chevron separator
@@ -219,7 +266,7 @@ function updateBreadcrumb(): void {
     buttonSetImage(sepIcon, 'chevron.right');
     buttonSetImagePosition(sepIcon, 1);
     textSetFontSize(sepIcon, 7);
-    if (themeColors) setBtnTint(sepIcon, themeColors.editorForeground);
+    setBtnTint(sepIcon, getEditorForeground());
     widgetAddChild(breadcrumbContainer, sepIcon);
   }
   // File icon in breadcrumb
@@ -232,14 +279,14 @@ function updateBreadcrumb(): void {
   const bcColor = getFileIconColor(fileName);
   if (bcColor.length > 0) {
     setBtnTint(bcFileIcon, bcColor);
-  } else if (themeColors) {
-    setBtnTint(bcFileIcon, themeColors.editorForeground);
+  } else {
+    setBtnTint(bcFileIcon, getEditorForeground());
   }
   widgetAddChild(breadcrumbContainer, bcFileIcon);
 
   const fileText = Text(fileName);
   textSetFontSize(fileText, 11);
-  if (themeColors) setFg(fileText, themeColors.editorForeground);
+  setFg(fileText, getEditorForeground());
   widgetAddChild(breadcrumbContainer, fileText);
   widgetAddChild(breadcrumbContainer, Spacer());
 }
@@ -303,18 +350,19 @@ function toggleRightPanel(): void {
     rightPanelVisible = 1;
     widgetSetHidden(rightPanelWidget, 0);
     widgetSetHidden(rightPanelBorder, 0);
-    // Render chat panel on first open
+    // Defer chat panel rendering to next tick (avoid GC pressure in button callback)
     if (rightPanelRendered < 1) {
-      rightPanelRendered = 1;
-      renderChatPanel(rightPanelContainer, themeColors as ResolvedUIColors);
+      setTimeout(() => { doChatRender(); }, 0);
     }
+    // Focus chat input (uses setInterval inside chat-panel module)
+    focusChatInput();
   }
 }
 
-function autoRenderChat(): void {
+function doChatRender(): void {
   if (rightPanelRendered > 0) return;
   rightPanelRendered = 1;
-  renderChatPanel(rightPanelContainer, themeColors as ResolvedUIColors);
+  chatInputWidget = renderChatPanel(rightPanelContainer, null as any);
 }
 
 export function closeEditorAction(): void {
@@ -331,7 +379,8 @@ export function newFileAction(): void {
 }
 
 function newFileDeferred(): void {
-  const path = '/tmp/hone-untitled';
+  let path = getTempDir();
+  path += '/Untitled';
   const name = 'Untitled';
   try {
     writeFileSync(path, '\n');
@@ -411,8 +460,7 @@ export function showWelcomeAction(): void {
 }
 
 function showWelcomeDeferred(): void {
-  if (!themeColors) return;
-  const welcomeContent = createWelcomeContent(themeColors);
+  const welcomeContent = createWelcomeContent(null as any);
   const path = '__welcome__';
   const name = 'Welcome';
   openTab(path, name);
@@ -428,7 +476,7 @@ let goToLineInput: unknown = null;
 let goToLineText = '';
 
 function goToLineDeferred(): void {
-  if (!sidebarContainer || !themeColors) return;
+  if (!sidebarContainer) return;
   // Show sidebar if hidden
   if (sidebarToggleReady > 0 && sidebarVisible < 1) {
     sidebarVisible = 1;
@@ -441,7 +489,7 @@ function goToLineDeferred(): void {
   const title = Text('GO TO LINE');
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.7);
-  setFg(title, themeColors.sideBarForeground);
+  setFg(title, getSideBarForeground());
   widgetAddChild(sidebarContainer, title);
 
   goToLineText = '';
@@ -451,7 +499,7 @@ function goToLineDeferred(): void {
   const goBtn = Button('Go', () => { onGoToLineConfirm(); });
   buttonSetBordered(goBtn, 0);
   textSetFontSize(goBtn, 12);
-  setBtnFg(goBtn, themeColors.sideBarForeground);
+  setBtnFg(goBtn, getSideBarForeground());
   widgetAddChild(sidebarContainer, goBtn);
   widgetAddChild(sidebarContainer, Spacer());
 }
@@ -516,7 +564,7 @@ function collectFiles(dirPath: string, depth: number): void {
 }
 
 function goToFileDeferred(): void {
-  if (!sidebarContainer || !themeColors) return;
+  if (!sidebarContainer) return;
   // Show sidebar if hidden
   if (sidebarToggleReady > 0 && sidebarVisible < 1) {
     sidebarVisible = 1;
@@ -529,7 +577,7 @@ function goToFileDeferred(): void {
   const title = Text('GO TO FILE');
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.7);
-  setFg(title, themeColors.sideBarForeground);
+  setFg(title, getSideBarForeground());
   widgetAddChild(sidebarContainer, title);
 
   goToFileText = '';
@@ -546,7 +594,8 @@ function goToFileDeferred(): void {
 
   goToFileResults = VStack(2, []);
   const scroll = ScrollView();
-  scrollViewSetChild(scroll, goToFileResults);
+  // Perry: scrollViewSetChild compiles to no-op, use widgetAddChild workaround
+  widgetAddChild(scroll, goToFileResults);
   widgetAddChild(sidebarContainer, scroll);
 
   // Show all files initially
@@ -563,7 +612,7 @@ function renderGoToFileListDeferred(): void {
 }
 
 function renderGoToFileList(query: string): void {
-  if (!goToFileResults || !themeColors) return;
+  if (!goToFileResults) return;
   widgetClearChildren(goToFileResults);
 
   let shown = 0;
@@ -611,7 +660,7 @@ function renderGoToFileList(query: string): void {
     const btn = Button(name, () => { onGoToFileSelect(filePath, fileName); });
     buttonSetBordered(btn, 0);
     textSetFontSize(btn, 11);
-    setBtnFg(btn, themeColors.sideBarForeground);
+    setBtnFg(btn, getSideBarForeground());
     widgetAddChild(goToFileResults, btn);
     shown = shown + 1;
   }
@@ -619,7 +668,7 @@ function renderGoToFileList(query: string): void {
   if (shown < 1) {
     const noResults = Text('No matching files');
     textSetFontSize(noResults, 11);
-    setFg(noResults, themeColors.sideBarForeground);
+    setFg(noResults, getSideBarForeground());
     widgetAddChild(goToFileResults, noResults);
   }
 }
@@ -676,6 +725,10 @@ function safeReadFile(filePath: string): string {
 let activeDiffHeader: unknown = null;
 let activeDiffEditors: unknown = null;
 
+// Module-level ref for settings tab widget in editorPane
+let activeSettingsWidget: unknown = null;
+let settingsTabCreated: number = 0;
+
 /** Show the diff view for a file. Adds diff widgets alongside editor. */
 function showDiffForFile(filePath: string, relPath: string): void {
   if (!editorPaneWidget) return;
@@ -715,12 +768,48 @@ function hideDiffView(): void {
 }
 
 
+/** Show the settings tab in the editor pane. */
+function showSettingsInEditorPane(): void {
+  if (!editorPaneWidget) return;
+  if (activeDiffEditors) hideDiffView();
+  if (editorWidget) widgetSetHidden(editorWidget, 1);
+  if (activeSettingsWidget) {
+    widgetSetHidden(activeSettingsWidget, 0);
+    return;
+  }
+  const settingsCtr = VStack(0, []);
+  widgetSetHugging(settingsCtr, 1);
+  renderSettingsTab(settingsCtr, null as any);
+  widgetAddChild(editorPaneWidget, settingsCtr);
+  activeSettingsWidget = settingsCtr;
+}
+
+/** Hide the settings tab from the editor pane. */
+function hideSettingsInEditorPane(): void {
+  if (!activeSettingsWidget) return;
+  widgetSetHidden(activeSettingsWidget, 1);
+  if (editorWidget) widgetSetHidden(editorWidget, 0);
+}
+
 function displayFileContent(filePath: string): void {
+  // Virtual paths (__settings__, __welcome__) — don't read file
+  if (filePath.length > 2 && filePath.charCodeAt(0) === 95 && filePath.charCodeAt(1) === 95) {
+    // __settings__ (length 12)
+    if (filePath.length === 12 && filePath.charCodeAt(2) === 115) {
+      showSettingsInEditorPane();
+    }
+    return;
+  }
+  // Switching away from settings — hide it
+  if (activeSettingsWidget) hideSettingsInEditorPane();
   currentEditorFilePath = filePath;
   setSidebarCurrentEditorPath(filePath);
   updateBreadcrumb();
   updateStatusBarLanguageImpl(filePath);
+  updateSidebarSelection();
   if (editorReady < 1) return;
+  const lang = detectLanguage(filePath);
+  editorInstance.setLanguage(lang);
   const content = safeReadFile(filePath);
   editorInstance.setContent(content);
   editorInstance.render();
@@ -734,6 +823,22 @@ function openFileInEditor(filePath: string, fileName: string): void {
   }
   openTab(filePath, fileName);
   displayFileContent(filePath);
+}
+
+function checkOpenFileRequests(): void {
+  const path = pollOpenFile();
+  if (path.length > 0) {
+    // Extract file name from path
+    let lastSlash = -1;
+    for (let i = path.length - 1; i >= 0; i--) {
+      if (path.charCodeAt(i) === 47) { lastSlash = i; break; }
+    }
+    let name = path;
+    if (lastSlash >= 0) {
+      name = path.slice(lastSlash + 1);
+    }
+    openFileInEditor(path, name);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -835,8 +940,8 @@ function onActivityClickDeferred(): void {
   const idx = pendingActivityIdx;
   if (idx < 0) return;
   pendingActivityIdx = -1;
-  // AI Chat (idx=3) toggles the right panel instead of the sidebar
-  if (idx === 3) {
+  // AI Chat (idx=4) toggles the right panel instead of the sidebar
+  if (idx === 4) {
     toggleRightPanel();
     return;
   }
@@ -844,7 +949,7 @@ function onActivityClickDeferred(): void {
   updateActivityBar();
   switchSidebarPanel(idx);
   // Persist active panel (only for sidebar panels, not settings gear)
-  if (idx >= 0 && idx <= 2) {
+  if (idx >= 0 && idx <= 3) {
     updateSettings({ activePanelIndex: idx });
   }
 }
@@ -853,7 +958,7 @@ function switchSidebarPanel(idx: number): void {
   if (!sidebarContainer) return;
   if (idx === 0) {
     resetSearchPanelReady();
-    renderExplorerPanel(sidebarContainer, themeColors as ResolvedUIColors);
+    renderExplorerPanel(sidebarContainer, null as any);
     return;
   }
   widgetClearChildren(sidebarContainer);
@@ -861,42 +966,45 @@ function switchSidebarPanel(idx: number): void {
 
   if (idx === 1) {
     resetGitPanelReady();
-    renderSearchPanelImpl(sidebarContainer, themeColors as ResolvedUIColors);
+    renderSearchPanelImpl(sidebarContainer, null as any);
     return;
   }
 
   if (idx === 2) {
     resetGitPanelReady();
-    renderGitPanelImpl(sidebarContainer, themeColors as ResolvedUIColors);
+    renderGitPanelImpl(sidebarContainer, null as any);
     return;
   }
 
-  // idx===3 (AI Chat) handled by toggleRightPanel, not here
-
-  if (idx === 6) {
-    renderSettingsPanel(sidebarContainer, themeColors as ResolvedUIColors);
+  if (idx === 3) {
+    widgetClearChildren(sidebarContainer);
+    const panel = buildSyncPanel();
+    widgetAddChild(sidebarContainer, panel);
     return;
   }
+
+  // idx===4 (AI Chat) handled by toggleRightPanel, not here
 }
 
 // ---------------------------------------------------------------------------
 // Activity bar
 // ---------------------------------------------------------------------------
 
-function renderActivityBarDesktop(colors: ResolvedUIColors): unknown {
+function renderActivityBarDesktop(): unknown {
   activityButtons = [];
   activityIndicators = [];
 
-  // Icons: 0=Files, 1=Search, 2=Git, 3=AI Chat
-  const icons = ['doc.on.doc', 'magnifyingglass', 'arrow.triangle.branch', 'sparkles'];
+  // Icons: 0=Files, 1=Search, 2=Git, 3=Sync, 4=AI Chat
+  const icons = ['doc.on.doc', 'magnifyingglass', 'arrow.triangle.branch', 'arrow.triangle.2.circlepath', 'sparkles'];
 
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 5; i++) {
     const idx = i;
     const btn = Button('', () => { onActivityClick(idx); });
     buttonSetBordered(btn, 0);
     buttonSetImage(btn, icons[i]);
     buttonSetImagePosition(btn, 1);
-    setBtnTint(btn, colors.activityBarForeground);
+    textSetFontSize(btn, 20);
+    setBtnTint(btn, getActivityBarForeground());
     activityButtons.push(btn);
 
     // 2px indicator bar on left side
@@ -906,7 +1014,7 @@ function renderActivityBarDesktop(colors: ResolvedUIColors): unknown {
     if (i === activeActivityIdx) {
       setBg(indicator, '#ffffff');
     } else {
-      setBg(indicator, colors.activityBarBackground);
+      setBg(indicator, getActivityBarBackground());
     }
     activityIndicators.push(indicator);
   }
@@ -914,27 +1022,31 @@ function renderActivityBarDesktop(colors: ResolvedUIColors): unknown {
   updateActivityBar();
 
   const bar = VStackWithInsets(4, 0, 0, 0, 0);
-  setBg(bar, colors.activityBarBackground);
+  setBg(bar, getActivityBarBackground());
   for (let i = 0; i < activityButtons.length; i++) {
-    const row = HStack(0, [activityIndicators[i], activityButtons[i]]);
+    // 2px indicator | 10px gap | button (centered) | fill
+    const gap = VStack(0, []);
+    widgetSetWidth(gap, 10);
+    const row = HStack(0, [activityIndicators[i], gap, activityButtons[i], Spacer()]);
     widgetSetHeight(row, 48);
     widgetAddChild(bar, row);
   }
   widgetAddChild(bar, Spacer());
 
-  // Settings gear icon → Settings panel (idx 6)
-  const settingsBtn = Button('', () => { onActivityClick(6); });
+  // Settings gear icon → opens Settings tab in editor pane
+  const settingsBtn = Button('', () => { openSettingsAction(); });
   buttonSetBordered(settingsBtn, 0);
   buttonSetImage(settingsBtn, 'gearshape');
   buttonSetImagePosition(settingsBtn, 1);
-  setBtnTint(settingsBtn, colors.activityBarInactiveForeground);
+  textSetFontSize(settingsBtn, 20);
+  setBtnTint(settingsBtn, getActivityBarInactiveForeground());
   widgetAddChild(bar, settingsBtn);
 
   activityBarWidget = bar;
   return bar;
 }
 
-function renderActivityBarCompact(colors: ResolvedUIColors): unknown {
+function renderActivityBarCompact(): unknown {
   const icons = ['folder', 'doc.text', 'sparkles', 'terminal'];
   activityButtons = [];
 
@@ -944,14 +1056,15 @@ function renderActivityBarCompact(colors: ResolvedUIColors): unknown {
     buttonSetBordered(btn, 0);
     buttonSetImage(btn, icons[i]);
     buttonSetImagePosition(btn, 1);
-    setBtnTint(btn, colors.activityBarForeground);
+    textSetFontSize(btn, 20);
+    setBtnTint(btn, getActivityBarForeground());
     activityButtons.push(btn);
   }
 
   updateActivityBar();
 
   const bar = HStack(0, []);
-  setBg(bar, colors.activityBarBackground);
+  setBg(bar, getActivityBarBackground());
   for (let i = 0; i < activityButtons.length; i++) {
     widgetAddChild(bar, activityButtons[i]);
   }
@@ -959,32 +1072,92 @@ function renderActivityBarCompact(colors: ResolvedUIColors): unknown {
 }
 
 // ---------------------------------------------------------------------------
+// iPad top activity bar — horizontal icons with safe area inset
+// ---------------------------------------------------------------------------
+
+function initSplitSidebarExplorer(): void {
+  if (!sidebarContainer) return;
+  const colors = getActiveTheme();
+  if (!colors) return;
+  renderExplorerPanel(sidebarContainer, colors as any);
+}
+
+function renderIPadTopBar(): unknown {
+  // Create buttons using same handlers as bottom toolbar
+  const filesBtn = Button('', () => { onBottomBarFiles(); });
+  const searchBtn = Button('', () => { onBottomBarSearch(); });
+  const aiBtn = Button('', () => { onBottomBarAI(); });
+  const syncBtn = Button('', () => { onBottomBarSync(); });
+  const settingsBtn = Button('', () => { onBottomBarSettings(); });
+
+  buttonSetImage(filesBtn, 'folder');
+  buttonSetImage(searchBtn, 'magnifyingglass');
+  buttonSetImage(aiBtn, 'sparkles');
+  buttonSetImage(syncBtn, 'arrow.triangle.2.circlepath');
+  buttonSetImage(settingsBtn, 'gearshape');
+
+  const allBtns = [filesBtn, searchBtn, aiBtn, syncBtn, settingsBtn];
+  for (let i = 0; i < allBtns.length; i++) {
+    buttonSetBordered(allBtns[i], 0);
+    buttonSetImagePosition(allBtns[i], 1);
+    setBtnTint(allBtns[i], getActivityBarForeground());
+    widgetSetWidth(allBtns[i], 48);
+    widgetSetHeight(allBtns[i], 40);
+  }
+
+  // Icon row — EqualSpacing distribution spreads icons across the full width
+  const iconRow = HStack(0, [filesBtn, searchBtn, aiBtn, syncBtn, settingsBtn]);
+  stackSetDistribution(iconRow, 3); // 3 = EqualSpacing
+
+  // Safe area spacer (iPad top inset ~24px for status bar area)
+  const safeArea = Text('');
+  widgetSetHeight(safeArea, 24);
+
+  // 1px bottom border
+  const border = Text('');
+  widgetSetHeight(border, 1);
+  setBg(border, getPanelBorder());
+
+  const bar = VStack(0, [safeArea, iconRow, border]);
+  setBg(bar, getActivityBarBackground());
+
+  activityBarWidget = bar;
+  return bar;
+}
+
+// ---------------------------------------------------------------------------
 // Sidebar
 // ---------------------------------------------------------------------------
 
-function renderSidebar(colors: ResolvedUIColors): unknown {
+function renderSidebar(): unknown {
   const inner = VStackWithInsets(0, 0, 0, 0, 0);
-  setBg(inner, colors.sideBarBackground);
+  setBg(inner, getSideBarBackground());
   sidebarContainer = inner;
 
-  renderExplorerPanel(inner, colors);
+  renderExplorerPanel(inner, null as any);
 
-  const scroll = ScrollView();
-  scrollViewSetChild(scroll, inner);
-
-  return scroll;
+  // On macOS, NSScrollView doesn't propagate width to documentView, causing
+  // the inner VStack to render at 0 width. Return the VStack directly instead
+  // (scrolling handled by macOS NSStackView's built-in clipping).
+  return inner;
 }
 
 // ---------------------------------------------------------------------------
 // Editor area
 // ---------------------------------------------------------------------------
 
-function renderEditorArea(colors: ResolvedUIColors): unknown {
-  const defaultFile = workspaceRoot + '/src/app.ts';
+function renderEditorArea(): unknown {
+  let defaultFile = '';
+  defaultFile += workspaceRoot;
+  if (__platform__ === 3) {
+    defaultFile += '\\src\\app.ts';
+  } else {
+    defaultFile += '/src/app.ts';
+  }
   const defaultName = 'app.ts';
 
   const tbc = HStack(0, []);
-  initTabBar(tbc, colors, defaultFile, defaultName);
+  initTabBar(tbc, null as any, defaultFile, defaultName);
 
   const ed = new Editor(800, 600);
   editorInstance = ed;
@@ -995,31 +1168,24 @@ function renderEditorArea(colors: ResolvedUIColors): unknown {
 
   displayFileContent(defaultFile);
 
-  // Poll cursor position for status bar (every ~250ms)
+  // Poll cursor position for status bar
   setInterval(() => { pollCursorPositionImpl(); }, 250);
-  // Poll dirty state every 500ms
   setInterval(() => { pollDirtyState(); }, 500);
 
   // Breadcrumb bar
   breadcrumbContainer = HStackWithInsets(4, 4, 8, 4, 8);
-  setBg(breadcrumbContainer, colors.editorBackground);
+  setBg(breadcrumbContainer, getEditorBackground());
   breadcrumbReady = 1;
   updateBreadcrumb();
 
-  widgetSetHugging(editorWidget, 1); // editor stretches to fill available space
+  widgetSetHugging(editorWidget, 1);
   tabBarContainer = tbc;
 
-  // Diff view container (initially unused; swapped into editorPane when diff is active)
-  const diffCtr = VStack(0, []);
-  widgetSetHugging(diffCtr, 1);
-  diffViewContainer = diffCtr;
-  renderDiffView(diffCtr, colors);
-
-  // editorPane: tabs + breadcrumb + editor. When diff is active, the editor
-  // is replaced with diffCtr via widgetClearChildren/widgetAddChild.
   const editorPane = VStack(0, [tbc, breadcrumbContainer, editorWidget]);
-  setBg(editorPane, colors.editorBackground);
+  setBg(editorPane, getEditorBackground());
   widgetSetHugging(editorPane, 1); // editor pane stretches in mainRow
+  // Embedded NSView has no intrinsic width — pin it to fill the VStack's width
+  widgetMatchParentWidth(editorWidget);
   editorPaneWidget = editorPane;
 
   return editorPane;
@@ -1029,62 +1195,144 @@ function renderEditorArea(colors: ResolvedUIColors): unknown {
 // Compact layout — panel toggling
 // ---------------------------------------------------------------------------
 
+function swapCompactPanel(panel: unknown): void {
+  if (!compactContentContainer) return;
+  widgetClearChildren(compactContentContainer);
+  widgetAddChild(compactContentContainer, panel);
+  // On iOS, swapped panels must pin width to parent VStack for full-screen width
+  widgetMatchParentWidth(panel);
+}
+
 function showExplorer(): void {
   compactShowingExplorer = 1;
-  widgetSetHidden(compactEditorPane, 1);
-  widgetSetHidden(compactExplorerPane, 0);
+  compactShowingChat = 0;
+  swapCompactPanel(compactExplorerPane);
+  // On iOS, ScrollView doesn't propagate width to content — pin sidebarContainer
+  // to ScrollView width so explorer/sync/search panels fill the screen
+  if (sidebarContainer) widgetMatchParentWidth(sidebarContainer);
 }
 
 function hideExplorer(): void {
   compactShowingExplorer = 0;
-  widgetSetHidden(compactEditorPane, 0);
-  widgetSetHidden(compactExplorerPane, 1);
+  compactShowingChat = 0;
+  swapCompactPanel(compactEditorPane);
+}
+
+function showChat(): void {
+  compactShowingChat = 1;
+  compactShowingExplorer = 0;
+  // Lazy-create chat pane
+  if (!compactChatPane) {
+    const chatPane = VStackWithInsets(0, 8, 8, 8, 8);
+    setBg(chatPane, getSideBarBackground());
+    compactChatPane = chatPane;
+  }
+  swapCompactPanel(compactChatPane);
+  // Render chat panel on first show (deferred to avoid GC pressure)
+  if (compactChatRendered < 1) {
+    compactChatRendered = 1;
+    setTimeout(() => { doCompactChatRender(); }, 0);
+  } else {
+    focusChatInput();
+  }
+}
+
+function doCompactChatRender(): void {
+  if (!compactChatPane) return;
+  chatInputWidget = renderChatPanel(compactChatPane, null as any);
 }
 
 function onBottomBarFiles(): void {
-  if (compactShowingExplorer > 0) {
+  if (compactActivePanel === 1) {
+    // Already showing files — toggle back to editor
     hideExplorer();
+    compactActivePanel = 0;
   } else {
+    // Re-render explorer into sidebarContainer (sync/search may have replaced it)
+    if (sidebarContainer) {
+      resetSearchPanelReady();
+      renderExplorerPanel(sidebarContainer, null as any);
+    }
     showExplorer();
+    compactActivePanel = 1;
   }
 }
 
 function onBottomBarEditor(): void {
   hideExplorer();
+  compactActivePanel = 0;
 }
 
-function onBottomBarAI(): void {}
+function onBottomBarSearch(): void {
+  if (!sidebarContainer) return;
+  widgetClearChildren(sidebarContainer);
+  resetSearchPanelReady();
+  renderSearchPanelImpl(sidebarContainer, null as any);
+  showExplorer();
+  compactActivePanel = 2;
+}
 
-function onBottomBarTerm(): void {}
+function onBottomBarAI(): void {
+  if (compactActivePanel === 5) {
+    hideExplorer();
+    compactActivePanel = 0;
+  } else {
+    showChat();
+    compactActivePanel = 5;
+  }
+}
 
-function onBottomBarSettings(): void {}
+function onBottomBarSync(): void {
+  if (!sidebarContainer) return;
+  widgetClearChildren(sidebarContainer);
+  const panel = buildSyncPanel();
+  widgetAddChild(sidebarContainer, panel);
+  showExplorer();
+  compactActivePanel = 3;
+}
 
-function renderBottomToolbar(colors: ResolvedUIColors): unknown {
+function onBottomBarSettings(): void {
+  // Render settings as a standalone panel directly into content container
+  // (not inside the sidebar ScrollView — nested ScrollViews break on iOS)
+  compactShowingExplorer = 1;
+  compactShowingChat = 0;
+  const settingsCtr = VStack(0, []);
+  widgetSetHugging(settingsCtr, 1);
+  renderSettingsTab(settingsCtr, null as any);
+  swapCompactPanel(settingsCtr);
+  compactActivePanel = 4;
+}
+
+function renderBottomToolbar(): unknown {
   const filesBtn = Button('', () => { onBottomBarFiles(); });
-  const editorBtn = Button('', () => { onBottomBarEditor(); });
+  const searchBtn = Button('', () => { onBottomBarSearch(); });
   const aiBtn = Button('', () => { onBottomBarAI(); });
-  const termBtn = Button('', () => { onBottomBarTerm(); });
+  const syncBtn = Button('', () => { onBottomBarSync(); });
   const settingsBtn = Button('', () => { onBottomBarSettings(); });
 
   buttonSetImage(filesBtn, 'folder');
-  buttonSetImage(editorBtn, 'doc.text');
+  buttonSetImage(searchBtn, 'magnifyingglass');
   buttonSetImage(aiBtn, 'sparkles');
-  buttonSetImage(termBtn, 'terminal');
+  buttonSetImage(syncBtn, 'arrow.triangle.2.circlepath');
   buttonSetImage(settingsBtn, 'gearshape');
   buttonSetImagePosition(filesBtn, 1);
-  buttonSetImagePosition(editorBtn, 1);
+  buttonSetImagePosition(searchBtn, 1);
   buttonSetImagePosition(aiBtn, 1);
-  buttonSetImagePosition(termBtn, 1);
+  buttonSetImagePosition(syncBtn, 1);
   buttonSetImagePosition(settingsBtn, 1);
 
-  const allBtns = [filesBtn, editorBtn, aiBtn, termBtn, settingsBtn];
+  const allBtns = [filesBtn, searchBtn, aiBtn, syncBtn, settingsBtn];
   for (let i = 0; i < allBtns.length; i++) {
     buttonSetBordered(allBtns[i], 0);
-    setBtnTint(allBtns[i], colors.activityBarForeground);
+    setBtnTint(allBtns[i], getActivityBarForeground());
+    // Enforce minimum touch target (44pt Apple HIG)
+    widgetSetWidth(allBtns[i], 44);
+    widgetSetHeight(allBtns[i], 44);
   }
 
-  const bar = HStack(0, [filesBtn, Spacer(), editorBtn, Spacer(), aiBtn, Spacer(), termBtn, Spacer(), settingsBtn]);
-  setBg(bar, colors.activityBarBackground);
+  const bar = HStack(0, [filesBtn, Spacer(), searchBtn, Spacer(), aiBtn, Spacer(), syncBtn, Spacer(), settingsBtn]);
+  setBg(bar, getActivityBarBackground());
+  widgetSetHeight(bar, 49); // 44pt buttons + 5pt padding
   return bar;
 }
 
@@ -1094,62 +1342,75 @@ function renderBottomToolbar(colors: ResolvedUIColors): unknown {
 
 /** Re-apply theme colors to all stored widget refs. Called after theme switch. */
 function recolorUI(): void {
-  if (!themeColors) return;
-  const c = themeColors;
-
   // Shell containers
-  if (shellWidget) setBg(shellWidget, c.editorBackground);
-  if (leftContentWidget) setBg(leftContentWidget, c.editorBackground);
-  if (activityBarWidget) setBg(activityBarWidget, c.activityBarBackground);
-  if (sidebarContainer) setBg(sidebarContainer, c.sideBarBackground);
-  if (editorPaneWidget) setBg(editorPaneWidget, c.editorBackground);
-  if (breadcrumbContainer) setBg(breadcrumbContainer, c.editorBackground);
+  if (shellWidget) setBg(shellWidget, getEditorBackground());
+  if (leftContentWidget) setBg(leftContentWidget, getEditorBackground());
+  if (activityBarWidget) setBg(activityBarWidget, getActivityBarBackground());
+  if (sidebarContainer) setBg(sidebarContainer, getSideBarBackground());
+  if (editorPaneWidget) setBg(editorPaneWidget, getEditorBackground());
+  if (breadcrumbContainer) setBg(breadcrumbContainer, getEditorBackground());
 
   // Terminal area
-  if (termPanelWidget) setBg(termPanelWidget, c.editorBackground);
-  if (termBorderWidget) setBg(termBorderWidget, c.panelBorder);
+  if (termPanelWidget) setBg(termPanelWidget, getEditorBackground());
+  if (termBorderWidget) setBg(termBorderWidget, getPanelBorder());
 
   // Borders
-  if (sidebarBorderWidget) setBg(sidebarBorderWidget, c.panelBorder);
-  if (rightPanelBorder) setBg(rightPanelBorder, c.panelBorder);
+  if (sidebarBorderWidget) setBg(sidebarBorderWidget, getPanelBorder());
+  if (rightPanelBorder) setBg(rightPanelBorder, getPanelBorder());
 
   // Right panel (AI Chat)
-  if (rightPanelWidget) setBg(rightPanelWidget, c.sideBarBackground);
+  if (rightPanelWidget) setBg(rightPanelWidget, getSideBarBackground());
 
   // Activity bar icon colors
   for (let i = 0; i < activityButtons.length; i++) {
     if (i === activeActivityIdx) {
-      setBtnTint(activityButtons[i], c.activityBarForeground);
+      setBtnTint(activityButtons[i], getActivityBarForeground());
     } else {
-      setBtnTint(activityButtons[i], c.activityBarInactiveForeground);
+      setBtnTint(activityButtons[i], getActivityBarInactiveForeground());
     }
   }
 
   // Status bar
-  recolorStatusBar(c);
+  recolorStatusBar(null as any);
 
   // Tab bar
-  setTabThemeColors(c);
+  setTabThemeColors(null as any);
   applyAllTabColors();
 
   // Diff view
-  setDiffThemeColors(c);
+  setDiffThemeColors(null as any);
 
   // Re-render active sidebar panel with new colors
   switchSidebarPanel(activeActivityIdx);
 }
 
-/** Open the Settings panel in the sidebar. */
+/** Open the Settings tab in the editor pane. */
 export function openSettingsAction(): void {
-  // Show sidebar if hidden
-  if (sidebarToggleReady > 0 && sidebarVisible < 1) {
-    sidebarVisible = 1;
-    if (sidebarWidget) widgetSetHidden(sidebarWidget, 0);
-    if (sidebarBorderWidget) widgetSetHidden(sidebarBorderWidget, 0);
-    updateSettings({ sidebarVisible: true });
+  setTimeout(() => { openSettingsDeferred(); }, 0);
+}
+
+function openSettingsDeferred(): void {
+  if (settingsTabCreated < 1) {
+    openTab('__settings__', 'Settings');
+    settingsTabCreated = 1;
+  } else {
+    // Tab exists — just activate it via tab click simulation
+    activateSettingsTab();
   }
-  // Switch to settings (idx 6)
-  onActivityClick(6);
+  showSettingsInEditorPane();
+}
+
+function activateSettingsTab(): void {
+  // Find the __settings__ tab by scanning openTabs via the tab bar's exported helper
+  // Since we can't reliably compare strings in arrays, just set the active tab index
+  // by scanning for a path of length 12 starting with '_'
+  for (let i = 0; i < getOpenTabCount(); i++) {
+    const p = getOpenTabPath(i);
+    if (p.length === 12 && p.charCodeAt(0) === 95 && p.charCodeAt(1) === 95) {
+      setActiveTabByIndex(i);
+      return;
+    }
+  }
 }
 
 // Listen for settings changes — detect theme toggle and apply live
@@ -1167,12 +1428,861 @@ function onSettingsChanged(): void {
 
   // Switch the active theme
   if (setActiveTheme(newTheme)) {
-    const active = getActiveTheme();
-    if (active) {
-      themeColors = active.uiColors;
-      recolorUI();
+    recolorUI();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sync system initialization
+// ---------------------------------------------------------------------------
+
+let syncDeviceId = '';
+let syncDeviceName = 'Hone Desktop';
+let syncStatusOverride = '';
+let syncAutoJoinPending: number = 0;
+let fileTreeReceived: number = 0;
+let fileTreeRetries: number = 0;
+
+// --- Guest file cache (bulk sync) ---
+// Maps relPath → file content. Populated during initial bulk sync from host.
+let fileCacheKeys: string[] = [];
+let fileCacheVals: string[] = [];
+let fileCacheCount: number = 0;
+let bulkSyncTotal: number = 0;
+let bulkSyncReceived: number = 0;
+let bulkSyncDone: number = 0;
+
+function fileCacheGet(relPath: string): string {
+  for (let i = 0; i < fileCacheCount; i++) {
+    if (fileCacheKeys[i].length === relPath.length) {
+      let match = 1;
+      for (let j = 0; j < relPath.length; j++) {
+        if (fileCacheKeys[i].charCodeAt(j) !== relPath.charCodeAt(j)) { match = 0; break; }
+      }
+      if (match > 0) return fileCacheVals[i];
     }
   }
+  return '';
+}
+
+function fileCacheHas(relPath: string): number {
+  for (let i = 0; i < fileCacheCount; i++) {
+    if (fileCacheKeys[i].length === relPath.length) {
+      let match = 1;
+      for (let j = 0; j < relPath.length; j++) {
+        if (fileCacheKeys[i].charCodeAt(j) !== relPath.charCodeAt(j)) { match = 0; break; }
+      }
+      if (match > 0) return 1;
+    }
+  }
+  return 0;
+}
+
+function fileCacheSet(relPath: string, content: string): void {
+  // Update existing entry if present
+  for (let i = 0; i < fileCacheCount; i++) {
+    if (fileCacheKeys[i].length === relPath.length) {
+      let match = 1;
+      for (let j = 0; j < relPath.length; j++) {
+        if (fileCacheKeys[i].charCodeAt(j) !== relPath.charCodeAt(j)) { match = 0; break; }
+      }
+      if (match > 0) {
+        fileCacheVals[i] = content;
+        return;
+      }
+    }
+  }
+  fileCacheKeys.push(relPath);
+  fileCacheVals.push(content);
+  fileCacheCount = fileCacheCount + 1;
+}
+
+// Module-level storage for collectSyncTree
+// Use Map (not Array.push — broken cross-function) and Map.size (not scalar counter — invisible cross-function)
+let syncTreeEntries: Map<number, string> = new Map();
+
+function syncDebugLog(msg: string): void {
+  try {
+    let prev = '';
+    try { prev = readFileSync('/tmp/hone-sync-debug.log'); } catch (e: any) {}
+    let out = prev;
+    out += '\n';
+    out += msg;
+    writeFileSync('/tmp/hone-sync-debug.log', out);
+  } catch (e: any) {}
+}
+
+function initSyncSystem(layoutMode: LayoutMode): void {
+  syncDeviceId = getOrCreateDeviceId();
+  const ctx = getPlatformContext();
+
+  // Wire pair + join button callbacks
+  setSyncPairCallback(onSyncPairClicked);
+  setSyncJoinCallback(onSyncJoinClicked);
+
+  if (ctx.deviceClass === 'desktop') {
+    initSyncHost(syncDeviceId, 'Hone Desktop');
+    setOnGuestConnected(onSyncGuestConnected);
+    setOnGuestDisconnected(onSyncGuestDisconnected);
+  } else {
+    syncDeviceName = 'Hone Mobile';
+    if (ctx.deviceClass === 'tablet') {
+      syncDeviceName = 'Hone iPad';
+    }
+    let platform = 'unknown';
+    if (__platform__ === 0) platform = 'macOS';
+    if (__platform__ === 1) platform = 'iOS';
+    if (__platform__ === 2) platform = 'Android';
+    if (__platform__ === 3) platform = 'Windows';
+    initSyncGuest(syncDeviceId, syncDeviceName, platform);
+  }
+
+  // Wire relay event callbacks
+  setOnRelayConnected(onRelayConnectedImpl);
+  setOnRelayDisconnected(onRelayDisconnectedImpl);
+  setOnRelayMessage(onRelayMessageImpl);
+  setOnTransportDebug(onTransportDebugImpl);
+
+  // Wire remote file click callback (for sync guest)
+  setRemoteFileClickCallback(onRemoteFileClicked);
+
+  // --- DEBUG AUTO-CONNECT ---
+  // Defer connection to after renderWorkbench returns (Perry timer pump must be active)
+  if (ctx.deviceClass === 'desktop') {
+    syncStatusOverride = 'Auto-paired (debug)';
+    setSyncStatusText('Auto-paired (debug)');
+  } else {
+    syncAutoJoinPending = 1;
+    syncStatusOverride = 'Auto-joining (debug)';
+    setSyncStatusText('Auto-joining (debug)');
+  }
+  setTimeout(() => { autoConnectDebug(); }, 1000);
+
+  // Poll sync panel refresh every 5s
+  setInterval(() => { refreshSyncPanelDeferred(); }, 5000);
+}
+
+function autoConnectDebug(): void {
+  const debugRoom = 'pair-DEBUG2';
+  const relayUrl = getHostRelayUrl();
+  let dbg = 'autoConnectDebug: url=';
+  dbg += relayUrl;
+  dbg += ' room=';
+  dbg += debugRoom;
+  dbg += ' device=';
+  dbg += syncDeviceId;
+  // Write debug to file so we can read it from terminal
+  try { writeFileSync('/tmp/hone-sync-debug.log', dbg); } catch (e: any) {}
+  setSyncStatusText(dbg);
+  connectToRelay(relayUrl, debugRoom, syncDeviceId);
+}
+
+function sendAutoJoinDebug(): void {
+  // Auto-join: skip pairing, just request file tree directly
+  setSyncStatusText('Requesting file tree...');
+  sendToRelay('FILE_TREE_REQ');
+  fileTreeRetries = 0;
+  // Retry FILE_TREE_REQ every 3s until we get a response (host may not be connected yet)
+  setInterval(() => { retryFileTreeReq(); }, 3000);
+}
+
+function retryFileTreeReq(): void {
+  if (fileTreeReceived > 0) return;
+  fileTreeRetries = fileTreeRetries + 1;
+  if (fileTreeRetries > 10) return;
+  syncDebugLog('Retrying FILE_TREE_REQ attempt=' + String(fileTreeRetries));
+  sendToRelay('FILE_TREE_REQ');
+}
+
+function onTransportDebugImpl(msg: string): void {
+  setSyncStatusText(msg);
+  syncDebugLog(msg);
+}
+
+function onSyncPairClicked(): void {
+  // Generate code and use it as the relay room name
+  const code = generateHostPairingCode();
+  setSyncPairingCode(code);
+  let roomId = 'pair-';
+  roomId += code;
+
+  // Disconnect any existing connection, then connect with code-based room
+  disconnectFromRelay();
+  const relayUrl = getHostRelayUrl();
+  connectToRelay(relayUrl, roomId, syncDeviceId);
+
+  syncStatusOverride = 'Waiting for guest...';
+  setSyncStatusText('Waiting for guest...');
+}
+
+function onSyncJoinClicked(code: string): void {
+  let dbg = 'onSyncJoinClicked code=[';
+  dbg += code;
+  dbg += '] len=';
+  dbg += String(code.length);
+  setSyncStatusText(dbg);
+  if (code.length < 1) {
+    setSyncStatusText('EMPTY code, aborting');
+    return;
+  }
+  const upper = code.toUpperCase();
+  let roomId = 'pair-';
+  roomId += upper;
+
+  // Connect to the same room as the host
+  disconnectFromRelay();
+  const relayUrl = getHostRelayUrl();
+  let dbg2 = 'Connecting to ';
+  dbg2 += relayUrl;
+  dbg2 += ' room=';
+  dbg2 += roomId;
+  setSyncStatusText(dbg2);
+  connectToRelay(relayUrl, roomId, syncDeviceId);
+
+  syncStatusOverride = 'Joining...';
+
+  // Send pair request after a short delay (wait for WS connect)
+  setTimeout(() => { sendPairRequest(upper); }, 1500);
+}
+
+function sendPairRequest(code: string): void {
+  // Format: PAIR_REQ|code|deviceId|deviceName
+  let msg = 'PAIR_REQ|';
+  msg += code;
+  msg += '|';
+  msg += syncDeviceId;
+  msg += '|';
+  msg += syncDeviceName;
+  sendToRelay(msg);
+}
+
+function onSyncGuestConnected(deviceId: string, deviceName: string): void {
+  addSyncDevice(deviceName, 'connected');
+  syncStatusOverride = '';
+  setSyncStatusText('Guest connected');
+  refreshSyncPanelDeferred();
+}
+
+function onSyncGuestDisconnected(deviceId: string): void {
+  refreshSyncPanelDeferred();
+}
+
+function onRelayConnectedImpl(): void {
+  if (syncStatusOverride.length === 0) {
+    setSyncStatusText('Connected to relay');
+  }
+  syncDebugLog('onRelayConnectedImpl fired');
+  refreshSyncPanelDeferred();
+  // If auto-join is pending (debug mode), request file tree now
+  if (syncAutoJoinPending > 0) {
+    syncAutoJoinPending = 0;
+    setSyncStatusText('Connected! Requesting files...');
+    setTimeout(() => { sendAutoJoinDebug(); }, 500);
+  }
+}
+
+function onRelayDisconnectedImpl(): void {
+  setSyncStatusText('Disconnected');
+  syncStatusOverride = '';
+  refreshSyncPanelDeferred();
+}
+
+function onRelayMessageImpl(data: string): void {
+  syncDebugLog('RECV: ' + data.substring(0, 200));
+
+  // Extract "from" field to detect self-messages
+  let msgFrom = '';
+  const fromIdx = data.indexOf('"from"');
+  if (fromIdx >= 0) {
+    let fStart = fromIdx + 6;
+    while (fStart < data.length && data.charCodeAt(fStart) !== 34) fStart = fStart + 1;
+    fStart = fStart + 1; // skip opening "
+    let fEnd = fStart;
+    while (fEnd < data.length && data.charCodeAt(fEnd) !== 34) fEnd = fEnd + 1;
+    msgFrom = data.substring(fStart, fEnd);
+  }
+  const isSelf = (msgFrom === syncDeviceId) ? 1 : 0;
+
+  // Extract payload from relay envelope: find "payload" key and its string value
+  const pkIdx = data.indexOf('"payload"');
+  if (pkIdx < 0) return;
+  // Find the opening quote of the value (skip colon and optional whitespace)
+  let pStart = pkIdx + 9; // skip past "payload"
+  // Skip : and whitespace
+  while (pStart < data.length) {
+    const c = data.charCodeAt(pStart);
+    if (c === 58 || c === 32 || c === 9) { // : or space or tab
+      pStart = pStart + 1;
+    } else {
+      break;
+    }
+  }
+  if (pStart >= data.length || data.charCodeAt(pStart) !== 34) return; // must be opening "
+  pStart = pStart + 1; // skip past opening "
+  // Find closing unescaped quote
+  let pEnd = pStart;
+  for (let i = pStart; i < data.length; i++) {
+    if (data.charCodeAt(i) === 92) { // backslash — skip next char
+      i = i + 1;
+    } else if (data.charCodeAt(i) === 34) { // quote — end of payload
+      pEnd = i;
+      break;
+    }
+  }
+  const rawPayload = data.substring(pStart, pEnd);
+  // Unescape JSON string escapes: \\n → \n, \\r → \r, \\" → ", \\\\ → backslash
+  let payload = '';
+  for (let ui = 0; ui < rawPayload.length; ui++) {
+    if (rawPayload.charCodeAt(ui) === 92 && ui + 1 < rawPayload.length) {
+      const nc = rawPayload.charCodeAt(ui + 1);
+      if (nc === 110) { payload += '\n'; ui = ui + 1; }
+      else if (nc === 114) { payload += '\r'; ui = ui + 1; }
+      else if (nc === 34) { payload += '"'; ui = ui + 1; }
+      else if (nc === 92) { payload += '\\'; ui = ui + 1; }
+      else { payload += rawPayload.charAt(ui); }
+    } else {
+      payload += rawPayload.charAt(ui);
+    }
+  }
+
+  // Handle PAIR_REQ|code|deviceId|deviceName
+  if (payload.indexOf('PAIR_REQ|') === 0) {
+    handlePairRequest(payload);
+    return;
+  }
+  // Handle PAIR_OK|deviceId|deviceName
+  if (payload.indexOf('PAIR_OK|') === 0) {
+    handlePairAccepted(payload);
+    return;
+  }
+  // Handle FILE_TREE_REQ — guest asks host for file tree (only from others)
+  if (payload.indexOf('FILE_TREE_REQ') === 0) {
+    if (isSelf < 1) handleFileTreeRequest();
+    return;
+  }
+  // Handle FILE_TREE|rootName;;D|dir;;F|file;;... (only from others)
+  if (payload.indexOf('FILE_TREE|') === 0) {
+    if (isSelf < 1) handleFileTreeResponse(payload);
+    return;
+  }
+  // Handle FILE_REQ|relPath — guest asks host for file content (only from others)
+  if (payload.indexOf('FILE_REQ|') === 0) {
+    if (isSelf < 1) handleFileContentRequest(payload);
+    return;
+  }
+  // Handle FILE_DATA|relPath|content — host sends file to guest (only from others)
+  if (payload.indexOf('FILE_DATA|') === 0) {
+    if (isSelf < 1) handleFileContentResponse(payload);
+    return;
+  }
+  // Handle BULK_SYNC_START|count — host starting bulk file push
+  if (payload.indexOf('BULK_SYNC_START|') === 0) {
+    if (isSelf < 1) {
+      const countStr = payload.substring(16);
+      bulkSyncTotal = Number(countStr);
+      bulkSyncReceived = 0;
+      bulkSyncDone = 0;
+      setSyncStatusText('Receiving files: 0/' + countStr);
+    }
+    return;
+  }
+  // Handle BULK_SYNC_END — host finished bulk push
+  if (payload.indexOf('BULK_SYNC_END') === 0) {
+    if (isSelf < 1) {
+      bulkSyncDone = 1;
+      let doneMsg = 'Synced ';
+      doneMsg += String(fileCacheCount);
+      doneMsg += ' files';
+      setSyncStatusText(doneMsg);
+      syncDebugLog(doneMsg);
+    }
+    return;
+  }
+
+  refreshSyncPanelDeferred();
+}
+
+function handlePairRequest(payload: string): void {
+  // Parse: PAIR_REQ|code|deviceId|deviceName
+  const sep1 = payload.indexOf('|');
+  const rest1 = payload.substring(sep1 + 1);
+  const sep2 = rest1.indexOf('|');
+  const code = rest1.substring(0, sep2);
+  const rest2 = rest1.substring(sep2 + 1);
+  const sep3 = rest2.indexOf('|');
+  const guestDeviceId = rest2.substring(0, sep3);
+  const guestName = rest2.substring(sep3 + 1);
+
+  // Validate the code
+  if (validatePairingAttempt(code) > 0) {
+    // Accept — add guest and send confirmation
+    addGuest(guestDeviceId, guestName);
+    addSyncDevice(guestName, 'connected');
+    syncStatusOverride = '';
+    setSyncStatusText('Paired!');
+    setSyncPairingCode('');
+
+    // Send acceptance: PAIR_OK|deviceId|deviceName
+    let msg = 'PAIR_OK|';
+    msg += syncDeviceId;
+    msg += '|Hone Desktop';
+    sendToRelay(msg);
+    refreshSyncPanelDeferred();
+  } else {
+    // Reject
+    sendToRelay('PAIR_NO|invalid code');
+  }
+}
+
+function handlePairAccepted(payload: string): void {
+  // Parse: PAIR_OK|deviceId|deviceName
+  const sep1 = payload.indexOf('|');
+  const rest1 = payload.substring(sep1 + 1);
+  const sep2 = rest1.indexOf('|');
+  const hostDeviceId = rest1.substring(0, sep2);
+  const hostName = rest1.substring(sep2 + 1);
+
+  addSyncDevice(hostName, 'connected');
+  syncStatusOverride = '';
+  setSyncStatusText('Paired!');
+  refreshSyncPanelDeferred();
+  // Guest: request file tree from host after pairing
+  setTimeout(() => { requestFileTreeFromHost(); }, 500);
+}
+
+// ---------------------------------------------------------------------------
+// File sync protocol
+// ---------------------------------------------------------------------------
+
+function requestFileTreeFromHost(): void {
+  sendToRelay('FILE_TREE_REQ');
+  setSyncStatusText('Requesting files...');
+}
+
+/** Host: scan workspace and send file tree to guest. */
+function handleFileTreeRequest(): void {
+  syncDebugLog('handleFileTreeRequest: root=' + workspaceRoot);
+  if (workspaceRoot.length < 1) {
+    sendToRelay('FILE_TREE|empty');
+    return;
+  }
+  // Reset module-level tree storage
+  syncTreeEntries = new Map();
+
+  // Collect files — writes to module-level syncTreeEntries Map
+  collectSyncTreeDir(workspaceRoot, '', 0);
+
+  const entryCount = syncTreeEntries.size;
+  syncDebugLog('collectSyncTree done: ' + String(entryCount) + ' entries');
+
+  // Get the root folder name
+  let rootName = getFileName(workspaceRoot);
+
+  // Build message: FILE_TREE|rootName;;D|dir;;F|file;;...
+  let msg = 'FILE_TREE|';
+  msg += rootName;
+  for (let i = 0; i < entryCount; i++) {
+    if (syncTreeEntries.has(i)) {
+      msg += ';;';
+      msg += syncTreeEntries.get(i);
+    }
+  }
+
+  syncDebugLog('msg len=' + String(msg.length) + ' first100=' + msg.substring(0, 100));
+  sendToRelay(msg);
+  setSyncStatusText('Sent file tree');
+
+  // --- Bulk sync: send all text/source files after the tree ---
+  // Collect file relPaths from the tree entries
+  let textFiles: string[] = [];
+  let textFileCount = 0;
+  for (let i = 0; i < entryCount; i++) {
+    if (!syncTreeEntries.has(i)) continue;
+    const entry = syncTreeEntries.get(i) as string;
+    if (entry.length < 3) continue;
+    // Only files (F|...), not dirs (D|...)
+    if (entry.charCodeAt(0) !== 70) continue;
+    const relPath = entry.substring(2);
+    if (isTextFile(relPath) > 0) {
+      textFiles.push(relPath);
+      textFileCount = textFileCount + 1;
+    }
+  }
+
+  // Send BULK_SYNC_START|count so guest knows how many files to expect
+  let startMsg = 'BULK_SYNC_START|';
+  startMsg += String(textFileCount);
+  sendToRelay(startMsg);
+  syncDebugLog('Bulk sync: ' + String(textFileCount) + ' text files');
+
+  // Send each file with a small delay to avoid overwhelming the relay
+  bulkSyncIdx = 0;
+  bulkSyncFiles = textFiles;
+  bulkSyncFileCount = textFileCount;
+  // Drip-feed files: send a batch every 50ms via setInterval
+  if (textFileCount > 0) {
+    setSyncStatusText('Syncing ' + String(textFileCount) + ' files...');
+    bulkSyncTimerId = setInterval(() => { bulkSyncTick(); }, 50);
+  }
+}
+
+// Host: bulk sync state
+let bulkSyncIdx: number = 0;
+let bulkSyncFiles: string[] = [];
+let bulkSyncFileCount: number = 0;
+let bulkSyncTimerId: number = 0;
+const BULK_SYNC_BATCH = 3; // files per tick
+const BULK_FILE_MAX_SIZE = 1048576; // 1MB
+
+function bulkSyncTick(): void {
+  let sent = 0;
+  while (bulkSyncIdx < bulkSyncFileCount && sent < BULK_SYNC_BATCH) {
+    const relPath = bulkSyncFiles[bulkSyncIdx];
+    bulkSyncIdx = bulkSyncIdx + 1;
+    let fullPath = workspaceRoot;
+    fullPath += '/';
+    fullPath += relPath;
+    const content = safeReadFile(fullPath);
+    // Skip files that are too large or couldn't be read
+    if (content.length > BULK_FILE_MAX_SIZE) continue;
+    if (content.length === 0) continue;
+    let msg = 'FILE_DATA|';
+    msg += relPath;
+    msg += '\n';
+    msg += content;
+    sendToRelay(msg);
+    sent = sent + 1;
+  }
+  if (bulkSyncIdx >= bulkSyncFileCount) {
+    clearInterval(bulkSyncTimerId);
+    sendToRelay('BULK_SYNC_END');
+    setSyncStatusText('Sync complete (' + String(bulkSyncFileCount) + ' files)');
+    syncDebugLog('Bulk sync complete');
+  }
+}
+
+/** Check if a file is a text/source file based on extension. */
+function isTextFile(relPath: string): number {
+  // Find last dot
+  let dotIdx = -1;
+  for (let i = relPath.length - 1; i >= 0; i--) {
+    if (relPath.charCodeAt(i) === 46) { dotIdx = i; break; }
+    if (relPath.charCodeAt(i) === 47) break; // hit dir separator before dot
+  }
+  if (dotIdx < 0) return 0;
+  const ext = relPath.substring(dotIdx + 1);
+  // Common text/source extensions
+  if (ext.length === 2) {
+    if (ext === 'ts') return 1;
+    if (ext === 'js') return 1;
+    if (ext === 'rs') return 1;
+    if (ext === 'py') return 1;
+    if (ext === 'go') return 1;
+    if (ext === 'rb') return 1;
+    if (ext === 'md') return 1;
+    if (ext === 'sh') return 1;
+    if (ext === 'cs') return 1;
+  }
+  if (ext.length === 3) {
+    if (ext === 'tsx') return 1;
+    if (ext === 'jsx') return 1;
+    if (ext === 'css') return 1;
+    if (ext === 'vue') return 1;
+    if (ext === 'yml') return 1;
+    if (ext === 'xml') return 1;
+    if (ext === 'svg') return 1;
+    if (ext === 'sql') return 1;
+    if (ext === 'txt') return 1;
+    if (ext === 'ini') return 1;
+    if (ext === 'cfg') return 1;
+    if (ext === 'env') return 1;
+    if (ext === 'htm') return 1;
+    if (ext === 'lua') return 1;
+    if (ext === 'zig') return 1;
+    if (ext === 'nim') return 1;
+  }
+  if (ext.length === 4) {
+    if (ext === 'json') return 1;
+    if (ext === 'toml') return 1;
+    if (ext === 'yaml') return 1;
+    if (ext === 'html') return 1;
+    if (ext === 'scss') return 1;
+    if (ext === 'less') return 1;
+    if (ext === 'lock') return 1;
+    if (ext === 'conf') return 1;
+    if (ext === 'java') return 1;
+    if (ext === 'dart') return 1;
+    if (ext === 'swift') return 0; // 5 chars, handled below
+    if (ext === 'diff') return 1;
+  }
+  if (ext.length === 5) {
+    if (ext === 'swift') return 1;
+    if (ext === 'patch') return 1;
+  }
+  // Dotfiles without extension that are text: Makefile, Dockerfile, etc.
+  // Handle by checking common names
+  let lastSlash = -1;
+  for (let i = relPath.length - 1; i >= 0; i--) {
+    if (relPath.charCodeAt(i) === 47) { lastSlash = i; break; }
+  }
+  const name = lastSlash >= 0 ? relPath.substring(lastSlash + 1) : relPath;
+  if (name === 'Makefile') return 1;
+  if (name === 'Dockerfile') return 1;
+  if (name === 'Cargo.toml') return 1;
+  if (name === 'Cargo.lock') return 1;
+  return 0;
+}
+
+function collectSyncTreeDir(absDir: string, relPrefix: string, depth: number): void {
+  if (depth > 8) return;
+  if (syncTreeEntries.size > 500) return;
+  let names: string[] = [];
+  try { names = readdirSync(absDir); } catch (e) {
+    syncDebugLog('readdirSync FAILED: ' + absDir);
+    return;
+  }
+
+  // First pass: separate dirs and files, skip hidden + known large dirs
+  let dirCount = 0;
+  let fileCount = 0;
+  let dirMap: Map<number, string> = new Map();
+  let fileMap: Map<number, string> = new Map();
+  for (let i = 0; i < names.length; i++) {
+    const n = names[i];
+    if (n.length < 1) continue;
+    if (n.charCodeAt(0) === 46) continue; // skip .hidden
+    // Skip known large dirs using charCodeAt (Perry string === unreliable)
+    if (n.length === 12 && n.charCodeAt(0) === 110) continue; // node_modules
+    if (n.length === 6 && n.charCodeAt(0) === 116 && n.charCodeAt(1) === 97) continue; // target
+    if (n.length === 5 && n.charCodeAt(0) === 98 && n.charCodeAt(1) === 117) continue; // build
+    if (n.length === 4 && n.charCodeAt(0) === 100 && n.charCodeAt(1) === 105) continue; // dist
+    // Skip .app bundles (macOS app bundles look like directories)
+    if (n.length > 4 && n.charCodeAt(n.length - 4) === 46 && n.charCodeAt(n.length - 3) === 97 && n.charCodeAt(n.length - 2) === 112 && n.charCodeAt(n.length - 1) === 112) continue;
+    const full = join(absDir, n);
+    const isDirResult = isDirectory(full);
+    if (isDirResult) {
+      dirMap.set(dirCount, n);
+      dirCount = dirCount + 1;
+    } else {
+      fileMap.set(fileCount, n);
+      fileCount = fileCount + 1;
+    }
+  }
+
+  // Add dirs first (with recursion), then files
+  for (let i = 0; i < dirCount; i++) {
+    if (syncTreeEntries.size > 500) return;
+    if (!dirMap.has(i)) continue;
+    const dn = dirMap.get(i) as string;
+    let relPath = '';
+    if (relPrefix.length > 0) {
+      relPath = relPrefix;
+      relPath += '/';
+      relPath += dn;
+    } else {
+      relPath = dn;
+    }
+    let entry = 'D|';
+    entry += relPath;
+    syncTreeEntries.set(syncTreeEntries.size, entry);
+    // Recurse
+    const full = join(absDir, dn);
+    collectSyncTreeDir(full, relPath, depth + 1);
+  }
+  for (let i = 0; i < fileCount; i++) {
+    if (syncTreeEntries.size > 500) return;
+    if (!fileMap.has(i)) continue;
+    const fn_ = fileMap.get(i) as string;
+    let relPath = '';
+    if (relPrefix.length > 0) {
+      relPath = relPrefix;
+      relPath += '/';
+      relPath += fn_;
+    } else {
+      relPath = fn_;
+    }
+    let entry = 'F|';
+    entry += relPath;
+    syncTreeEntries.set(syncTreeEntries.size, entry);
+  }
+}
+
+/** Guest: receive file tree from host and populate explorer. */
+function handleFileTreeResponse(payload: string): void {
+  fileTreeReceived = 1;
+  // Parse FILE_TREE|rootName;;D|dir;;F|file;;...
+  const prefixLen = 10; // "FILE_TREE|".length
+  const body = payload.substring(prefixLen);
+
+  // Split by ;; separator
+  let parts: string[] = [];
+  let partStart = 0;
+  for (let i = 0; i < body.length; i++) {
+    if (body.charCodeAt(i) === 59 && i + 1 < body.length && body.charCodeAt(i + 1) === 59) {
+      if (i > partStart) {
+        parts.push(body.substring(partStart, i));
+      }
+      partStart = i + 2;
+      i = i + 1; // skip second ;
+    }
+  }
+  // Last part
+  if (partStart < body.length) {
+    parts.push(body.substring(partStart));
+  }
+
+  if (parts.length < 1) return;
+  const rootName = parts[0];
+
+  // Remaining parts are entries
+  let entries: string[] = [];
+  for (let i = 1; i < parts.length; i++) {
+    entries.push(parts[i]);
+  }
+
+  let dbgMsg = 'Tree: ';
+  dbgMsg += String(entries.length);
+  dbgMsg += ' entries from ';
+  dbgMsg += rootName;
+  setSyncStatusText(dbgMsg);
+  syncDebugLog(dbgMsg);
+  setRemoteFileTree(rootName, entries, entries.length);
+  // Auto-switch to explorer panel to show the remote file tree
+  switchSidebarPanel(0);
+
+  // Auto-open the first source file in the tree (prefer .ts, then any text file)
+  let firstFile = '';
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    if (e.length > 2 && e.charCodeAt(0) === 70) { // 'F' = file entry
+      const relPath = e.substring(2);
+      // Prefer .ts files
+      if (relPath.length > 3 && relPath.charCodeAt(relPath.length - 3) === 46 && relPath.charCodeAt(relPath.length - 2) === 116 && relPath.charCodeAt(relPath.length - 1) === 115) {
+        firstFile = relPath;
+        break;
+      }
+      if (firstFile.length === 0) firstFile = relPath;
+    }
+  }
+  if (firstFile.length > 0) {
+    onRemoteFileClicked(firstFile);
+  }
+}
+
+/** Host: read file and send content to guest. */
+function handleFileContentRequest(payload: string): void {
+  // FILE_REQ|relPath
+  const relPath = payload.substring(9);
+  if (relPath.length < 1) return;
+  if (workspaceRoot.length < 1) return;
+  let fullPath = workspaceRoot;
+  fullPath += '/';
+  fullPath += relPath;
+  const content = safeReadFile(fullPath);
+  // Send FILE_DATA|relPath|content (content is base64-ish or raw)
+  // For simplicity: send as raw with pipe separator
+  // We need to escape pipes in content — use \n as separator since
+  // the relay envelope already escapes it
+  let msg = 'FILE_DATA|';
+  msg += relPath;
+  msg += '\n';
+  msg += content;
+  sendToRelay(msg);
+}
+
+/** Guest: receive file content from host and display in editor. */
+// The file the user explicitly requested to open (empty = bulk sync background data)
+let pendingOpenPath = '';
+
+function handleFileContentResponse(payload: string): void {
+  // FILE_DATA|relPath\ncontent
+  const prefixLen = 10; // "FILE_DATA|".length
+  const body = payload.substring(prefixLen);
+  // Find first newline — separates relPath from content
+  let nlIdx = -1;
+  for (let i = 0; i < body.length; i++) {
+    if (body.charCodeAt(i) === 10) { nlIdx = i; break; }
+  }
+  if (nlIdx < 0) return;
+  const relPath = body.substring(0, nlIdx);
+  const content = body.substring(nlIdx + 1);
+
+  // Always cache the file content
+  fileCacheSet(relPath, content);
+
+  // Update bulk sync progress
+  if (bulkSyncDone < 1 && bulkSyncTotal > 0) {
+    bulkSyncReceived = bulkSyncReceived + 1;
+    let progressMsg = 'Syncing: ';
+    progressMsg += String(bulkSyncReceived);
+    progressMsg += '/';
+    progressMsg += String(bulkSyncTotal);
+    setSyncStatusText(progressMsg);
+  }
+
+  // Only display in editor if this was a user-requested file
+  let isRequested = 0;
+  if (pendingOpenPath.length > 0 && pendingOpenPath.length === relPath.length) {
+    isRequested = 1;
+    for (let j = 0; j < relPath.length; j++) {
+      if (pendingOpenPath.charCodeAt(j) !== relPath.charCodeAt(j)) { isRequested = 0; break; }
+    }
+  }
+  if (isRequested > 0) {
+    pendingOpenPath = '';
+    displayFileFromCache(relPath, content);
+  }
+}
+
+/** Display a file in the editor (from cache or network). */
+function displayFileFromCache(relPath: string, content: string): void {
+  setSyncStatusText('Loaded: ' + relPath);
+  currentEditorFilePath = relPath;
+  updateBreadcrumb();
+  if (editorReady > 0) {
+    const lang = detectLanguage(relPath);
+    editorInstance.setLanguage(lang);
+    editorInstance.setContent(content);
+    editorInstance.render();
+  }
+  // Open tab for remote file
+  let name = relPath;
+  let lastSlash = -1;
+  for (let ci = relPath.length - 1; ci >= 0; ci--) {
+    if (relPath.charCodeAt(ci) === 47) { lastSlash = ci; break; }
+  }
+  if (lastSlash >= 0) name = relPath.substring(lastSlash + 1);
+  openTab(relPath, name);
+  // In compact mode, switch from explorer back to editor pane
+  if (compactShowingExplorer > 0) {
+    hideExplorer();
+    compactActivePanel = 0;
+  }
+}
+
+/** Guest clicked a remote file in the explorer. */
+function onRemoteFileClicked(relPath: string): void {
+  // Check local cache first — instant open if already synced
+  if (fileCacheHas(relPath) > 0) {
+    const content = fileCacheGet(relPath);
+    displayFileFromCache(relPath, content);
+    return;
+  }
+  // Not cached — request from host
+  setSyncStatusText('Loading: ' + relPath);
+  pendingOpenPath = relPath;
+  let msg = 'FILE_REQ|';
+  msg += relPath;
+  sendToRelay(msg);
+}
+
+function refreshSyncPanelDeferred(): void {
+  if (isRelayConnected() > 0) {
+    if (syncStatusOverride.length === 0) {
+      setSyncStatusText('Connected to relay');
+    }
+  }
+  refreshSyncPanel();
 }
 
 // ---------------------------------------------------------------------------
@@ -1184,30 +2294,46 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   registerBuiltinCommands();
   registerCommand('workbench.action.newEditor', 'New Editor', newFileAction, { showInPalette: false });
 
-  const theme = getActiveTheme();
-  if (!theme) {
-    return VStack(0, [Text('Hone IDE \u2014 No theme loaded')]);
-  }
-
-  themeColors = theme.uiColors;
-
-  // Restore last opened folder, or fall back to cwd
+  // Determine workspace root
   const _initSettings = getWorkbenchSettings();
-  if (_initSettings.lastOpenFolder.length > 0) {
-    workspaceRoot = _initSettings.lastOpenFolder;
-  }
-  if (workspaceRoot.length < 1) {
-    try {
-      const cwd = execSync('pwd');
-      // Trim trailing newline
-      if (cwd.length > 0 && cwd.charCodeAt(cwd.length - 1) === 10) {
-        workspaceRoot = cwd.slice(0, cwd.length - 1);
-      } else {
-        workspaceRoot = cwd;
+  const _launchCwd = getCwd();
+  const _homeDir = getHomeDir();
+
+  let _cwdIsProject = 0;
+  if (_launchCwd.length > 1) {
+    let _cwdMatchesHome = 0;
+    if (_launchCwd.length === _homeDir.length) {
+      _cwdMatchesHome = 1;
+      for (let _ci = 0; _ci < _launchCwd.length; _ci++) {
+        if (_launchCwd.charCodeAt(_ci) !== _homeDir.charCodeAt(_ci)) {
+          _cwdMatchesHome = 0;
+          break;
+        }
       }
-    } catch (e: any) {
-      workspaceRoot = '';
     }
+    if (_cwdMatchesHome < 1) {
+      _cwdIsProject = 1;
+    }
+  }
+
+  if (_cwdIsProject > 0) {
+    workspaceRoot = _launchCwd;
+  } else if (_initSettings.lastOpenFolder.length > 0) {
+    let _lastFolderValid = 0;
+    try {
+      if (existsSync(_initSettings.lastOpenFolder)) {
+        if (isDirectory(_initSettings.lastOpenFolder)) {
+          _lastFolderValid = 1;
+        }
+      }
+    } catch (e: any) {}
+    if (_lastFolderValid > 0) {
+      workspaceRoot = _initSettings.lastOpenFolder;
+    } else {
+      workspaceRoot = _launchCwd;
+    }
+  } else {
+    workspaceRoot = _launchCwd;
   }
 
   // Wire up extracted panel callbacks
@@ -1229,8 +2355,6 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   setTerminalCwd(workspaceRoot);
   setChatWorkspaceRoot(workspaceRoot);
   setChatFilePathGetter(() => { return getCurrentEditorPathForChat(); });
-
-  // Wire welcome tab actions
   setWelcomeActions(openFolderAction, openFileAction, openFileAction);
 
   // Wire LSP bridge
@@ -1244,60 +2368,78 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   refreshGitState();
   updateStatusBarBranch();
 
+  // Initialize sync system
+  initSyncSystem(layoutMode);
+
   if (layoutMode === 'compact') {
-    const editorArea = renderEditorArea(themeColors);
-    const explorerPanel = renderSidebar(themeColors);
-    const bottomBar = renderBottomToolbar(themeColors);
-    const statusBar = renderStatusBarImpl(themeColors);
+    const editorArea = renderEditorArea();
+    const explorerPanel = renderSidebar();
+    const statusBar = renderStatusBarImpl(null as any);
+    const bottomBar = renderBottomToolbar();
 
     compactEditorPane = editorArea;
     compactExplorerPane = explorerPanel;
 
-    widgetSetHidden(explorerPanel, 1);
-
-    const contentArea = VStack(0, [editorArea, explorerPanel]);
-    widgetSetHugging(contentArea, 1);
+    // Content container holds the active panel (editor, explorer, or chat).
+    // On iOS, hidden views in UIStackView break layout — so we swap children
+    // dynamically instead of using widgetSetHidden.
+    const contentCtr = VStack(0, [editorArea]);
+    widgetSetHugging(contentCtr, 1);
+    compactContentContainer = contentCtr;
 
     widgetSetHugging(statusBar, 750);
     widgetSetHugging(bottomBar, 750);
-    const shell = VStack(0, [contentArea, statusBar, bottomBar]);
-    setBg(shell, themeColors.editorBackground);
+
+    const shell = VStack(0, [contentCtr, statusBar, bottomBar]);
+    setBg(shell, getEditorBackground());
+    compactShell = shell;
     return shell;
   }
 
   if (layoutMode === 'split') {
-    const sidebar = renderSidebar(themeColors);
-    const editorArea = renderEditorArea(themeColors);
-    const statusBar = renderStatusBarImpl(themeColors);
+    // Full iPad split layout using frame-based split
+    // renderSidebar() can't be used directly because renderExplorerPanel triggers
+    // a layout crash in frame-based containers. Build sidebar inline instead.
+    const sidebarInner = VStackWithInsets(0, 0, 0, 0, 0);
+    setBg(sidebarInner, getSideBarBackground());
+    sidebarContainer = sidebarInner;
+    // Defer explorer panel init to after layout is established
+    const sideScroll = ScrollView();
+    scrollViewSetChild(sideScroll, sidebarInner);
+    const leftBox = sideScroll;
+    const rightBox = renderEditorArea();
 
-    widgetSetWidth(sidebar, 180);
-    widgetSetHugging(sidebar, 750);
-    widgetSetHugging(editorArea, 1);
+    const statusBar = renderStatusBarImpl(null as any);
+    const topBar = renderIPadTopBar();
+    widgetSetHugging(topBar, 750);
 
-    const sidebarBorder = VStack(0, []);
-    setBg(sidebarBorder, themeColors.panelBorder);
-    widgetSetWidth(sidebarBorder, 1);
-    widgetSetHugging(sidebarBorder, 1000);
+    const splitContainer = frameSplitCreate(280);
+    frameSplitAddChild(splitContainer, leftBox);
+    frameSplitAddChild(splitContainer, rightBox);
+    widgetSetHugging(splitContainer, 1);
 
-    sidebarWidget = sidebar;
-    sidebarBorderWidget = sidebarBorder;
-    sidebarToggleReady = 1;
-
-    const mainRow = HStack(0, [sidebar, sidebarBorder, editorArea]);
-    widgetSetHugging(mainRow, 1);
     widgetSetHugging(statusBar, 750);
-    const shell = VStack(0, [mainRow, statusBar]);
-    setBg(shell, themeColors.editorBackground);
+
+    const shell = VStack(0, [topBar, splitContainer, statusBar]);
+    setBg(shell, getEditorBackground());
+
+    // Defer explorer panel init — calling it synchronously during layout setup
+    // causes the frame split container to black-screen on iOS.
+    setTimeout(() => { initSplitSidebarExplorer(); }, 100);
+
+    _lastThemeName = getWorkbenchSettings().colorTheme;
+    onSettingsChange(() => { onSettingsChanged(); });
+
     return shell;
   }
 
+  // Desktop (full) layout
   const settings = getWorkbenchSettings();
-  const sidebarLocation = settings.sidebarLocation;
 
-  const activityBar = renderActivityBarDesktop(themeColors);
-  const sidebar = renderSidebar(themeColors);
-  const editorArea = renderEditorArea(themeColors);
-  const statusBar = renderStatusBarImpl(themeColors);
+  const activityBar = renderActivityBarDesktop();
+  const sidebar = renderSidebar();
+  const editorArea = renderEditorArea();
+  const statusBar = renderStatusBarImpl(null as any);
 
   widgetSetWidth(activityBar, 48);
   widgetSetHugging(activityBar, 750);
@@ -1306,7 +2448,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   widgetSetHugging(editorArea, 1);
 
   const sidebarBorder = VStack(0, []);
-  setBg(sidebarBorder, themeColors.panelBorder);
+  setBg(sidebarBorder, getPanelBorder());
   widgetSetWidth(sidebarBorder, 1);
   widgetSetHugging(sidebarBorder, 1000);
 
@@ -1315,39 +2457,40 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   sidebarToggleReady = 1;
 
   // Apply persisted sidebar visibility
-  if (!settings.sidebarVisible) {
+  if (settings.sidebarVisible === false) {
     sidebarVisible = 0;
     widgetSetHidden(sidebar, 1);
     widgetSetHidden(sidebarBorder, 1);
   }
 
   // Apply persisted active panel
-  if (settings.activePanelIndex > 0 && settings.activePanelIndex <= 2) {
+  if (settings.activePanelIndex > 0 && settings.activePanelIndex <= 3) {
     activeActivityIdx = settings.activePanelIndex;
     updateActivityBar();
     switchSidebarPanel(settings.activePanelIndex);
   }
 
-  // Perry string === can be unreliable — use charCodeAt
-  const isRight = sidebarLocation.length > 0 && sidebarLocation.charCodeAt(0) === 114; // 'r'
-
-  const mainRow = isRight
-    ? HStack(0, [activityBar, editorArea, sidebarBorder, sidebar])
-    : HStack(0, [activityBar, sidebar, sidebarBorder, editorArea]);
+  const mainRow = HStack(0, [activityBar, sidebar, sidebarBorder, editorArea]);
   mainRowWidget = mainRow;
 
   widgetSetHugging(mainRow, 1);
   widgetSetHugging(statusBar, 750);
 
-  // Terminal bottom panel (hidden by default unless persisted, toggle via Cmd+J)
+  // Platform context for responsive sizing
+  const ctx = getPlatformContext();
+
+  // Terminal bottom panel
+  let termHeight = Math.floor(ctx.screen.height * 0.25);
+  if (termHeight < 150) termHeight = 150;
+  if (termHeight > 250) termHeight = 250;
   const termPanel = VStack(0, []);
-  setBg(termPanel, themeColors.editorBackground);
-  widgetSetHeight(termPanel, 200);
+  setBg(termPanel, getEditorBackground());
+  widgetSetHeight(termPanel, termHeight);
   widgetSetHugging(termPanel, 750);
   setTerminalCloseCallback(toggleTerminalAction);
   setTerminalProblemsFileOpener(openFileFromSearchPanel);
-  renderTerminalPanel(termPanel, themeColors);
-  if (!settings.terminalVisible) {
+  renderTerminalPanel(termPanel, null as any);
+  if (settings.terminalVisible === false) {
     widgetSetHidden(termPanel, 1);
   } else {
     terminalVisible = 1;
@@ -1357,53 +2500,61 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
 
   // Terminal border
   const termBorder = VStack(0, []);
-  setBg(termBorder, themeColors.panelBorder);
+  setBg(termBorder, getPanelBorder());
   widgetSetWidth(termBorder, 1);
   widgetSetHugging(termBorder, 1000);
   widgetSetHidden(termBorder, 1);
   termBorderWidget = termBorder;
 
-  // Notification overlay container (positioned at top-right)
+  // Notification overlay
+  let notifWidth = 300;
+  if (ctx.screen.width < 400) {
+    notifWidth = ctx.screen.width - 40;
+  }
   notifOverlay = VStack(4, []);
-  widgetSetWidth(notifOverlay, 300);
+  widgetSetWidth(notifOverlay, notifWidth);
   widgetSetHugging(notifOverlay, 750);
-  initNotifications(notifOverlay, themeColors);
+  initNotifications(notifOverlay, null as any);
 
   // Left content area: mainRow + terminal + status bar
   const leftContent = VStack(0, [mainRow, termPanel, statusBar]);
-  setBg(leftContent, themeColors.editorBackground);
+  setBg(leftContent, getEditorBackground());
   widgetSetHugging(leftContent, 1); // stretch to fill
   stackSetDetachesHidden(leftContent, 1); // hidden terminal doesn't take up space
+  // VStack alignment=Leading doesn't stretch children to fill cross-axis width.
+  // Pin arranged subviews' widths to the VStack so they fill horizontally.
+  widgetMatchParentWidth(mainRow);
+  widgetMatchParentWidth(statusBar);
   leftContentWidget = leftContent;
 
-  // Right panel for AI Chat (Cursor-style) — outside mainRow to avoid
-  // layout conflicts with the embedded editor NSView
+  // Right panel for AI Chat
+  let rightPanelWidth = 360;
+  if (ctx.deviceClass.charCodeAt(0) === 116) { // 'tablet'
+    rightPanelWidth = 300;
+  }
   const rightPanel = VStack(8, []);
-  setBg(rightPanel, themeColors.sideBarBackground);
-  widgetSetWidth(rightPanel, 360);
+  setBg(rightPanel, getSideBarBackground());
+  widgetSetWidth(rightPanel, rightPanelWidth);
   widgetSetHugging(rightPanel, 750);
   rightPanelContainer = rightPanel;
   rightPanelWidget = rightPanel;
   const rightBorderDiv = VStack(0, []);
-  setBg(rightBorderDiv, themeColors.panelBorder);
+  setBg(rightBorderDiv, getPanelBorder());
   widgetSetWidth(rightBorderDiv, 1);
   widgetSetHugging(rightBorderDiv, 1000);
   rightPanelBorder = rightBorderDiv;
-  rightPanelVisible = 1;
+  rightPanelVisible = 0;
   rightPanelRendered = 0;
+  widgetSetHidden(rightPanel, 1);
+  widgetSetHidden(rightBorderDiv, 1);
 
   // Outer shell: left content + right panel
   const shell = HStack(0, [leftContent, rightBorderDiv, rightPanel]);
-  setBg(shell, themeColors.editorBackground);
-  stackSetDetachesHidden(shell, 1); // hidden right panel doesn't take up space
+  setBg(shell, getEditorBackground());
+  stackSetDetachesHidden(shell, 1);
   shellWidget = shell;
 
-  // Pin children to fill parent height (HStack default CenterY alignment
-  // only centers children instead of stretching them vertically)
   widgetMatchParentHeight(leftContent);
-  // NOTE: Do NOT use widgetMatchParentHeight(mainRow) — it conflicts with the
-  // VStack Fill distribution when terminal panel is also in the stack. mainRow
-  // stretches via hugging priority 1 instead.
   widgetMatchParentHeight(activityBar);
   widgetMatchParentHeight(sidebar);
   widgetMatchParentHeight(editorArea);
@@ -1412,8 +2563,9 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   _lastThemeName = settings.colorTheme;
   onSettingsChange(() => { onSettingsChanged(); });
 
-  // Auto-render chat panel after delay
-  setInterval(() => { autoRenderChat(); }, 2000);
+  // Poll for files opened via macOS "Open With" or command-line args
+  setInterval(checkOpenFileRequests, 500);
 
   return shell;
 }
+

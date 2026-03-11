@@ -4,11 +4,12 @@
  */
 import {
   VStack, VStackWithInsets, HStack, Text, Spacer,
-  textSetFontSize, textSetFontWeight, textSetFontFamily,
+  textSetFontSize, textSetFontWeight, textSetFontFamily, textSetWraps,
   widgetAddChild, widgetSetBackgroundColor, widgetSetWidth,
 } from 'perry/ui';
 import { setFg } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
+import { getSideBarForeground } from '../../theme/theme-colors';
 
 /** Check if line starts with ``` (code fence). */
 function isCodeFence(line: string): number {
@@ -42,7 +43,7 @@ function isBulletItem(line: string): number {
 }
 
 /** Render a text line with inline `code` spans detected. */
-function renderInlineText(text: string, container: unknown, fontSize: number, colors: ResolvedUIColors): void {
+function renderInlineText(text: string, container: unknown, fontSize: number, colors: ResolvedUIColors, wrapWidth: number): void {
   // Scan for backtick pairs
   let hasBacktick: number = 0;
   for (let i = 0; i < text.length; i++) {
@@ -56,7 +57,8 @@ function renderInlineText(text: string, container: unknown, fontSize: number, co
     // Simple text, no inline code
     const t = Text(text);
     textSetFontSize(t, fontSize);
-    setFg(t, colors.sideBarForeground);
+    textSetWraps(t, wrapWidth);
+    setFg(t, getSideBarForeground());
     widgetAddChild(container, t);
     return;
   }
@@ -77,8 +79,9 @@ function renderInlineText(text: string, container: unknown, fontSize: number, co
           textSetFontSize(t, fontSize - 1);
         } else {
           textSetFontSize(t, fontSize);
+          textSetWraps(t, wrapWidth);
         }
-        setFg(t, colors.sideBarForeground);
+        setFg(t, getSideBarForeground());
         widgetAddChild(container, t);
       }
       if (isTick > 0) {
@@ -106,7 +109,7 @@ function hasBoldMarkers(text: string): number {
  * Main entry: render markdown content into a container widget.
  * Parses line by line, detects code fences, headers, bullets, etc.
  */
-export function renderMarkdownBlock(content: string, container: unknown, colors: ResolvedUIColors): void {
+export function renderMarkdownBlock(content: string, container: unknown, colors: ResolvedUIColors, wrapWidth: number): void {
   let lineStart = 0;
   let inCodeBlock: number = 0;
   let codeLang = '';
@@ -138,7 +141,7 @@ export function renderMarkdownBlock(content: string, container: unknown, colors:
           if (codeLang.length > 0) {
             const langLabel = Text(codeLang);
             textSetFontSize(langLabel, 9);
-            setFg(langLabel, colors.sideBarForeground);
+            setFg(langLabel, getSideBarForeground());
             widgetAddChild(codeLines, langLabel);
           }
           widgetAddChild(container, codeLines);
@@ -153,7 +156,7 @@ export function renderMarkdownBlock(content: string, container: unknown, colors:
         const t = Text(codeLine);
         textSetFontFamily(t, 11, 'Menlo');
         textSetFontSize(t, 11);
-        setFg(t, colors.sideBarForeground);
+        setFg(t, getSideBarForeground());
         widgetAddChild(codeLines, t);
         continue;
       }
@@ -182,7 +185,8 @@ export function renderMarkdownBlock(content: string, container: unknown, colors:
           textSetFontSize(h, 13);
           textSetFontWeight(h, 13, 0.5);
         }
-        setFg(h, colors.sideBarForeground);
+        textSetWraps(h, wrapWidth);
+        setFg(h, getSideBarForeground());
         widgetAddChild(container, h);
         continue;
       }
@@ -193,14 +197,14 @@ export function renderMarkdownBlock(content: string, container: unknown, colors:
         let bulletStr = '\u2022 ';
         bulletStr += bulletText;
         const row = VStack(0, []);
-        renderInlineText(bulletStr, row, 12, colors);
+        renderInlineText(bulletStr, row, 12, colors, wrapWidth);
         widgetAddChild(container, row);
         continue;
       }
 
       // Regular text
       const row = VStack(0, []);
-      renderInlineText(line, row, 12, colors);
+      renderInlineText(line, row, 12, colors, wrapWidth);
       widgetAddChild(container, row);
     }
   }

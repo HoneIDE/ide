@@ -1,6 +1,36 @@
 node_modules/
 hone-ide
+hone-ide.exe
+Hone
+Hone.app/
+
+# macOS app bundle build outputs (keep Info.plist)
+Hone-macOS.app/Contents/MacOS/
+Hone-macOS.app/Contents/Resources/
+
+# Build artifacts
+app
+app.html
+hone-ide-map
+hone-ide.map
+test-runs/
 *.o
 *.a
+*.so
+*.lib
 dist/
 .DS_Store
+target/
+
+# Android build artifacts
+android-build/.gradle/
+android-build/build/
+android-build/app/build/
+android-build/app/src/main/jniLibs/
+android-build/local.properties
+
+# iOS build artifacts
+*.ipa
+
+# Project plans (local)
+PROJECT_PLAN.md
