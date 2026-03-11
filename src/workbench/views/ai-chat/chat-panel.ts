@@ -24,7 +24,7 @@ import { telemetryTrackAiChat, telemetryTrackAiAgent } from '../../telemetry';
 import { getAppDataDir, canRunShellCommands } from '../../paths';
 import { getWorkbenchSettings } from '../../settings';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
-import { getSideBarForeground } from '../../theme/theme-colors';
+import { getSideBarForeground, getSideBarBackground, getSecondaryTextColor, getActivityBarForeground, isCurrentThemeDark } from '../../theme/theme-colors';
 
 // Session persistence
 import {
@@ -1822,7 +1822,7 @@ function refreshSessionList(): void {
     const timeStr = formatTimestamp(stimestamp);
     const timeLabel = Text(timeStr);
     textSetFontSize(timeLabel, 9);
-    setFg(timeLabel, '#707070');
+    setFg(timeLabel, getSecondaryTextColor());
 
     // Delete button
     const delFn = getDelSessionFn(displayed);
@@ -2457,17 +2457,22 @@ function onModeClaude(): void {
 function styleModeTab(btn: unknown, wrap: unknown, active: number): void {
   if (!btn) return;
   if (active > 0) {
-    setBtnFg(btn, '#ffffff');
-    if (wrap) widgetSetBackgroundColor(wrap, 0.25, 0.30, 0.58, 1.0);
+    setBtnFg(btn, getActivityBarForeground());
+    if (isCurrentThemeDark() > 0) {
+      if (wrap) widgetSetBackgroundColor(wrap, 0.25, 0.30, 0.58, 1.0);
+    } else {
+      if (wrap) widgetSetBackgroundColor(wrap, 0.0, 0.47, 0.80, 0.15);
+    }
   } else {
-    setBtnFg(btn, '#707070');
+    setBtnFg(btn, getSecondaryTextColor());
     if (wrap) widgetSetBackgroundColor(wrap, 0.0, 0.0, 0.0, 0.0);
   }
 }
 
 function styleDisabledTab(btn: unknown, wrap: unknown): void {
   if (!btn) return;
-  setBtnFg(btn, '#404040');
+  const disabledColor = isCurrentThemeDark() > 0 ? '#404040' : '#b0b0b0';
+  setBtnFg(btn, disabledColor);
   if (wrap) widgetSetBackgroundColor(wrap, 0.0, 0.0, 0.0, 0.0);
 }
 

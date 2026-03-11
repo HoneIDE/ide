@@ -8,6 +8,7 @@ import {
 } from 'perry/ui';
 import { setFg, setBtnFg, setBtnTint } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
+import { getStatusAddedColor, getStatusDeletedColor } from '../../theme/theme-colors';
 import { widgetAddChild } from 'perry/ui';
 
 export function renderDebugPanel(container: unknown, colors: ResolvedUIColors): void {
@@ -22,7 +23,7 @@ export function renderDebugPanel(container: unknown, colors: ResolvedUIColors): 
   buttonSetBordered(playBtn, 0);
   buttonSetImage(playBtn, 'play.fill');
   buttonSetImagePosition(playBtn, 1);
-  setBtnTint(playBtn, '#73C991');
+  setBtnTint(playBtn, getStatusAddedColor());
 
   const pauseBtn = Button('', () => {});
   buttonSetBordered(pauseBtn, 0);
@@ -52,7 +53,7 @@ export function renderDebugPanel(container: unknown, colors: ResolvedUIColors): 
   buttonSetBordered(stopBtn, 0);
   buttonSetImage(stopBtn, 'stop.fill');
   buttonSetImagePosition(stopBtn, 1);
-  setBtnTint(stopBtn, '#E57373');
+  setBtnTint(stopBtn, getStatusDeletedColor());
 
   const toolbar = HStack(4, [playBtn, pauseBtn, stepOverBtn, stepIntoBtn, stepOutBtn, stopBtn]);
   widgetAddChild(container, toolbar);

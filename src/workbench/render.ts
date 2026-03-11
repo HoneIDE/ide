@@ -44,6 +44,7 @@ import {
   getTitleBarBackground, getTitleBarForeground,
   getEditorSelectionBackground, getEditorLineHighlightBackground,
   getEditorCursorForeground, getEditorLineNumberForeground, getEditorLineNumberActiveForeground,
+  applyDarkColors, applyLightColors, isCurrentThemeDark,
 } from './theme/theme-colors';
 import type { LayoutMode } from '../platform';
 import { getWorkbenchSettings, updateSettings, onSettingsChange } from './settings';
@@ -1155,10 +1156,13 @@ function renderSidebar(): unknown {
 
   renderExplorerPanel(inner, null as any);
 
-  // On macOS, NSScrollView doesn't propagate width to documentView, causing
-  // the inner VStack to render at 0 width. Return the VStack directly instead
-  // (scrolling handled by macOS NSStackView's built-in clipping).
-  return inner;
+  // Wrap in ScrollView for scrollable file tree
+  const scroll = ScrollView();
+  scrollViewSetChild(scroll, inner);
+  setBg(scroll, getSideBarBackground());
+  // Pin inner VStack width to ScrollView (NSScrollView doesn't propagate width)
+  widgetMatchParentWidth(inner);
+  return scroll;
 }
 
 // ---------------------------------------------------------------------------
@@ -1439,17 +1443,23 @@ function onSettingsChanged(): void {
   const s = getWorkbenchSettings();
   const newTheme = s.colorTheme;
   if (newTheme.length < 1) return;
-  // Check if theme changed
+  // Check if theme changed — compare 6th char: 'D' (68) for Dark, 'L' (76) for Light
   if (_lastThemeName.length > 0) {
     if (_lastThemeName.charCodeAt(5) === newTheme.charCodeAt(5)) return; // same theme
   }
   _lastThemeName = newTheme;
 
-  // Switch the active theme
-  if (setActiveTheme(newTheme)) {
-    recolorUI();
-    telemetryTrackThemeChange(newTheme);
+  // Apply the correct color palette
+  // 'Hone Light' has 'L' (76) at charCodeAt(5), 'Hone Dark' has 'D' (68)
+  if (newTheme.charCodeAt(5) === 76) {
+    applyLightColors();
+  } else {
+    applyDarkColors();
   }
+
+  setActiveTheme(newTheme);
+  recolorUI();
+  telemetryTrackThemeChange(newTheme);
 }
 
 // ---------------------------------------------------------------------------
@@ -2973,6 +2983,16 @@ function refreshSyncPanelDeferred(): void {
 
 export function renderWorkbench(layoutMode: LayoutMode): unknown {
   _renderStartMs = Date.now();
+
+  // Apply theme colors based on saved setting before building any widgets
+  const _initThemeSettings = getWorkbenchSettings();
+  // 'Hone Light' has 'L' (76) at charCodeAt(5)
+  if (_initThemeSettings.colorTheme.length > 5 && _initThemeSettings.colorTheme.charCodeAt(5) === 76) {
+    applyLightColors();
+  } else {
+    applyDarkColors();
+  }
+
   // Register commands with real handlers (overrides stubs in commands.ts)
   registerBuiltinCommands();
   registerCommand('workbench.action.newEditor', 'New Editor', newFileAction, { showInPalette: false });

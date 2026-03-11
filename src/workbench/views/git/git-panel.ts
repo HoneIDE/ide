@@ -17,7 +17,7 @@ import { execSync } from 'child_process';
 import { join } from 'path';
 import { setFg, setBtnFg, getFileName } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
-import { getSideBarForeground } from '../../theme/theme-colors';
+import { getSideBarForeground, getStatusAddedColor, getStatusModifiedColor, getStatusDeletedColor } from '../../theme/theme-colors';
 import { telemetryTrackGitCommit } from '../../telemetry';
 
 // ---------------------------------------------------------------------------
@@ -343,11 +343,11 @@ function updateGitResultsUI(): void {
       textSetFontFamily(statusLabel, 11, 'Menlo');
       if (panelColors) {
         if (indicator === 'A') {
-          setFg(statusLabel, '#73C991');
+          setFg(statusLabel, getStatusAddedColor());
         } else if (indicator === 'D') {
-          setFg(statusLabel, '#E57373');
+          setFg(statusLabel, getStatusDeletedColor());
         } else {
-          setFg(statusLabel, '#E2C08D');
+          setFg(statusLabel, getStatusModifiedColor());
         }
       }
       const fileBtn = Button(fname, () => { onGitFileClick(fpath); });
@@ -386,9 +386,9 @@ function updateGitResultsUI(): void {
       textSetFontFamily(statusLabel, 11, 'Menlo');
       if (panelColors) {
         if (indicator === 'D') {
-          setFg(statusLabel, '#E57373');
+          setFg(statusLabel, getStatusDeletedColor());
         } else {
-          setFg(statusLabel, '#E2C08D');
+          setFg(statusLabel, getStatusModifiedColor());
         }
       }
       const fileBtn = Button(fname, () => { onGitFileClick(fpath); });
@@ -427,7 +427,7 @@ function updateGitResultsUI(): void {
       const statusLabel = Text('U');
       textSetFontSize(statusLabel, 11);
       textSetFontFamily(statusLabel, 11, 'Menlo');
-      if (panelColors) setFg(statusLabel, '#73C991');
+      if (panelColors) setFg(statusLabel, getStatusAddedColor());
       const fileBtn = Button(fname, () => { onGitFileClick(fpath); });
       buttonSetBordered(fileBtn, 0);
       textSetFontSize(fileBtn, 12);

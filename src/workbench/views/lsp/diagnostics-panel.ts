@@ -10,7 +10,7 @@ import {
 } from 'perry/ui';
 import { setFg, setBtnFg, getFileName } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
-import { getSideBarForeground } from '../../theme/theme-colors';
+import { getSideBarForeground, getStatusAddedColor, getStatusModifiedColor, getStatusDeletedColor, getSecondaryTextColor } from '../../theme/theme-colors';
 
 let diagContainer: unknown = null;
 let diagColors: ResolvedUIColors = null as any;
@@ -102,18 +102,18 @@ function refreshDiagnosticsUI(): void {
     const msg = _dMessages[i];
 
     // Determine severity color using charCodeAt (Perry-reliable)
-    let severityColor = '#CCCCCC';
+    let severityColor = getSecondaryTextColor();
     let severityChar = '?';
     if (sev.charCodeAt(0) === 101) { // 'e' for error
-      severityColor = '#E57373';
+      severityColor = getStatusDeletedColor();
       severityChar = 'E';
     }
     if (sev.charCodeAt(0) === 119) { // 'w' for warning
-      severityColor = '#E2C08D';
+      severityColor = getStatusModifiedColor();
       severityChar = 'W';
     }
     if (sev.charCodeAt(0) === 105) { // 'i' for info
-      severityColor = '#73C991';
+      severityColor = getStatusAddedColor();
       severityChar = 'I';
     }
 

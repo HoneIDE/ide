@@ -25,7 +25,7 @@ import {
   onDiagnosticsUpdate,
 } from '../lsp/diagnostics-panel';
 import { getFileName } from '../../ui-helpers';
-import { getEditorForeground, getSideBarForeground, getPanelBackground, getPanelBorder } from '../../theme/theme-colors';
+import { getEditorForeground, getSideBarForeground, getPanelBackground, getPanelBorder, getStatusAddedColor, getStatusModifiedColor, getStatusDeletedColor, getSecondaryTextColor } from '../../theme/theme-colors';
 
 // FFI declarations — LiveTerminal API
 declare function hone_terminal_open(rows: number, cols: number, shell: number, cwd: number): number;
@@ -129,18 +129,18 @@ function refreshProblemsView(): void {
   for (let i = 0; i < count; i++) {
     if (i >= severities.length) break;
     const sev = severities[i];
-    let severityColor = '#CCCCCC';
+    let severityColor = getSecondaryTextColor();
     let severityChar = '?';
     if (sev.length < 1) {
       severityChar = '?';
     } else if (sev.charCodeAt(0) === 101) { // 'e' for error
-      severityColor = '#E57373';
+      severityColor = getStatusDeletedColor();
       severityChar = 'E';
     } else if (sev.charCodeAt(0) === 119) { // 'w' for warning
-      severityColor = '#E2C08D';
+      severityColor = getStatusModifiedColor();
       severityChar = 'W';
     } else if (sev.charCodeAt(0) === 105) { // 'i' for info
-      severityColor = '#73C991';
+      severityColor = getStatusAddedColor();
       severityChar = 'I';
     }
 

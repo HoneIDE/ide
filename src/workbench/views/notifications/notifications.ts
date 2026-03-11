@@ -9,6 +9,10 @@ import {
 } from 'perry/ui';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
+import {
+  getNotificationBackground, getNotificationForeground,
+  getNotificationErrorBackground, getNotificationWarningBackground, getNotificationInfoBackground,
+} from '../../theme/theme-colors';
 
 let notifContainer: unknown = null;
 let notifColors: ResolvedUIColors = null as any;
@@ -39,19 +43,21 @@ function dismissPending(): void {
 export function showNotification(msg: string, type: string): void {
   if (!notifContainer || !notifColors) return;
 
-  let bgColor = '#333333';
-  if (type === 'error') bgColor = '#5A1D1D';
-  if (type === 'warning') bgColor = '#4D3B00';
-  if (type === 'info') bgColor = '#1A3A5C';
+  let bgColor = getNotificationBackground();
+  if (type === 'error') bgColor = getNotificationErrorBackground();
+  if (type === 'warning') bgColor = getNotificationWarningBackground();
+  if (type === 'info') bgColor = getNotificationInfoBackground();
+
+  const fgColor = getNotificationForeground();
 
   const msgText = Text(msg);
   textSetFontSize(msgText, 12);
-  setFg(msgText, '#CCCCCC');
+  setFg(msgText, fgColor);
 
   const closeBtn = Button('x', () => { dismissPending(); });
   buttonSetBordered(closeBtn, 0);
   textSetFontSize(closeBtn, 10);
-  setBtnFg(closeBtn, '#CCCCCC');
+  setBtnFg(closeBtn, fgColor);
 
   const notif = HStack(8, [msgText, Spacer(), closeBtn]);
   setBg(notif, bgColor);
