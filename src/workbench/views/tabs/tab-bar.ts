@@ -15,7 +15,7 @@ import {
 import { readFileSync } from 'fs';
 import { setBg, setBtnFg, setBtnTint, getFileIcon, getFileIconColor } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
-import { getTabActiveForeground, getTabActiveBackground, getTabInactiveForeground, getTabInactiveBackground, getFocusBorder } from '../../theme/theme-colors';
+import { getTabActiveForeground, getTabActiveBackground, getTabInactiveForeground, getTabInactiveBackground, getTabBorder, getFocusBorder } from '../../theme/theme-colors';
 
 // ---------------------------------------------------------------------------
 // Module-level state (must be declared BEFORE any function — Perry no-hoist)
@@ -29,6 +29,8 @@ let activeTabIdx = 0;
 let tabBarButtons: unknown[] = [];
 let tabAccentBars: unknown[] = [];
 let tabCloseButtons: unknown[] = [];
+let tabLabelButtons: unknown[] = [];
+let tabIconButtons: unknown[] = [];
 let tabDirty: number[] = [];
 let tabSavedLengths: number[] = [];
 
@@ -192,20 +194,23 @@ function rebuildTabBarDirect(count: number, names: string[], paths: string[], co
   tabBarButtons = [];
   tabAccentBars = [];
   tabCloseButtons = [];
+  tabLabelButtons = [];
+  tabIconButtons = [];
   tabDirty = [];
   tabSavedLengths = [];
   for (let i = 0; i < count; i++) {
     const idx = i;
     const path = paths[i];
     const name = names[i];
-    const tabGroup = HStackWithInsets(4, 0, 10, 0, 6);
+    // VS Code-like tab padding: spacing=5, top=8, right=8, bottom=8, left=10
+    const tabGroup = HStackWithInsets(5, 8, 8, 8, 10);
     // File type icon
     const tabIcon = Button('', () => { onTabClickDirect(idx, path); });
     buttonSetBordered(tabIcon, 0);
     const tIcon = getFileIcon(name);
     buttonSetImage(tabIcon, tIcon);
     buttonSetImagePosition(tabIcon, 1);
-    textSetFontSize(tabIcon, 11);
+    textSetFontSize(tabIcon, 12);
     const tabBtn = Button(name, () => { onTabClickDirect(idx, path); });
     buttonSetBordered(tabBtn, 0);
     textSetFontSize(tabBtn, 13);
@@ -213,12 +218,12 @@ function rebuildTabBarDirect(count: number, names: string[], paths: string[], co
     buttonSetBordered(closeBtn, 0);
     buttonSetImage(closeBtn, 'xmark');
     buttonSetImagePosition(closeBtn, 1);
-    textSetFontSize(closeBtn, 9);
+    textSetFontSize(closeBtn, 10);
     widgetAddChild(tabGroup, tabIcon);
     widgetAddChild(tabGroup, tabBtn);
     widgetAddChild(tabGroup, closeBtn);
 
-    // 2px accent bar at top of tab
+    // 2px accent bar at top of active tab
     const accent = HStack(0, []);
     widgetSetHeight(accent, 2);
     widgetSetHugging(accent, 750);
@@ -228,18 +233,23 @@ function rebuildTabBarDirect(count: number, names: string[], paths: string[], co
         setBtnFg(tabBtn, getTabActiveForeground());
         setBg(tabGroup, getTabActiveBackground());
         setBg(accent, getFocusBorder());
+        setBtnFg(closeBtn, getTabActiveForeground());
       } else {
         setBtnFg(tabBtn, getTabInactiveForeground());
         setBg(tabGroup, getTabInactiveBackground());
         setBg(accent, getTabInactiveBackground());
+        setBtnFg(closeBtn, getTabInactiveForeground());
       }
-      setBtnFg(closeBtn, getTabActiveForeground());
       // Color the file icon
       const tColor = getFileIconColor(name);
       if (tColor.length > 0) {
         setBtnTint(tabIcon, tColor);
       } else {
-        setBtnTint(tabIcon, getTabActiveForeground());
+        if (i === activeTabIdx) {
+          setBtnTint(tabIcon, getTabActiveForeground());
+        } else {
+          setBtnTint(tabIcon, getTabInactiveForeground());
+        }
       }
     }
 
@@ -254,6 +264,8 @@ function rebuildTabBarDirect(count: number, names: string[], paths: string[], co
     tabBarButtons.push(tabGroup);
     tabAccentBars.push(accent);
     tabCloseButtons.push(closeBtn);
+    tabLabelButtons.push(tabBtn);
+    tabIconButtons.push(tabIcon);
     tabDirty.push(0);
     // Perry: readFileSync crashes on Windows (segfault instead of throwing).
     // Defer saved length initialization to first dirty check.
@@ -267,9 +279,27 @@ function applyTabColors(count: number): void {
     if (i === activeTabIdx) {
       setBg(tabBarButtons[i], getTabActiveBackground());
       if (i < tabAccentBars.length) setBg(tabAccentBars[i], getFocusBorder());
+      if (i < tabLabelButtons.length) setBtnFg(tabLabelButtons[i], getTabActiveForeground());
+      if (i < tabCloseButtons.length) setBtnFg(tabCloseButtons[i], getTabActiveForeground());
+      if (i < tabIconButtons.length) {
+        const n = openTabNames[i];
+        const c = getFileIconColor(n);
+        if (c.length < 1) {
+          setBtnTint(tabIconButtons[i], getTabActiveForeground());
+        }
+      }
     } else {
       setBg(tabBarButtons[i], getTabInactiveBackground());
       if (i < tabAccentBars.length) setBg(tabAccentBars[i], getTabInactiveBackground());
+      if (i < tabLabelButtons.length) setBtnFg(tabLabelButtons[i], getTabInactiveForeground());
+      if (i < tabCloseButtons.length) setBtnFg(tabCloseButtons[i], getTabInactiveForeground());
+      if (i < tabIconButtons.length) {
+        const n = openTabNames[i];
+        const c = getFileIconColor(n);
+        if (c.length < 1) {
+          setBtnTint(tabIconButtons[i], getTabInactiveForeground());
+        }
+      }
     }
   }
 }
@@ -379,7 +409,7 @@ export function initTabBar(container: unknown, colors: ResolvedUIColors, default
   panelColors = colors;
   tabBarContainer = container;
   tabBarReady = 1;
-  setBg(container, getTabInactiveBackground());
+  setBg(container, getTabBorder());
 
   // Open default tab — skip rebuild for bisect
   openTabs = [defaultPath];
