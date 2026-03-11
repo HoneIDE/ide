@@ -48,6 +48,7 @@ let _syncChoice: number = -1; // -1=not chosen, 0=no, 1=yes
 let _fetchHandle: number = 0;
 let _pollInterval: number = 0;
 let _setupDone: number = 0;
+let _pollCount: number = 0; // timeout counter (50 × 200ms = 10s)
 
 // ---------------------------------------------------------------------------
 // Callbacks (module-level functions for Perry)
@@ -108,8 +109,9 @@ function onSyncYes(): void {
   // Start auto-registration via fetch stream API
   const s = getWorkbenchSettings();
   let url = s.syncAuthUrl;
-  url += '/auth/quick-setup?deviceName=HoneIDE&platform=macOS';
+  url += '/auth/quick-setup?deviceName=HoneIDE&platform=linux';
   _fetchHandle = streamStart(url, 'GET', '', '{}');
+  _pollCount = 0;
   _pollInterval = setInterval(pollSetupResponse, 200);
 }
 
@@ -128,7 +130,22 @@ function pollSetupResponse(): void {
   if (_fetchHandle === 0) return;
   const status = streamStatus(_fetchHandle);
   // 0=connecting, 1=streaming, 2=done, 3=error
-  if (status < 2) return;
+  _pollCount = _pollCount + 1;
+  if (status < 2) {
+    // Timeout after 10 seconds (50 polls × 200ms)
+    if (_pollCount < 50) return;
+    // Timed out — treat as error
+    streamClose(_fetchHandle);
+    _fetchHandle = 0;
+    clearInterval(_pollInterval);
+    _pollInterval = 0;
+    if (_statusText !== null) {
+      textSetString(_statusText, 'Could not reach sync server. You can set up sync later in Settings.');
+    }
+    setBoolSetting('syncEnabled', 0);
+    if (_getStartedBtn !== null) widgetSetHidden(_getStartedBtn, 0);
+    return;
+  }
 
   // Collect response lines
   let responseText = '';
