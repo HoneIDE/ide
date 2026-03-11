@@ -7,17 +7,20 @@
  */
 import {
   VStack, HStack, VStackWithInsets, HStackWithInsets, Text, Button, Spacer,
-  TextField, ScrollView, Picker,
+  TextField, ScrollView,
   scrollViewSetChild, scrollViewScrollTo,
   textSetFontSize, textSetFontWeight, textSetFontFamily, textSetString, textSetWraps,
   buttonSetBordered, buttonSetTitle,
-  widgetAddChild, widgetClearChildren, widgetSetBackgroundColor, widgetSetWidth,
+  widgetAddChild, widgetAddOverlay, widgetSetOverlayFrame,
+  widgetClearChildren, widgetSetBackgroundColor, widgetSetWidth,
   widgetSetHidden, widgetSetHeight, widgetRemoveChild, stackSetDetachesHidden,
   textfieldSetString, textfieldFocus, textfieldGetString, textfieldSetOnSubmit,
+  textfieldSetOnFocus, textfieldBlurAll,
 } from 'perry/ui';
 import { execSync } from 'child_process';
 import { readFileSync, writeFileSync } from 'fs';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
+import { telemetryTrackAiChat, telemetryTrackAiAgent } from '../../telemetry';
 import { getAppDataDir, canRunShellCommands } from '../../paths';
 import { getWorkbenchSettings } from '../../settings';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
@@ -27,13 +30,15 @@ import { getSideBarForeground } from '../../theme/theme-colors';
 import {
   ensureChatsDir, getSessionFilePath, createNewSession,
   loadSessionMessages, saveSessionMessages, updateSessionTitle,
-  updateSessionMode, updateSessionModel, deleteSession,
+  updateSessionMode, updateSessionModel, updateSessionTimestamp,
+  deleteSession,
   getSessionList, getSessionAt,
   generateTitle, getActiveSessionId, setActiveSessionId,
   getActiveSessionMode, setActiveSessionMode,
   getActiveSessionModel, setActiveSessionModel,
   getMostRecentSessionId,
   loadSessionMeta, getParsedId, getParsedMode, getParsedTitle, getParsedModel,
+  getParsedTimestamp,
   saveClaudeSessionUUID, loadClaudeSessionUUID,
 } from './session-store';
 
@@ -171,9 +176,15 @@ let streamLastRenderTime: number = 0;
 // Model selector — flat ID (0–15), provider format for SSE parsing
 let selectedModelId: number = 0;
 let activeProviderFormat: number = 0; // 0=anthropic, 1=openai, 2=google, 3=ollama
-let modelPicker: unknown = null;
-let modelPickerParent: unknown = null;
-let modelPickerAttached: number = 0;
+let modelBtn: unknown = null;
+let modelListContainer: unknown = null;
+let modelListVisible: number = 0;
+
+// History search
+let historySearchField: unknown = null;
+let historySearchText = '';
+let historyDropdown: unknown = null;
+let historyDropdownVisible: number = 0;
 
 // ---------------------------------------------------------------------------
 // Public setters (called from render.ts)
@@ -263,6 +274,9 @@ function appendMessage(isUser: number, content: string): void {
   try { writeFileSync(fp, existing); } catch (e) {}
   msgCount += 1;
 
+  // Update last-used timestamp
+  updateSessionTimestamp(getActiveSessionId());
+
   // Auto-title on first user message
   if (isUser > 0 && firstUserMsgSent < 1) {
     firstUserMsgSent = 1;
@@ -349,6 +363,17 @@ function loadApiKeyValue(): string {
 // ---------------------------------------------------------------------------
 // Build request body
 // ---------------------------------------------------------------------------
+
+function getProviderName(idx: number): string {
+  if (idx === 0) return 'anthropic';
+  if (idx === 1) return 'openai';
+  if (idx === 2) return 'google';
+  if (idx === 3) return 'deepseek';
+  if (idx === 4) return 'xai';
+  if (idx === 5) return 'ollama';
+  if (idx === 6) return 'custom';
+  return 'unknown';
+}
 
 function buildRequestBody(fileContent: string, systemPrompt: string, includeStream: number, toolsJson: string): string {
   const modelStr = getModelApiId(selectedModelId);
@@ -798,12 +823,143 @@ function finishStream(): void {
   if (streamAccumulated.length > 0) {
     appendMessage(0, streamAccumulated);
   }
+
+  // Generate AI title after first exchange (2 messages = 1 user + 1 assistant)
+  if (msgCount === 2 && panelMode < 3) {
+    requestTitleGeneration();
+  }
+
   streamAccumulated = '';
   streamingMsgBlock = null;
   streamDisplayLabel = null;
   streamContainer = null;
 
   updateMessages();
+}
+
+// ---------------------------------------------------------------------------
+// AI title generation
+// ---------------------------------------------------------------------------
+
+let titleStreamHandle: number = 0;
+let titleStreamTimer: number = 0;
+let titleAccumulated = '';
+
+function requestTitleGeneration(): void {
+  // Get the first user message for context
+  const fp = getCurrentMsgFilePath();
+  let fileContent = '';
+  try { fileContent = readFileSync(fp); } catch (e) {}
+  if (fileContent.length < 2) return;
+
+  // Extract first user message (line 1 = 'U', line 2 = content)
+  let firstLine = 1;
+  let userMsg = '';
+  let lineStart = 0;
+  let lineIdx = 0;
+  for (let i = 0; i <= fileContent.length; i++) {
+    if (i === fileContent.length || fileContent.charCodeAt(i) === 10) {
+      if (lineIdx === 1) {
+        userMsg = decodeContent(fileContent.slice(lineStart, i));
+      }
+      lineIdx += 1;
+      lineStart = i + 1;
+      if (lineIdx > 2) break;
+    }
+  }
+  if (userMsg.length < 3) return;
+
+  // Truncate to avoid large requests
+  if (userMsg.length > 200) userMsg = userMsg.slice(0, 200);
+
+  // Build a small request to generate a title
+  const providerIdx = getProviderIndex(selectedModelId);
+  const apiKey = loadProviderApiKey(providerIdx);
+  if (apiKey.length < 3 && providerIdx !== 5) return;
+
+  let prompt = 'Generate a concise 3-8 word title summarizing this message. Return ONLY the title, nothing else.\n\nMessage: ';
+  prompt += userMsg;
+
+  const modelStr = getModelApiId(selectedModelId);
+  const format = getProviderFormat(selectedModelId);
+
+  let body = '';
+  if (format === 0) {
+    // Anthropic
+    body = '{"model":"';
+    body += modelStr;
+    body += '","max_tokens":30,"stream":true,"messages":[{"role":"user","content":"';
+    body += jsonEscape(prompt);
+    body += '"}]}';
+  } else if (format === 1) {
+    // OpenAI-compat
+    body = '{"model":"';
+    body += modelStr;
+    body += '","max_tokens":30,"stream":true,"messages":[{"role":"user","content":"';
+    body += jsonEscape(prompt);
+    body += '"}]}';
+  } else {
+    // Skip for Google/Ollama — use heuristic title
+    return;
+  }
+
+  const url = getProviderApiUrl(selectedModelId);
+  const headers = buildProviderHeaders(providerIdx, apiKey);
+  titleAccumulated = '';
+  titleStreamHandle = streamStart(url, 'POST', body, headers);
+  if (titleStreamHandle > 0) {
+    titleStreamTimer = setInterval(() => { pollTitleStream(); }, 100) as unknown as number;
+  }
+}
+
+function pollTitleStream(): void {
+  if (titleStreamHandle < 1) return;
+  const status = streamStatus(titleStreamHandle);
+  if (status === 2) {
+    // Done
+    if (titleStreamTimer > 0) { clearInterval(titleStreamTimer); titleStreamTimer = 0; }
+    streamClose(titleStreamHandle);
+    titleStreamHandle = 0;
+    if (titleAccumulated.length > 2) {
+      // Clean up: remove quotes, trim
+      let title = titleAccumulated;
+      // Remove leading/trailing quotes
+      if (title.charCodeAt(0) === 34) title = title.slice(1);
+      if (title.length > 0 && title.charCodeAt(title.length - 1) === 34) title = title.slice(0, title.length - 1);
+      // Trim whitespace
+      while (title.length > 0 && title.charCodeAt(0) === 32) title = title.slice(1);
+      while (title.length > 0 && title.charCodeAt(title.length - 1) === 32) title = title.slice(0, title.length - 1);
+      if (title.length > 0) {
+        updateSessionTitle(getActiveSessionId(), title);
+        refreshSessionList();
+      }
+    }
+    return;
+  }
+  const chunk = streamPoll(titleStreamHandle);
+  if (chunk.length < 1) return;
+
+  // Parse SSE data lines for text content
+  let cLineStart = 0;
+  for (let i = 0; i <= chunk.length; i++) {
+    if (i === chunk.length || chunk.charCodeAt(i) === 10) {
+      const cLine = chunk.slice(cLineStart, i);
+      cLineStart = i + 1;
+      // Check for "data: " prefix
+      if (cLine.length > 6 && cLine.charCodeAt(0) === 100 && cLine.charCodeAt(5) === 32) {
+        const payload = cLine.slice(6);
+        if (activeProviderFormat === 0) {
+          // Anthropic: extract "text":"..."
+          const extracted = parseSSETextDelta(payload);
+          if (extracted.length > 0) titleAccumulated += extracted;
+        } else {
+          // OpenAI: extract delta.content
+          const extracted = extractJsonString(payload, 'content');
+          if (extracted.length > 0) titleAccumulated += extracted;
+        }
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -815,7 +971,7 @@ function startThinking(): void {
   if (chatMessagesContainer) {
     thinkingLabel = Text('Thinking');
     textSetFontSize(thinkingLabel, 12);
-    if (panelColors) setFg(thinkingLabel, getSideBarForeground());
+    setFg(thinkingLabel, getSideBarForeground());
     widgetAddChild(chatMessagesContainer, thinkingLabel);
     lastAddedWidget = thinkingLabel;
     scrollToBottom();
@@ -863,7 +1019,7 @@ function onAgentToolStart(name: string, id: string): void {
   const toolText = Text(toolLabel);
   textSetFontSize(toolText, 11);
   textSetFontFamily(toolText, 11, 'Menlo');
-  if (panelColors) setFg(toolText, getSideBarForeground());
+  setFg(toolText, getSideBarForeground());
 
   toolDisplayContainer = VStackWithInsets(2, 4, 8, 4, 8);
   widgetSetBackgroundColor(toolDisplayContainer, 0.15, 0.15, 0.18, 1.0);
@@ -885,7 +1041,7 @@ function onAgentToolResult(name: string, result: string): void {
   textSetFontSize(resultText, 10);
   textSetFontFamily(resultText, 10, 'Menlo');
   textSetWraps(resultText, 300);
-  if (panelColors) setFg(resultText, getSideBarForeground());
+  setFg(resultText, getSideBarForeground());
   widgetAddChild(toolDisplayContainer, resultText);
   toolDisplayContainer = null;
 }
@@ -911,7 +1067,7 @@ function onAgentApprovalNeeded(name: string, args: string): void {
   const warnLabel = Text(warnText);
   textSetFontSize(warnLabel, 12);
   textSetFontWeight(warnLabel, 12, 0.5);
-  if (panelColors) setFg(warnLabel, getSideBarForeground());
+  setFg(warnLabel, getSideBarForeground());
   widgetAddChild(approvalContainer, warnLabel);
 
   // Show args preview
@@ -920,7 +1076,7 @@ function onAgentApprovalNeeded(name: string, args: string): void {
   const argsText = Text(argsPreview);
   textSetFontSize(argsText, 10);
   textSetFontFamily(argsText, 10, 'Menlo');
-  if (panelColors) setFg(argsText, getSideBarForeground());
+  setFg(argsText, getSideBarForeground());
   widgetAddChild(approvalContainer, argsText);
 
   const allowBtn = Button('Allow', () => { onAllowClick(); });
@@ -975,7 +1131,7 @@ function onAgentError(msg: string): void {
   if (chatMessagesContainer) {
     const errText = Text(msg);
     textSetFontSize(errText, 12);
-    if (panelColors) setFg(errText, getSideBarForeground());
+    setFg(errText, getSideBarForeground());
     widgetAddChild(chatMessagesContainer, errText);
   }
   finishStream();
@@ -1010,7 +1166,7 @@ function onClaudeToolActivity(name: string, status: string, inputDetail: string)
     textSetFontSize(toolText, 11);
     textSetFontFamily(toolText, 11, 'Menlo');
     textSetWraps(toolText, 300);
-    if (panelColors) setFg(toolText, getSideBarForeground());
+    setFg(toolText, getSideBarForeground());
 
     claudeToolContainer = VStackWithInsets(2, 4, 8, 4, 8);
     widgetSetBackgroundColor(claudeToolContainer, 0.15, 0.15, 0.18, 1.0);
@@ -1024,7 +1180,7 @@ function onClaudeToolActivity(name: string, status: string, inputDetail: string)
       const doneText = Text('\u2713 done');
       textSetFontSize(doneText, 10);
       textSetFontFamily(doneText, 10, 'Menlo');
-      if (panelColors) setFg(doneText, getSideBarForeground());
+      setFg(doneText, getSideBarForeground());
       widgetAddChild(claudeToolContainer, doneText);
       claudeToolContainer = null;
     }
@@ -1044,7 +1200,7 @@ function onClaudeToolResult(output: string): void {
   textSetFontSize(resultText, 10);
   textSetFontFamily(resultText, 10, 'Menlo');
   textSetWraps(resultText, 300);
-  if (panelColors) setFg(resultText, getSideBarForeground());
+  setFg(resultText, getSideBarForeground());
   widgetAddChild(claudeToolContainer, resultText);
 }
 
@@ -1163,6 +1319,11 @@ function switchToSession(id: string): void {
   if (claudeModeActive > 0) return;
   if (id.length < 1) return;
 
+  // Collapse history dropdown after selection
+  hideHistoryDropdown();
+  historySearchText = '';
+  if (historySearchField) textfieldSetString(historySearchField, '');
+
   setActiveSessionId(id);
   loadSessionMeta(id);
 
@@ -1199,9 +1360,11 @@ function switchToSession(id: string): void {
   resetAgentState();
   updateMessages();
   updateModeTabStyles();
-  // Sync picker with loaded session's model
-  if (modelPicker) {
-    (modelPicker as any).setSelected(selectedModelId);
+  // Sync model button with loaded session's model
+  if (modelBtn) {
+    let title = '\u25BE ';
+    title += getPickerLabel(selectedModelId);
+    buttonSetTitle(modelBtn, title);
   }
   refreshSessionList();
 }
@@ -1310,6 +1473,75 @@ function getDelSessionFn(idx: number): () => void {
 // Session list rendering
 // ---------------------------------------------------------------------------
 
+/** Format a Unix ms timestamp into a relative or short date string. */
+function formatTimestamp(tsStr: string): string {
+  // Parse digits from timestamp string
+  let ts: number = 0;
+  for (let i = 0; i < tsStr.length; i++) {
+    const d = tsStr.charCodeAt(i);
+    if (d >= 48 && d <= 57) {
+      ts = ts * 10 + (d - 48);
+    }
+  }
+  if (ts < 1000000000000) return '';
+
+  const now = Date.now();
+  const diffMs = now - ts;
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHr = Math.floor(diffMs / 3600000);
+  const diffDay = Math.floor(diffMs / 86400000);
+
+  if (diffMin < 1) return 'just now';
+  if (diffMin < 60) {
+    let r = '';
+    r += String(diffMin);
+    r += 'm ago';
+    return r;
+  }
+  if (diffHr < 24) {
+    let r = '';
+    r += String(diffHr);
+    r += 'h ago';
+    return r;
+  }
+  if (diffDay < 7) {
+    let r = '';
+    r += String(diffDay);
+    r += 'd ago';
+    return r;
+  }
+  if (diffDay < 30) {
+    let r = '';
+    r += String(Math.floor(diffDay / 7));
+    r += 'w ago';
+    return r;
+  }
+  let r = '';
+  r += String(Math.floor(diffDay / 30));
+  r += 'mo ago';
+  return r;
+}
+
+/** Check if a title matches the search query (case-insensitive substring). */
+function titleMatchesSearch(title: string, query: string): number {
+  if (query.length < 1) return 1;
+  if (title.length < query.length) return 0;
+  const limit = title.length - query.length + 1;
+  for (let i = 0; i < limit; i++) {
+    let match: number = 1;
+    for (let j = 0; j < query.length; j++) {
+      let tc = title.charCodeAt(i + j);
+      let qc = query.charCodeAt(j);
+      // Lowercase ASCII
+      if (tc >= 65 && tc <= 90) tc = tc + 32;
+      if (qc >= 65 && qc <= 90) qc = qc + 32;
+      if (tc !== qc) { match = 0; break; }
+    }
+    if (match > 0) return 1;
+  }
+  return 0;
+}
+
 function refreshSessionList(): void {
   if (!sessionListContainer) return;
   widgetClearChildren(sessionListContainer);
@@ -1318,6 +1550,7 @@ function refreshSessionList(): void {
   if (total < 1) return;
 
   const activeId = getActiveSessionId();
+  const query = historySearchText;
 
   // Show most recent first — iterate from end, max 16
   let displayed = 0;
@@ -1327,8 +1560,14 @@ function refreshSessionList(): void {
     const sid = getParsedId();
     const smode = getParsedMode();
     const stitle = getParsedTitle();
+    const stimestamp = getParsedTimestamp();
 
     if (sid.length < 1) continue;
+
+    // Filter by search query
+    let displayTitle = stitle;
+    if (displayTitle.length < 1) displayTitle = 'New chat';
+    if (query.length > 0 && titleMatchesSearch(displayTitle, query) < 1) continue;
 
     setSlotId(displayed, sid);
 
@@ -1340,28 +1579,27 @@ function refreshSessionList(): void {
     const badgeLabel = Text(badge);
     textSetFontSize(badgeLabel, 9);
     textSetFontFamily(badgeLabel, 9, 'Menlo');
-    if (panelColors) setFg(badgeLabel, getSideBarForeground());
-
-    // Title
-    let displayTitle = stitle;
-    if (displayTitle.length < 1) displayTitle = 'New chat';
-    const titleLabel = Text(displayTitle);
-    textSetFontSize(titleLabel, 11);
-    if (panelColors) setFg(titleLabel, getSideBarForeground());
-
-    // Delete button
-    const delFn = getDelSessionFn(displayed);
-    const delBtn = Button('\u00D7', () => { delFn(); });
-    buttonSetBordered(delBtn, 0);
-    textSetFontSize(delBtn, 10);
-    if (panelColors) setBtnFg(delBtn, getSideBarForeground());
+    setFg(badgeLabel, getSideBarForeground());
 
     // Click handler for the row
     const clickFn = getSessionClickFn(displayed);
     const rowBtn = Button(displayTitle, () => { clickFn(); });
     buttonSetBordered(rowBtn, 0);
     textSetFontSize(rowBtn, 11);
-    if (panelColors) setBtnFg(rowBtn, getSideBarForeground());
+    setBtnFg(rowBtn, getSideBarForeground());
+
+    // Timestamp
+    const timeStr = formatTimestamp(stimestamp);
+    const timeLabel = Text(timeStr);
+    textSetFontSize(timeLabel, 9);
+    setFg(timeLabel, '#707070');
+
+    // Delete button
+    const delFn = getDelSessionFn(displayed);
+    const delBtn = Button('\u00D7', () => { delFn(); });
+    buttonSetBordered(delBtn, 0);
+    textSetFontSize(delBtn, 10);
+    setBtnFg(delBtn, getSideBarForeground());
 
     // Check active session
     let isActive: number = 0;
@@ -1372,32 +1610,58 @@ function refreshSessionList(): void {
       }
     }
 
-    let row: unknown = null;
+    // Two-line layout: title on top, badge + time on bottom
+    const titleRow = HStack(4, [rowBtn, Spacer(), delBtn]);
+    const metaRow = HStack(4, [badgeLabel, timeLabel, Spacer()]);
+    const cell = VStackWithInsets(1, 4, 4, 4, 4);
+    widgetAddChild(cell, titleRow);
+    widgetAddChild(cell, metaRow);
+
     if (isActive > 0) {
-      const accentBar = Text('');
-      widgetSetWidth(accentBar, 3);
-      widgetSetHeight(accentBar, 18);
-      widgetSetBackgroundColor(accentBar, 0.35, 0.45, 0.85, 1.0);
-      row = HStack(4, [accentBar, badgeLabel, rowBtn, Spacer(), delBtn]);
-      widgetSetBackgroundColor(row, 0.22, 0.22, 0.28, 1.0);
-    } else {
-      row = HStack(4, [badgeLabel, rowBtn, Spacer(), delBtn]);
+      widgetSetBackgroundColor(cell, 0.22, 0.22, 0.28, 1.0);
     }
 
-    widgetAddChild(sessionListContainer, row);
+    widgetAddChild(sessionListContainer, cell);
     displayed += 1;
   }
 }
 
-function toggleSessionList(): void {
-  if (sessionListVisible > 0) {
-    sessionListVisible = 0;
+function showHistoryDropdown(): void {
+  if (historyDropdownVisible > 0) return;
+  historyDropdownVisible = 1;
+  if (historyDropdown) widgetSetOverlayFrame(historyDropdown, 0, 28, 320, 200);
+  refreshSessionList();
+}
+
+function hideHistoryDropdown(): void {
+  if (historyDropdownVisible < 1) return;
+  historyDropdownVisible = 0;
+  if (historyDropdown) widgetSetOverlayFrame(historyDropdown, 0, 28, 320, 0);
+  textfieldBlurAll();
+}
+
+function onHistorySearchFocus(): void {
+  showHistoryDropdown();
+}
+
+
+function toggleHistoryDropdown(): void {
+  if (historyDropdownVisible > 0) {
+    hideHistoryDropdown();
   } else {
-    sessionListVisible = 1;
-    refreshSessionList();
+    showHistoryDropdown();
   }
-  if (sessionListScrollView) {
-    widgetSetHidden(sessionListScrollView, sessionListVisible < 1 ? 1 : 0);
+}
+
+function onHistorySearch(text: string): void {
+  historySearchText = text;
+  if (text.length > 0) {
+    showHistoryDropdown();
+  } else {
+    hideHistoryDropdown();
+  }
+  if (historyDropdownVisible > 0) {
+    refreshSessionList();
   }
 }
 
@@ -1628,7 +1892,7 @@ function handleClaudeLine(line: string): void {
         const errLabel = Text(errMsg);
         textSetFontSize(errLabel, 12);
         textSetWraps(errLabel, 300);
-        if (panelColors) setFg(errLabel, getSideBarForeground());
+        setFg(errLabel, getSideBarForeground());
         widgetAddChild(errBlock, errLabel);
         widgetAddChild(chatMessagesContainer, errBlock);
         lastAddedWidget = errBlock;
@@ -1667,7 +1931,7 @@ function handleClaudeLine(line: string): void {
       claudeCostLabel = Text(costStr);
       textSetFontSize(claudeCostLabel, 10);
       textSetFontFamily(claudeCostLabel, 10, 'Menlo');
-      if (panelColors) setFg(claudeCostLabel, getSideBarForeground());
+      setFg(claudeCostLabel, getSideBarForeground());
       widgetAddChild(chatMessagesContainer, claudeCostLabel);
       lastAddedWidget = claudeCostLabel;
     }
@@ -1771,6 +2035,7 @@ function claudePollTick(): void {
 }
 
 function onSend(): void {
+  hideHistoryDropdown();
   // Read text directly from widget (Perry: module vars stale in callbacks)
   if (chatInput) {
     let raw = textfieldGetString(chatInput);
@@ -1790,6 +2055,15 @@ function onSend(): void {
   if (chatInput) textfieldSetString(chatInput, '');
   updateMessages();
   scrollToBottom();
+
+  // Track telemetry (provider + model, no message content)
+  const _tProvider = getProviderName(getProviderIndex(selectedModelId));
+  const _tModel = getModelApiId(selectedModelId);
+  if (panelMode === 1) {
+    telemetryTrackAiAgent(_tProvider, _tModel);
+  } else {
+    telemetryTrackAiChat(_tProvider, _tModel);
+  }
 
   // Build request — use fresh path (Perry: module vars stale in callbacks)
   const currentPath = getCurrentMsgFilePath();
@@ -1978,18 +2252,92 @@ function onModelPickerChange(idx: number): void {
   activeProviderFormat = getProviderFormat(idx);
   updateSessionModel(getActiveSessionId(), idx);
   setActiveSessionModel(idx);
+  // Update button title
+  if (modelBtn) {
+    let title = '\u25BE ';
+    title += getPickerLabel(idx);
+    buttonSetTitle(modelBtn, title);
+  }
+  // Close dropdown
+  modelListVisible = 0;
+  if (modelListContainer) widgetSetHidden(modelListContainer, 1);
 }
 
-/** Module-level callback for Picker onChange (Perry: read index from widget). */
-function pickerChanged(): void {
-  if (!modelPicker) return;
-  const idx = (modelPicker as any).getSelected();
-  onModelPickerChange(idx);
+/** Toggle model selection dropdown. */
+function toggleModelList(): void {
+  if (modelListVisible > 0) {
+    modelListVisible = 0;
+    if (modelListContainer) widgetSetHidden(modelListContainer, 1);
+  } else {
+    modelListVisible = 1;
+    if (modelListContainer) {
+      rebuildModelList();
+      widgetSetHidden(modelListContainer, 0);
+    }
+  }
+}
+
+function rebuildModelList(): void {
+  if (!modelListContainer) return;
+  widgetClearChildren(modelListContainer);
+  const total = getModelCount();
+  for (let i = 0; i < total; i++) {
+    const fn = getModelSelectFn(i);
+    const label = getPickerLabel(i);
+    let displayLabel = '';
+    if (i === selectedModelId) {
+      displayLabel += '\u2713 ';
+    } else {
+      displayLabel += '  ';
+    }
+    displayLabel += label;
+    const btn = Button(displayLabel, () => { fn(); });
+    buttonSetBordered(btn, 0);
+    textSetFontSize(btn, 11);
+    setBtnFg(btn, getSideBarForeground());
+    widgetAddChild(modelListContainer, btn);
+  }
+}
+
+// Fixed model select callbacks (Perry: closures capture by value)
+function selectModel0(): void { onModelPickerChange(0); }
+function selectModel1(): void { onModelPickerChange(1); }
+function selectModel2(): void { onModelPickerChange(2); }
+function selectModel3(): void { onModelPickerChange(3); }
+function selectModel4(): void { onModelPickerChange(4); }
+function selectModel5(): void { onModelPickerChange(5); }
+function selectModel6(): void { onModelPickerChange(6); }
+function selectModel7(): void { onModelPickerChange(7); }
+function selectModel8(): void { onModelPickerChange(8); }
+function selectModel9(): void { onModelPickerChange(9); }
+function selectModel10(): void { onModelPickerChange(10); }
+function selectModel11(): void { onModelPickerChange(11); }
+function selectModel12(): void { onModelPickerChange(12); }
+function selectModel13(): void { onModelPickerChange(13); }
+function selectModel14(): void { onModelPickerChange(14); }
+function selectModel15(): void { onModelPickerChange(15); }
+
+function getModelSelectFn(idx: number): () => void {
+  if (idx === 0) return selectModel0;
+  if (idx === 1) return selectModel1;
+  if (idx === 2) return selectModel2;
+  if (idx === 3) return selectModel3;
+  if (idx === 4) return selectModel4;
+  if (idx === 5) return selectModel5;
+  if (idx === 6) return selectModel6;
+  if (idx === 7) return selectModel7;
+  if (idx === 8) return selectModel8;
+  if (idx === 9) return selectModel9;
+  if (idx === 10) return selectModel10;
+  if (idx === 11) return selectModel11;
+  if (idx === 12) return selectModel12;
+  if (idx === 13) return selectModel13;
+  if (idx === 14) return selectModel14;
+  return selectModel15;
 }
 
 function updateModelPickerVisibility(): void {
-  // Picker stays visible in all modes (NSPopUpButton doesn't reliably restore from hidden).
-  // In Claude Code mode, the picker selection is irrelevant since CC uses its own process.
+  // Nothing needed — model button is always in bottom bar
 }
 
 // ---------------------------------------------------------------------------
@@ -2045,7 +2393,7 @@ function updateMessages(): void {
     if (panelMode === 3) hintText = 'Ask Claude Code (uses your Claude.ai subscription)';
     const hint = Text(hintText);
     textSetFontSize(hint, 12);
-    if (panelColors) setFg(hint, getSideBarForeground());
+    setFg(hint, getSideBarForeground());
     widgetAddChild(chatMessagesContainer, hint);
     return;
   }
@@ -2070,7 +2418,7 @@ function updateMessages(): void {
     hiddenText += ' older messages hidden';
     const hiddenLabel = Text(hiddenText);
     textSetFontSize(hiddenLabel, 10);
-    if (panelColors) setFg(hiddenLabel, getSideBarForeground());
+    setFg(hiddenLabel, getSideBarForeground());
     widgetAddChild(chatMessagesContainer, hiddenLabel);
   }
 
@@ -2118,7 +2466,7 @@ function updateMessages(): void {
           const toolLabel = Text('\u2699 Tool result');
           textSetFontSize(toolLabel, 10);
           textSetFontFamily(toolLabel, 10, 'Menlo');
-          if (panelColors) setFg(toolLabel, getSideBarForeground());
+          setFg(toolLabel, getSideBarForeground());
           widgetAddChild(toolBlock, toolLabel);
 
           // Show truncated result
@@ -2135,7 +2483,7 @@ function updateMessages(): void {
           const resultText = Text(resultPreview);
           textSetFontSize(resultText, 10);
           textSetFontFamily(resultText, 10, 'Menlo');
-          if (panelColors) setFg(resultText, getSideBarForeground());
+          setFg(resultText, getSideBarForeground());
           widgetAddChild(toolBlock, resultText);
           widgetAddChild(chatMessagesContainer, toolBlock);
           lastAddedWidget = toolBlock;
@@ -2144,7 +2492,7 @@ function updateMessages(): void {
           const roleLabel = Text(isUser > 0 ? 'You' : 'Hone');
           textSetFontSize(roleLabel, 10);
           textSetFontWeight(roleLabel, 10, 0.7);
-          if (panelColors) setFg(roleLabel, getSideBarForeground());
+          setFg(roleLabel, getSideBarForeground());
 
           const msgBlock = VStackWithInsets(2, 4, 8, 4, 8);
           widgetAddChild(msgBlock, roleLabel);
@@ -2235,15 +2583,31 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
   // Claude Code: no cross-module callbacks — polling + line processing all inline
   setChipsRenderCallback(() => { renderChipsArea(); });
 
-  // --- Header row: New Chat ---
+  // --- Header row: New Chat + History search ---
   const newChatBtn = Button('+ New', () => { onNewChat(); });
   buttonSetBordered(newChatBtn, 0);
   textSetFontSize(newChatBtn, 11);
   setBtnFg(newChatBtn, getSideBarForeground());
 
-  const headerRow = HStack(4, [newChatBtn, Spacer()]);
+  historySearchField = TextField('', (text: string) => { onHistorySearch(text); });
+  textfieldSetOnSubmit(historySearchField, () => { toggleHistoryDropdown(); });
+  textfieldSetOnFocus(historySearchField, () => { onHistorySearchFocus(); });
+  widgetSetWidth(historySearchField, 140);
+
+  const headerRow = HStack(4, [newChatBtn, historySearchField, Spacer()]);
   widgetAddChild(container, headerRow);
 
+  // --- History dropdown (overlay, hidden by default) ---
+  sessionListContainer = VStack(1, []);
+  widgetSetBackgroundColor(sessionListContainer, 0.18, 0.18, 0.22, 1.0);
+  historyDropdown = ScrollView();
+  scrollViewSetChild(historyDropdown, sessionListContainer);
+  // Add as floating overlay on the container, positioned below header
+  widgetAddOverlay(container, historyDropdown);
+  widgetSetOverlayFrame(historyDropdown, 0, 28, 320, 0);
+  historyDropdownVisible = 0;
+
+  // --- Mode tabs ---
   modeChatBtn = Button('Chat', () => { onModeChat(); });
   buttonSetBordered(modeChatBtn, 0);
   textSetFontSize(modeChatBtn, 11);
@@ -2271,39 +2635,9 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
   const modeRow = HStack(2, [modeChatWrap, modeAgentWrap, modePlanWrap, modeClaudeWrap, Spacer()]);
   widgetAddChild(container, modeRow);
 
-  // --- Model picker (hidden for Claude Code mode) ---
+  // --- Model selector (init, button goes in bottom bar) ---
   selectedModelId = getActiveSessionModel();
   activeProviderFormat = getProviderFormat(selectedModelId);
-
-  const picker = Picker('Model', () => { pickerChanged(); }, 0);
-  for (let pi = 0; pi < getModelCount(); pi++) {
-    picker.addItem(getPickerLabel(pi));
-  }
-  picker.setSelected(selectedModelId);
-  widgetSetWidth(picker, 200);
-  modelPicker = picker;
-
-  // Wrap in VStack so clearing children collapses it
-  modelPickerParent = VStack(0, []);
-  widgetAddChild(modelPickerParent, modelPicker);
-  modelPickerAttached = 1;
-  widgetAddChild(container, modelPickerParent);
-  updateModelPickerVisibility();
-
-  // --- Session list (always visible) ---
-  const sessionLabel = Text('History');
-  textSetFontSize(sessionLabel, 11);
-  textSetFontWeight(sessionLabel, 11, 0.5);
-  if (panelColors) setFg(sessionLabel, getSideBarForeground());
-  widgetAddChild(container, sessionLabel);
-
-  sessionListContainer = VStack(2, []);
-  sessionListScrollView = ScrollView();
-  scrollViewSetChild(sessionListScrollView, sessionListContainer);
-  widgetSetHeight(sessionListScrollView, 120);
-  sessionListVisible = 1;
-  widgetAddChild(container, sessionListScrollView);
-  refreshSessionList();
 
   // 1px divider
   const divider = Text('');
@@ -2393,7 +2727,21 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
   chipsContainer = HStack(4, []);
   widgetAddChild(container, chipsContainer);
 
-  // --- Attach buttons ---
+  // --- Model selector dropdown (hidden, shown above bottom bar) ---
+  modelListContainer = VStackWithInsets(1, 4, 4, 4, 4);
+  widgetSetBackgroundColor(modelListContainer, 0.18, 0.18, 0.22, 1.0);
+  widgetSetHidden(modelListContainer, 1);
+  modelListVisible = 0;
+  widgetAddChild(container, modelListContainer);
+
+  // --- Bottom bar: model + attach buttons ---
+  let modelTitle = '\u25BE ';
+  modelTitle += getPickerLabel(selectedModelId);
+  modelBtn = Button(modelTitle, () => { toggleModelList(); });
+  buttonSetBordered(modelBtn, 0);
+  textSetFontSize(modelBtn, 10);
+  setBtnFg(modelBtn, getSideBarForeground());
+
   const attachFileBtn = Button('+ File', () => { onAttachFile(); });
   buttonSetBordered(attachFileBtn, 0);
   textSetFontSize(attachFileBtn, 10);
@@ -2404,13 +2752,14 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
   textSetFontSize(attachSelBtn, 10);
   setBtnFg(attachSelBtn, getSideBarForeground());
 
-  const attachRow = HStack(4, [attachFileBtn, attachSelBtn, Spacer()]);
-  widgetAddChild(container, attachRow);
+  const bottomRow = HStack(6, [modelBtn, attachFileBtn, attachSelBtn, Spacer()]);
+  widgetAddChild(container, bottomRow);
 
   // --- Input ---
   chatInput = TextField('', (text: string) => { onChatInput(text); });
   // Enter/Return key triggers onSubmit
   textfieldSetOnSubmit(chatInput, (text: string) => { onSubmitFromField(text); });
+  textfieldSetOnFocus(chatInput, () => { hideHistoryDropdown(); });
   widgetAddChild(container, chatInput);
 
   const sendBtn = Button('Send', () => { onSend(); });

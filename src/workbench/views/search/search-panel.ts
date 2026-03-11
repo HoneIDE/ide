@@ -18,6 +18,7 @@ import { join } from 'path';
 import { hexToRGBA, setBg, setFg, setBtnFg, pathId, getFileName, toLowerCode, isTextFile } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getSideBarForeground } from '../../theme/theme-colors';
+import { telemetryTrackSearch } from '../../telemetry';
 
 // ---------------------------------------------------------------------------
 // Module-level state (must be declared BEFORE any function — Perry no-hoist)
@@ -167,6 +168,7 @@ function performSearch(): void {
   }
   searchDir(searchWorkspaceRoot, 0);
   updateSearchResultsUI();
+  telemetryTrackSearch();
 }
 
 /** Update the search results display. */

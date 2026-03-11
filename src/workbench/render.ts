@@ -100,6 +100,7 @@ import { initNotifications, showNotification } from './views/notifications/notif
 import { setLspWorkspaceRoot, initLspBridge, triggerDiagnostics, getCompletions, setDiagnosticsStatusUpdater } from './views/lsp/lsp-bridge';
 import { setDiagnosticsFileOpener } from './views/lsp/diagnostics-panel';
 import { createAutocompletePopup, setAutocompleteAcceptHandler } from './views/lsp/autocomplete-popup';
+import { initTelemetry, telemetryTrackFileOpen, telemetryTrackSettingsOpen, telemetryTrackStartup, telemetryTrackThemeChange, telemetryTrackTerminalOpen } from './telemetry';
 import { buildSyncPanel, refreshSyncPanel, setSyncStatusText, setSyncPairCallback, setSyncJoinCallback, setSyncPairingCode, addSyncDevice, removeSyncDevice } from './views/sync/sync-panel';
 import { initSyncHost, setOnGuestConnected, setOnGuestDisconnected, getHostRoomId, getHostRelayUrl, generateHostPairingCode, validatePairingAttempt, addGuest } from './sync-host';
 import { initSyncGuest } from './sync-guest';
@@ -120,6 +121,7 @@ declare function hone_editor_nsview(handle: number): number;
 
 // Dynamic file tree — loaded from opened folder
 let workspaceRoot = '';
+let _renderStartMs: number = 0;
 
 // DEBUG info from app.ts
 let _debugInfo = '';
@@ -301,6 +303,7 @@ export function toggleTerminalAction(): void {
     terminalVisible = 1;
     widgetSetHidden(terminalArea, 0);
     updateSettings({ terminalVisible: true });
+    telemetryTrackTerminalOpen();
   }
 }
 
@@ -773,6 +776,7 @@ function showSettingsInEditorPane(): void {
   if (!editorPaneWidget) return;
   if (activeDiffEditors) hideDiffView();
   if (editorWidget) widgetSetHidden(editorWidget, 1);
+  telemetryTrackSettingsOpen();
   if (activeSettingsWidget) {
     widgetSetHidden(activeSettingsWidget, 0);
     return;
@@ -823,6 +827,7 @@ function openFileInEditor(filePath: string, fileName: string): void {
   }
   openTab(filePath, fileName);
   displayFileContent(filePath);
+  telemetryTrackFileOpen();
 }
 
 function checkOpenFileRequests(): void {
@@ -1429,6 +1434,7 @@ function onSettingsChanged(): void {
   // Switch the active theme
   if (setActiveTheme(newTheme)) {
     recolorUI();
+    telemetryTrackThemeChange(newTheme);
   }
 }
 
@@ -2290,6 +2296,7 @@ function refreshSyncPanelDeferred(): void {
 // ---------------------------------------------------------------------------
 
 export function renderWorkbench(layoutMode: LayoutMode): unknown {
+  _renderStartMs = Date.now();
   // Register commands with real handlers (overrides stubs in commands.ts)
   registerBuiltinCommands();
   registerCommand('workbench.action.newEditor', 'New Editor', newFileAction, { showInPalette: false });
@@ -2364,6 +2371,9 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   setAutocompleteAcceptHandler(onAutocompleteAccept);
   setDiagnosticsStatusUpdater(updateStatusBarDiagnosticsImpl);
 
+  // Initialize anonymous telemetry (opt-in, privacy-first)
+  initTelemetry();
+
   // Initialize git state for status bar
   refreshGitState();
   updateStatusBarBranch();
@@ -2393,6 +2403,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
     const shell = VStack(0, [contentCtr, statusBar, bottomBar]);
     setBg(shell, getEditorBackground());
     compactShell = shell;
+    telemetryTrackStartup(Date.now() - _renderStartMs);
     return shell;
   }
 
@@ -2430,6 +2441,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
     _lastThemeName = getWorkbenchSettings().colorTheme;
     onSettingsChange(() => { onSettingsChanged(); });
 
+    telemetryTrackStartup(Date.now() - _renderStartMs);
     return shell;
   }
 
@@ -2566,6 +2578,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   // Poll for files opened via macOS "Open With" or command-line args
   setInterval(checkOpenFileRequests, 500);
 
+  telemetryTrackStartup(Date.now() - _renderStartMs);
   return shell;
 }
 

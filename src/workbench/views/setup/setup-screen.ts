@@ -44,6 +44,12 @@ let _syncDesc2: unknown = null;
 
 let _parentRoot: unknown = null;
 
+let _statsLabel: unknown = null;
+let _statsDesc: unknown = null;
+let _statsYesBtn: unknown = null;
+let _statsNoBtn: unknown = null;
+let _statsStatus: unknown = null;
+
 let _syncChoice: number = -1; // -1=not chosen, 0=no, 1=yes
 let _fetchHandle: number = 0;
 let _pollInterval: number = 0;
@@ -63,6 +69,9 @@ function applyDarkColors(): void {
   if (_syncDesc !== null) setFg(_syncDesc, '#888888');
   if (_syncDesc2 !== null) setFg(_syncDesc2, '#888888');
   if (_statusText !== null) setFg(_statusText, '#66BB6A');
+  if (_statsLabel !== null) setFg(_statsLabel, '#CCCCCC');
+  if (_statsDesc !== null) setFg(_statsDesc, '#888888');
+  if (_statsStatus !== null) setFg(_statsStatus, '#66BB6A');
 }
 
 function applyLightColors(): void {
@@ -74,6 +83,9 @@ function applyLightColors(): void {
   if (_syncDesc !== null) setFg(_syncDesc, '#666666');
   if (_syncDesc2 !== null) setFg(_syncDesc2, '#666666');
   if (_statusText !== null) setFg(_statusText, '#2E7D32');
+  if (_statsLabel !== null) setFg(_statsLabel, '#333333');
+  if (_statsDesc !== null) setFg(_statsDesc, '#666666');
+  if (_statsStatus !== null) setFg(_statsStatus, '#2E7D32');
 }
 
 function onThemeDark(): void {
@@ -96,6 +108,20 @@ function onThemeLight(): void {
     buttonSetTitle(_themeDarkBtn, 'Dark');
   }
   applyLightColors();
+}
+
+function onStatsYes(): void {
+  setBoolSetting('telemetryEnabled', 1);
+  if (_statsYesBtn !== null) widgetSetHidden(_statsYesBtn, 1);
+  if (_statsNoBtn !== null) widgetSetHidden(_statsNoBtn, 1);
+  if (_statsStatus !== null) textSetString(_statsStatus, 'Anonymous stats enabled. Thanks!');
+}
+
+function onStatsNo(): void {
+  setBoolSetting('telemetryEnabled', 0);
+  if (_statsYesBtn !== null) widgetSetHidden(_statsYesBtn, 1);
+  if (_statsNoBtn !== null) widgetSetHidden(_statsNoBtn, 1);
+  if (_statsStatus !== null) textSetString(_statsStatus, 'Stats disabled. You can enable this later in Settings.');
 }
 
 function onSyncYes(): void {
@@ -303,6 +329,41 @@ export function createSetupScreen(): unknown {
   widgetAddChild(content, syncDesc2);
   widgetAddChild(content, syncBtnRow);
   widgetAddChild(content, statusTxt);
+  widgetAddChild(content, Spacer());
+
+  // Anonymous statistics section
+  const statsLabel = Text('Anonymous statistics');
+  textSetFontSize(statsLabel, 16);
+  textSetFontWeight(statsLabel, 16, 0.6);
+  setFg(statsLabel, '#CCCCCC');
+  _statsLabel = statsLabel;
+
+  const statsDesc = Text('Share anonymous usage stats to help improve Hone. No file content, paths, or personal data is ever collected.');
+  textSetFontSize(statsDesc, 13);
+  setFg(statsDesc, '#888888');
+  _statsDesc = statsDesc;
+
+  const statsYesBtn = Button('Yes, share stats', () => { onStatsYes(); });
+  buttonSetBordered(statsYesBtn, 1);
+  widgetSetWidth(statsYesBtn, 160);
+  _statsYesBtn = statsYesBtn;
+
+  const statsNoBtn = Button('No thanks', () => { onStatsNo(); });
+  buttonSetBordered(statsNoBtn, 1);
+  widgetSetWidth(statsNoBtn, 100);
+  _statsNoBtn = statsNoBtn;
+
+  const statsBtnRow = HStack(12, [statsYesBtn, statsNoBtn]);
+
+  const statsStatus = Text('');
+  textSetFontSize(statsStatus, 13);
+  setFg(statsStatus, '#66BB6A');
+  _statsStatus = statsStatus;
+
+  widgetAddChild(content, statsLabel);
+  widgetAddChild(content, statsDesc);
+  widgetAddChild(content, statsBtnRow);
+  widgetAddChild(content, statsStatus);
   widgetAddChild(content, Spacer());
   widgetAddChild(content, startBtn);
   widgetAddChild(content, Spacer());

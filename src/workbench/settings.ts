@@ -93,6 +93,8 @@ export interface WorkbenchSettings {
   syncAuthUrl: string;
   /** Sync: device token (set after login) */
   syncDeviceToken: string;
+  /** Whether anonymous usage telemetry is enabled */
+  telemetryEnabled: boolean;
   /** Whether the first-run setup has been completed */
   setupComplete: boolean;
 }
@@ -168,6 +170,7 @@ let _settings_syncEnabled: number = 0;
 let _settings_syncRelayUrl: string = 'wss://sync.hone.codes/ws';
 let _settings_syncAuthUrl: string = 'https://auth.hone.codes';
 let _settings_syncDeviceToken: string = '';
+let _settings_telemetryEnabled: number = 0;
 let _settings_setupComplete: number = 0;
 let _settingsLoaded: number = 0;
 
@@ -246,6 +249,7 @@ export function initSettings(): void {
     if (key === 'syncRelayUrl') _settings_syncRelayUrl = val;
     if (key === 'syncAuthUrl') _settings_syncAuthUrl = val;
     if (key === 'syncDeviceToken') _settings_syncDeviceToken = val;
+    if (key === 'telemetryEnabled') _settings_telemetryEnabled = val === '1' ? 1 : 0;
     if (key === 'setupComplete') _settings_setupComplete = val === '1' ? 1 : 0;
   }
 
@@ -301,6 +305,7 @@ function buildSnapshot(): WorkbenchSettings {
     syncRelayUrl: _settings_syncRelayUrl,
     syncAuthUrl: _settings_syncAuthUrl,
     syncDeviceToken: _settings_syncDeviceToken,
+    telemetryEnabled: _settings_telemetryEnabled > 0,
     setupComplete: _settings_setupComplete > 0,
   };
 }
@@ -465,6 +470,9 @@ function serializeFromVars(): string {
   out += 'syncDeviceToken=';
   out += _settings_syncDeviceToken;
   out += '\n';
+  out += 'telemetryEnabled=';
+  out += _settings_telemetryEnabled > 0 ? '1' : '0';
+  out += '\n';
   out += 'setupComplete=';
   out += _settings_setupComplete > 0 ? '1' : '0';
   out += '\n';
@@ -540,6 +548,7 @@ export function setBoolSetting(key: string, value: number): void {
   if (key === 'searchUseIgnoreFiles') _settings_searchUseIgnoreFiles = value;
   if (key === 'searchFollowSymlinks') _settings_searchFollowSymlinks = value;
   if (key === 'syncEnabled') _settings_syncEnabled = value;
+  if (key === 'telemetryEnabled') _settings_telemetryEnabled = value;
   if (key === 'setupComplete') _settings_setupComplete = value;
   persistToDisk();
   notifyListeners();
@@ -595,6 +604,7 @@ export function updateSettings(patch: Partial<WorkbenchSettings>): void {
     if (k === 'syncRelayUrl') _settings_syncRelayUrl = (patch as any).syncRelayUrl;
     if (k === 'syncAuthUrl') _settings_syncAuthUrl = (patch as any).syncAuthUrl;
     if (k === 'syncDeviceToken') _settings_syncDeviceToken = (patch as any).syncDeviceToken;
+    if (k === 'telemetryEnabled') _settings_telemetryEnabled = (patch as any).telemetryEnabled ? 1 : 0;
     if (k === 'setupComplete') _settings_setupComplete = (patch as any).setupComplete ? 1 : 0;
   }
   persistToDisk();

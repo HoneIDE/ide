@@ -61,6 +61,9 @@ let _hAiInlineDelayVal: unknown = null;
 let _hSearchIgnoreBtn: unknown = null;
 let _hSearchSymlinksBtn: unknown = null;
 
+// Widget handles — Privacy
+let _hTelemetryBtn: unknown = null;
+
 // Deferred action
 let _pendingAction: number = -1;
 
@@ -94,6 +97,7 @@ function onAiInlineDelayUp(): void { _pendingAction = 23; setTimeout(() => { def
 function onAiInlineDelayDown(): void { _pendingAction = 24; setTimeout(() => { deferredAction(); }, 0); }
 function onSearchIgnoreToggle(): void { _pendingAction = 25; setTimeout(() => { deferredAction(); }, 0); }
 function onSearchSymlinksToggle(): void { _pendingAction = 26; setTimeout(() => { deferredAction(); }, 0); }
+function onTelemetryToggle(): void { _pendingAction = 27; setTimeout(() => { deferredAction(); }, 0); }
 
 // ---------------------------------------------------------------------------
 // Cycle helpers
@@ -301,6 +305,11 @@ function deferredAction(): void {
     const next = s.searchFollowSymlinks ? 0 : 1;
     setBoolSetting('searchFollowSymlinks', next);
     if (_hSearchSymlinksBtn) buttonSetTitle(_hSearchSymlinksBtn, next > 0 ? 'On' : 'Off');
+  }
+  if (action === 27) {
+    const next = s.telemetryEnabled ? 0 : 1;
+    setBoolSetting('telemetryEnabled', next);
+    if (_hTelemetryBtn) buttonSetTitle(_hTelemetryBtn, next > 0 ? 'On' : 'Off');
   }
 }
 
@@ -588,6 +597,7 @@ function resetHandles(): void {
   _hAiInlineDelayVal = null;
   _hSearchIgnoreBtn = null;
   _hSearchSymlinksBtn = null;
+  _hTelemetryBtn = null;
 }
 
 function rebuildContent(): void {
@@ -736,6 +746,16 @@ function buildContent(ctr: unknown, colors: ResolvedUIColors): void {
       _hSearchIgnoreBtn = makeToggleRow(ctr, colors, 'Use Ignore Files', 'Use .gitignore files when searching', s.searchUseIgnoreFiles ? 1 : 0, () => { onSearchIgnoreToggle(); });
     if (matchesSearch('Follow Symlinks', 'Follow symbolic links while searching') > 0)
       _hSearchSymlinksBtn = makeToggleRow(ctr, colors, 'Follow Symlinks', 'Follow symbolic links while searching', s.searchFollowSymlinks ? 1 : 0, () => { onSearchSymlinksToggle(); });
+  }
+
+  // ---- Privacy ----
+  let hasPrivacy = 0;
+  if (matchesSearch('Anonymous Statistics', 'Share anonymous usage statistics to help improve Hone') > 0) hasPrivacy = 1;
+
+  if (hasPrivacy > 0) {
+    makeSection(ctr, colors, 'Privacy');
+    if (matchesSearch('Anonymous Statistics', 'Share anonymous usage statistics to help improve Hone') > 0)
+      _hTelemetryBtn = makeToggleRow(ctr, colors, 'Anonymous Statistics', 'Share anonymous usage statistics to help improve Hone. No file content, paths, or personal data is ever collected.', s.telemetryEnabled ? 1 : 0, () => { onTelemetryToggle(); });
   }
 }
 

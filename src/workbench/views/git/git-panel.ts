@@ -18,6 +18,7 @@ import { join } from 'path';
 import { setFg, setBtnFg, getFileName } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getSideBarForeground } from '../../theme/theme-colors';
+import { telemetryTrackGitCommit } from '../../telemetry';
 
 // ---------------------------------------------------------------------------
 // Module-level state (must be declared BEFORE any function — Perry no-hoist)
@@ -293,6 +294,7 @@ function gitCommit(): void {
     updateGitResultsUI();
   }
   updateStatusBarBranch();
+  telemetryTrackGitCommit();
 }
 
 export function updateStatusBarBranch(): void {
