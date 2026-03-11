@@ -15,6 +15,7 @@ import {
   buttonSetBordered, buttonSetTitle,
   widgetSetBackgroundColor, widgetSetWidth, widgetSetHeight,
   widgetAddChild, widgetSetHidden, widgetSetHugging,
+  widgetMatchParentWidth, widgetMatchParentHeight,
 } from 'perry/ui';
 import { streamStart, streamPoll, streamStatus, streamClose } from 'node-fetch';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
@@ -77,14 +78,14 @@ function applyDarkColors(): void {
   if (_statsLabel !== null) setFg(_statsLabel, '#CCCCCC');
   if (_statsDesc !== null) setFg(_statsDesc, '#888888');
   if (_statsStatus !== null) setFg(_statsStatus, '#66BB6A');
-  // Button text for dark mode — white on accent bg
-  if (_themeDarkBtn !== null) setBtnFg(_themeDarkBtn, '#ffffff');
-  if (_themeLightBtn !== null) setBtnFg(_themeLightBtn, '#ffffff');
-  if (_syncYesBtn !== null) setBtnFg(_syncYesBtn, '#ffffff');
-  if (_syncNoBtn !== null) setBtnFg(_syncNoBtn, '#ffffff');
-  if (_getStartedBtn !== null) setBtnFg(_getStartedBtn, '#ffffff');
-  if (_statsYesBtn !== null) setBtnFg(_statsYesBtn, '#ffffff');
-  if (_statsNoBtn !== null) setBtnFg(_statsNoBtn, '#ffffff');
+  // Button styles for dark mode — light text on dark button bg
+  if (_themeDarkBtn !== null) { setBtnFg(_themeDarkBtn, '#ffffff'); widgetSetBackgroundColor(_themeDarkBtn, 0.25, 0.25, 0.28, 1.0); }
+  if (_themeLightBtn !== null) { setBtnFg(_themeLightBtn, '#ffffff'); widgetSetBackgroundColor(_themeLightBtn, 0.25, 0.25, 0.28, 1.0); }
+  if (_syncYesBtn !== null) { setBtnFg(_syncYesBtn, '#ffffff'); widgetSetBackgroundColor(_syncYesBtn, 0.25, 0.25, 0.28, 1.0); }
+  if (_syncNoBtn !== null) { setBtnFg(_syncNoBtn, '#ffffff'); widgetSetBackgroundColor(_syncNoBtn, 0.25, 0.25, 0.28, 1.0); }
+  if (_getStartedBtn !== null) { setBtnFg(_getStartedBtn, '#ffffff'); widgetSetBackgroundColor(_getStartedBtn, 0.0, 0.48, 0.80, 1.0); }
+  if (_statsYesBtn !== null) { setBtnFg(_statsYesBtn, '#ffffff'); widgetSetBackgroundColor(_statsYesBtn, 0.25, 0.25, 0.28, 1.0); }
+  if (_statsNoBtn !== null) { setBtnFg(_statsNoBtn, '#ffffff'); widgetSetBackgroundColor(_statsNoBtn, 0.25, 0.25, 0.28, 1.0); }
 }
 
 function applyLightColors(): void {
@@ -101,14 +102,14 @@ function applyLightColors(): void {
   if (_statsLabel !== null) setFg(_statsLabel, '#333333');
   if (_statsDesc !== null) setFg(_statsDesc, '#666666');
   if (_statsStatus !== null) setFg(_statsStatus, '#2E7D32');
-  // Button text for light mode — dark text on light bordered buttons
-  if (_themeDarkBtn !== null) setBtnFg(_themeDarkBtn, '#333333');
-  if (_themeLightBtn !== null) setBtnFg(_themeLightBtn, '#333333');
-  if (_syncYesBtn !== null) setBtnFg(_syncYesBtn, '#333333');
-  if (_syncNoBtn !== null) setBtnFg(_syncNoBtn, '#333333');
-  if (_getStartedBtn !== null) setBtnFg(_getStartedBtn, '#333333');
-  if (_statsYesBtn !== null) setBtnFg(_statsYesBtn, '#333333');
-  if (_statsNoBtn !== null) setBtnFg(_statsNoBtn, '#333333');
+  // Button styles for light mode — dark text on light button bg
+  if (_themeDarkBtn !== null) { setBtnFg(_themeDarkBtn, '#333333'); widgetSetBackgroundColor(_themeDarkBtn, 0.82, 0.82, 0.84, 1.0); }
+  if (_themeLightBtn !== null) { setBtnFg(_themeLightBtn, '#333333'); widgetSetBackgroundColor(_themeLightBtn, 0.82, 0.82, 0.84, 1.0); }
+  if (_syncYesBtn !== null) { setBtnFg(_syncYesBtn, '#333333'); widgetSetBackgroundColor(_syncYesBtn, 0.82, 0.82, 0.84, 1.0); }
+  if (_syncNoBtn !== null) { setBtnFg(_syncNoBtn, '#333333'); widgetSetBackgroundColor(_syncNoBtn, 0.82, 0.82, 0.84, 1.0); }
+  if (_getStartedBtn !== null) { setBtnFg(_getStartedBtn, '#ffffff'); widgetSetBackgroundColor(_getStartedBtn, 0.0, 0.48, 0.80, 1.0); }
+  if (_statsYesBtn !== null) { setBtnFg(_statsYesBtn, '#333333'); widgetSetBackgroundColor(_statsYesBtn, 0.82, 0.82, 0.84, 1.0); }
+  if (_statsNoBtn !== null) { setBtnFg(_statsNoBtn, '#333333'); widgetSetBackgroundColor(_statsNoBtn, 0.82, 0.82, 0.84, 1.0); }
 }
 
 function onThemeDark(): void {
@@ -268,6 +269,11 @@ function onGetStarted(): void {
 
 export function setSetupParent(parent: unknown): void {
   _parentRoot = parent;
+  // Pin setup content to parent width so it fills the entire window
+  if (_container !== null) {
+    widgetMatchParentWidth(_container);
+    widgetMatchParentHeight(_container);
+  }
 }
 
 export function createSetupScreen(): unknown {
@@ -291,13 +297,19 @@ export function createSetupScreen(): unknown {
   _themeLabel = themeLabel;
 
   const darkBtn = Button('Dark (selected)', () => { onThemeDark(); });
-  buttonSetBordered(darkBtn, 1);
+  buttonSetBordered(darkBtn, 0);
   widgetSetWidth(darkBtn, 120);
+  widgetSetHeight(darkBtn, 30);
+  widgetSetBackgroundColor(darkBtn, 0.25, 0.25, 0.28, 1.0);
+  setBtnFg(darkBtn, '#ffffff');
   _themeDarkBtn = darkBtn;
 
   const lightBtn = Button('Light', () => { onThemeLight(); });
-  buttonSetBordered(lightBtn, 1);
+  buttonSetBordered(lightBtn, 0);
   widgetSetWidth(lightBtn, 120);
+  widgetSetHeight(lightBtn, 30);
+  widgetSetBackgroundColor(lightBtn, 0.25, 0.25, 0.28, 1.0);
+  setBtnFg(lightBtn, '#ffffff');
   _themeLightBtn = lightBtn;
 
   const themeRow = HStack(12, [darkBtn, lightBtn]);
@@ -325,13 +337,19 @@ export function createSetupScreen(): unknown {
   _syncDesc3 = syncDesc3;
 
   const yesBtn = Button('Enable Sync', () => { onSyncYes(); });
-  buttonSetBordered(yesBtn, 1);
+  buttonSetBordered(yesBtn, 0);
   widgetSetWidth(yesBtn, 140);
+  widgetSetHeight(yesBtn, 30);
+  widgetSetBackgroundColor(yesBtn, 0.25, 0.25, 0.28, 1.0);
+  setBtnFg(yesBtn, '#ffffff');
   _syncYesBtn = yesBtn;
 
   const noBtn = Button('Skip', () => { onSyncNo(); });
-  buttonSetBordered(noBtn, 1);
+  buttonSetBordered(noBtn, 0);
   widgetSetWidth(noBtn, 100);
+  widgetSetHeight(noBtn, 30);
+  widgetSetBackgroundColor(noBtn, 0.25, 0.25, 0.28, 1.0);
+  setBtnFg(noBtn, '#ffffff');
   _syncNoBtn = noBtn;
 
   const syncBtnRow = HStack(12, [yesBtn, noBtn]);
@@ -344,8 +362,11 @@ export function createSetupScreen(): unknown {
 
   // Get Started button (hidden until sync choice is made)
   const startBtn = Button('Get Started', () => { onGetStarted(); });
-  buttonSetBordered(startBtn, 1);
+  buttonSetBordered(startBtn, 0);
   widgetSetWidth(startBtn, 160);
+  widgetSetHeight(startBtn, 30);
+  widgetSetBackgroundColor(startBtn, 0.0, 0.48, 0.80, 1.0);
+  setBtnFg(startBtn, '#ffffff');
   widgetSetHidden(startBtn, 1);
   _getStartedBtn = startBtn;
 
@@ -380,13 +401,19 @@ export function createSetupScreen(): unknown {
   _statsDesc = statsDesc;
 
   const statsYesBtn = Button('Yes, share stats', () => { onStatsYes(); });
-  buttonSetBordered(statsYesBtn, 1);
+  buttonSetBordered(statsYesBtn, 0);
   widgetSetWidth(statsYesBtn, 160);
+  widgetSetHeight(statsYesBtn, 30);
+  widgetSetBackgroundColor(statsYesBtn, 0.25, 0.25, 0.28, 1.0);
+  setBtnFg(statsYesBtn, '#ffffff');
   _statsYesBtn = statsYesBtn;
 
   const statsNoBtn = Button('No thanks', () => { onStatsNo(); });
-  buttonSetBordered(statsNoBtn, 1);
+  buttonSetBordered(statsNoBtn, 0);
   widgetSetWidth(statsNoBtn, 100);
+  widgetSetHeight(statsNoBtn, 30);
+  widgetSetBackgroundColor(statsNoBtn, 0.25, 0.25, 0.28, 1.0);
+  setBtnFg(statsNoBtn, '#ffffff');
   _statsNoBtn = statsNoBtn;
 
   const statsBtnRow = HStack(12, [statsYesBtn, statsNoBtn]);
