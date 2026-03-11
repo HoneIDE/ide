@@ -14,7 +14,7 @@ import {
   textSetFontSize, textSetFontWeight, textSetString,
   buttonSetBordered, buttonSetTitle,
   widgetSetBackgroundColor, widgetSetWidth, widgetSetHeight,
-  widgetAddChild, widgetSetHidden,
+  widgetAddChild, widgetSetHidden, widgetSetHugging,
 } from 'perry/ui';
 import { streamStart, streamPoll, streamStatus, streamClose } from 'node-fetch';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
@@ -64,6 +64,7 @@ declare const __platform__: number;
 // ---------------------------------------------------------------------------
 
 function applyDarkColors(): void {
+  if (_parentRoot !== null) widgetSetBackgroundColor(_parentRoot, 0.11, 0.11, 0.12, 1.0);
   if (_container !== null) widgetSetBackgroundColor(_container, 0.11, 0.11, 0.12, 1.0);
   if (_title !== null) setFg(_title, '#E0E0E0');
   if (_subtitle !== null) setFg(_subtitle, '#888888');
@@ -76,9 +77,18 @@ function applyDarkColors(): void {
   if (_statsLabel !== null) setFg(_statsLabel, '#CCCCCC');
   if (_statsDesc !== null) setFg(_statsDesc, '#888888');
   if (_statsStatus !== null) setFg(_statsStatus, '#66BB6A');
+  // Button text for dark mode — white on accent bg
+  if (_themeDarkBtn !== null) setBtnFg(_themeDarkBtn, '#ffffff');
+  if (_themeLightBtn !== null) setBtnFg(_themeLightBtn, '#ffffff');
+  if (_syncYesBtn !== null) setBtnFg(_syncYesBtn, '#ffffff');
+  if (_syncNoBtn !== null) setBtnFg(_syncNoBtn, '#ffffff');
+  if (_getStartedBtn !== null) setBtnFg(_getStartedBtn, '#ffffff');
+  if (_statsYesBtn !== null) setBtnFg(_statsYesBtn, '#ffffff');
+  if (_statsNoBtn !== null) setBtnFg(_statsNoBtn, '#ffffff');
 }
 
 function applyLightColors(): void {
+  if (_parentRoot !== null) widgetSetBackgroundColor(_parentRoot, 0.96, 0.96, 0.97, 1.0);
   if (_container !== null) widgetSetBackgroundColor(_container, 0.96, 0.96, 0.97, 1.0);
   if (_title !== null) setFg(_title, '#1E1E1E');
   if (_subtitle !== null) setFg(_subtitle, '#666666');
@@ -91,6 +101,14 @@ function applyLightColors(): void {
   if (_statsLabel !== null) setFg(_statsLabel, '#333333');
   if (_statsDesc !== null) setFg(_statsDesc, '#666666');
   if (_statsStatus !== null) setFg(_statsStatus, '#2E7D32');
+  // Button text for light mode — dark text on light bordered buttons
+  if (_themeDarkBtn !== null) setBtnFg(_themeDarkBtn, '#333333');
+  if (_themeLightBtn !== null) setBtnFg(_themeLightBtn, '#333333');
+  if (_syncYesBtn !== null) setBtnFg(_syncYesBtn, '#333333');
+  if (_syncNoBtn !== null) setBtnFg(_syncNoBtn, '#333333');
+  if (_getStartedBtn !== null) setBtnFg(_getStartedBtn, '#333333');
+  if (_statsYesBtn !== null) setBtnFg(_statsYesBtn, '#333333');
+  if (_statsNoBtn !== null) setBtnFg(_statsNoBtn, '#333333');
 }
 
 function onThemeDark(): void {
@@ -385,6 +403,9 @@ export function createSetupScreen(): unknown {
   widgetAddChild(content, Spacer());
   widgetAddChild(content, startBtn);
   widgetAddChild(content, Spacer());
+
+  // Make setup screen fill the full window
+  widgetSetHugging(content, 1);
 
   _container = content;
   return content;

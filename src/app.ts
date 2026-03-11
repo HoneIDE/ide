@@ -8,7 +8,7 @@
  * 4. Build the visual workbench
  */
 
-import { App, VStack, widgetAddChild, widgetSetHidden } from 'perry/ui';
+import { App, VStack, widgetAddChild, widgetSetHidden, widgetSetBackgroundColor } from 'perry/ui';
 import {
   getPlatformContext,
   onPlatformContextChange,
@@ -73,6 +73,8 @@ if (_needsSetup === 0) {
   // First run — create a root VStack containing setup screen
   // The setup screen will handle the transition to the workbench itself
   const root = VStack(0, []);
+  // Match setup screen's initial dark background
+  widgetSetBackgroundColor(root, 0.11, 0.11, 0.12, 1.0);
   const setupScreen = createSetupScreen();
   widgetAddChild(root, setupScreen);
   setSetupParent(root);
