@@ -47,7 +47,7 @@ import {
   applyDarkColors, applyLightColors, isCurrentThemeDark,
 } from './theme/theme-colors';
 import type { LayoutMode } from '../platform';
-import { getWorkbenchSettings, updateSettings, onSettingsChange } from './settings';
+import { getWorkbenchSettings, updateSettings, onSettingsChange, getSettingsVersion } from './settings';
 import { readFileSync, writeFileSync, readdirSync, isDirectory, existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { spawnBackground } from 'child_process';
@@ -113,6 +113,7 @@ import {
   connectToRelay, disconnectFromRelay, sendToRelay,
   setOnRelayConnected, setOnRelayDisconnected,
   setOnRelayMessage, isRelayConnected, setOnTransportDebug,
+  setRelayToken, setRelayLastSeq,
 } from './sync-transport';
 
 // Compile-time platform ID injected by Perry codegen:
@@ -1484,6 +1485,17 @@ function activateSettingsTab(): void {
 
 // Listen for settings changes — detect theme toggle and apply live
 let _lastThemeName = '';
+let _lastSettingsVersion: number = 0;
+
+/** Poll-based settings change detection (fallback for platforms where
+ *  array-of-closures listener pattern doesn't work in Perry codegen). */
+function pollSettingsVersion(): void {
+  const v = getSettingsVersion();
+  if (v !== _lastSettingsVersion) {
+    _lastSettingsVersion = v;
+    onSettingsChanged();
+  }
+}
 
 function onSettingsChanged(): void {
   const s = getWorkbenchSettings();
@@ -1493,6 +1505,25 @@ function onSettingsChanged(): void {
   if (_lastThemeName.length > 0) {
     if (_lastThemeName.charCodeAt(5) === newTheme.charCodeAt(5)) return; // same theme
   }
+  applyThemeChangeImpl(newTheme);
+}
+
+/** Direct theme switch — callable cross-module from settings panel.
+ *  isDark: 1 for dark, 0 for light. */
+export function applyThemeSwitch(isDark: number): void {
+  if (isDark > 0) {
+    applyDarkColors();
+    _lastThemeName = 'Hone Dark';
+    setActiveTheme('Hone Dark');
+  } else {
+    applyLightColors();
+    _lastThemeName = 'Hone Light';
+    setActiveTheme('Hone Light');
+  }
+  recolorUI();
+}
+
+function applyThemeChangeImpl(newTheme: string): void {
   _lastThemeName = newTheme;
 
   // Apply the correct color palette
@@ -1525,6 +1556,10 @@ let syncRelayUrl = 'wss://sync.hone.codes/ws';
 // Persistent connection state
 let syncPairedRoomId = '';
 let syncPairedDeviceName = '';
+// Last received seq from relay — used for delta catch-up on reconnect
+let syncLastSeq: number = 0;
+// Auth token for relay (set externally or loaded from session)
+let syncAuthToken = '';
 // Inline pairing code (avoid cross-module string returns)
 const PAIR_CHARS = '0123456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 let localPairingCode = '';
@@ -1605,7 +1640,7 @@ function syncDebugLog(msg: string): void {
 
 function saveSyncSession(roomId: string, partnerName: string): void {
   // Save to ~/.hone/sync-session so we can auto-restore on restart
-  // Format: roomId\npartnerName\nrole (role = 'host' or 'guest')
+  // Format: roomId\npartnerName\nrole\nlastSeq (role = 'host' or 'guest')
   let path = getAppDataDir();
   path += '/sync-session';
   let role = 'host';
@@ -1617,8 +1652,10 @@ function saveSyncSession(roomId: string, partnerName: string): void {
   data += partnerName;
   data += '\n';
   data += role;
+  data += '\n';
+  data += String(syncLastSeq);
   try { writeFileSync(path, data); } catch (e: any) {}
-  syncDebugLog('Saved sync session: room=' + roomId + ' partner=' + partnerName + ' role=' + role);
+  syncDebugLog('Saved sync session: room=' + roomId + ' partner=' + partnerName + ' role=' + role + ' lastSeq=' + String(syncLastSeq));
 }
 
 function clearSyncSession(): void {
@@ -1637,8 +1674,8 @@ function tryRestoreSyncSession(): void {
     if (!existsSync(path)) return;
     const data = readFileSync(path);
     if (data.length < 3) return;
-    // Parse: roomId\npartnerName\nrole
-    // Find first newline (Perry nested-if-in-for bug: use separate loops)
+    // Parse: roomId\npartnerName\nrole\nlastSeq
+    // Find newlines (Perry nested-if-in-for bug: use separate loops)
     let nlIdx1 = -1;
     for (let i = 0; i < data.length; i++) {
       if (data.charCodeAt(i) === 10) { nlIdx1 = i; break; }
@@ -1649,6 +1686,13 @@ function tryRestoreSyncSession(): void {
     for (let j = nlIdx1 + 1; j < data.length; j++) {
       if (data.charCodeAt(j) === 10) { nlIdx2 = j; break; }
     }
+    // Find third newline (lastSeq)
+    let nlIdx3 = -1;
+    if (nlIdx2 > 0) {
+      for (let k = nlIdx2 + 1; k < data.length; k++) {
+        if (data.charCodeAt(k) === 10) { nlIdx3 = k; break; }
+      }
+    }
     const roomId = data.substring(0, nlIdx1);
     // Validate room ID — must be non-empty and at least 4 chars
     if (roomId.length < 4) return;
@@ -1656,7 +1700,15 @@ function tryRestoreSyncSession(): void {
     let role = '';
     if (nlIdx2 > 0) {
       partnerName = data.substring(nlIdx1 + 1, nlIdx2);
-      role = data.substring(nlIdx2 + 1);
+      if (nlIdx3 > 0) {
+        role = data.substring(nlIdx2 + 1, nlIdx3);
+        const seqStr = data.substring(nlIdx3 + 1);
+        if (seqStr.length > 0) {
+          syncLastSeq = Number(seqStr);
+        }
+      } else {
+        role = data.substring(nlIdx2 + 1);
+      }
     } else {
       partnerName = data.substring(nlIdx1 + 1);
     }
@@ -1665,9 +1717,14 @@ function tryRestoreSyncSession(): void {
       syncRestoredRole = 1;
       syncIsGuest = 1;
     }
-    syncDebugLog('Restoring sync session: room=' + roomId + ' partner=' + partnerName + ' role=' + role);
+    syncDebugLog('Restoring sync session: room=' + roomId + ' partner=' + partnerName + ' role=' + role + ' lastSeq=' + String(syncLastSeq));
     syncPairedRoomId = roomId;
     syncPairedDeviceName = partnerName;
+    // Set token + lastSeq on transport before connecting
+    if (syncAuthToken.length > 0) {
+      setRelayToken(syncAuthToken);
+    }
+    setRelayLastSeq(syncLastSeq);
     // Reconnect to the same relay room
     connectToRelay(syncRelayUrl, roomId, syncDeviceId);
     addSyncDevice(partnerName, 'reconnecting');
@@ -2325,7 +2382,11 @@ function onRelayConnectedImpl(): void {
 }
 
 function onRelayDisconnectedImpl(): void {
-  syncDebugLog('WS disconnected — will auto-reconnect in 2s');
+  syncDebugLog('WS disconnected — lastSeq=' + String(syncLastSeq) + ', will auto-reconnect in 2s');
+  // Persist lastSeq so reconnect can resume from where we left off
+  if (syncPairedRoomId.length > 0 && syncPairedDeviceName.length > 0) {
+    saveSyncSession(syncPairedRoomId, syncPairedDeviceName);
+  }
   setSyncStatusText('Reconnecting...');
   syncStatusOverride = '';
   refreshSyncPanelDeferred();
@@ -2339,12 +2400,153 @@ function onRelayDisconnectedImpl(): void {
 function attemptReconnect(): void {
   if (isRelayConnected() > 0) return; // already reconnected
   if (syncPairedRoomId.length < 1) return;
-  syncDebugLog('Auto-reconnecting to room ' + syncPairedRoomId);
+  syncDebugLog('Auto-reconnecting to room ' + syncPairedRoomId + ' lastSeq=' + String(syncLastSeq));
+  if (syncAuthToken.length > 0) {
+    setRelayToken(syncAuthToken);
+  }
+  setRelayLastSeq(syncLastSeq);
   connectToRelay(syncRelayUrl, syncPairedRoomId, syncDeviceId);
+}
+
+/** Handle {"type":"deltas","room":"...","deltas":[{"seq":N,"payload":"..."},...]} from relay. */
+function handleDeltasBatch(data: string): void {
+  // Each delta in the batch has a "payload" field — extract and process each one
+  // The relay sends deltas as a JSON array embedded in the message
+  syncDebugLog('Processing deltas batch');
+  // Find the "deltas":[ portion
+  const arrStart = data.indexOf('"deltas":[');
+  if (arrStart < 0) return;
+  let pos = arrStart + 10; // skip past "deltas":[
+
+  // Walk through each delta object in the array
+  // Each is: {"seq":N,"deviceId":"...","payload":"...","createdAt":N}
+  let deltaCount = 0;
+  while (pos < data.length) {
+    // Skip whitespace and commas
+    while (pos < data.length) {
+      const ch = data.charCodeAt(pos);
+      if (ch === 32 || ch === 44 || ch === 10 || ch === 13 || ch === 9) { pos = pos + 1; }
+      else { break; }
+    }
+    if (pos >= data.length) break;
+    // End of array?
+    if (data.charCodeAt(pos) === 93) break; // ]
+    // Must be start of object {
+    if (data.charCodeAt(pos) !== 123) break;
+
+    // Find end of this delta object — match braces
+    let braceDepth = 0;
+    let objStart = pos;
+    let inString = 0;
+    while (pos < data.length) {
+      const ch = data.charCodeAt(pos);
+      if (inString > 0) {
+        if (ch === 92) { pos = pos + 1; } // backslash — skip next
+        else if (ch === 34) { inString = 0; }
+      } else {
+        if (ch === 34) { inString = 1; }
+        else if (ch === 123) { braceDepth = braceDepth + 1; }
+        else if (ch === 125) {
+          braceDepth = braceDepth - 1;
+          if (braceDepth === 0) { pos = pos + 1; break; }
+        }
+      }
+      pos = pos + 1;
+    }
+    const deltaObj = data.substring(objStart, pos);
+
+    // Extract "seq" from this delta to update our tracking
+    const dSeqIdx = deltaObj.indexOf('"seq"');
+    if (dSeqIdx >= 0) {
+      let dsStart = dSeqIdx + 5;
+      while (dsStart < deltaObj.length && (deltaObj.charCodeAt(dsStart) === 58 || deltaObj.charCodeAt(dsStart) === 32)) dsStart = dsStart + 1;
+      let dsEnd = dsStart;
+      while (dsEnd < deltaObj.length && deltaObj.charCodeAt(dsEnd) >= 48 && deltaObj.charCodeAt(dsEnd) <= 57) dsEnd = dsEnd + 1;
+      if (dsEnd > dsStart) {
+        const dSeq = Number(deltaObj.substring(dsStart, dsEnd));
+        if (dSeq > syncLastSeq) syncLastSeq = dSeq;
+      }
+    }
+
+    // Extract "payload" string from this delta and re-dispatch it
+    const dpkIdx = deltaObj.indexOf('"payload"');
+    if (dpkIdx >= 0) {
+      let dpStart = dpkIdx + 9;
+      while (dpStart < deltaObj.length && (deltaObj.charCodeAt(dpStart) === 58 || deltaObj.charCodeAt(dpStart) === 32)) dpStart = dpStart + 1;
+      if (dpStart < deltaObj.length && deltaObj.charCodeAt(dpStart) === 34) {
+        dpStart = dpStart + 1;
+        // The payload is the original routed message — it's a full relay envelope
+        // Find closing unescaped quote
+        let dpEnd = dpStart;
+        while (dpEnd < deltaObj.length) {
+          if (deltaObj.charCodeAt(dpEnd) === 92) { dpEnd = dpEnd + 2; }
+          else if (deltaObj.charCodeAt(dpEnd) === 34) { break; }
+          else { dpEnd = dpEnd + 1; }
+        }
+        const rawPayload = deltaObj.substring(dpStart, dpEnd);
+        // Unescape
+        let unescaped = '';
+        for (let ui = 0; ui < rawPayload.length; ui++) {
+          if (rawPayload.charCodeAt(ui) === 92 && ui + 1 < rawPayload.length) {
+            const nc = rawPayload.charCodeAt(ui + 1);
+            if (nc === 110) { unescaped += '\n'; ui = ui + 1; }
+            else if (nc === 114) { unescaped += '\r'; ui = ui + 1; }
+            else if (nc === 34) { unescaped += '"'; ui = ui + 1; }
+            else if (nc === 92) { unescaped += '\\'; ui = ui + 1; }
+            else { unescaped += rawPayload.charAt(ui); }
+          } else {
+            unescaped += rawPayload.charAt(ui);
+          }
+        }
+        // Re-dispatch this stored message through the normal handler
+        if (unescaped.length > 2) {
+          onRelayMessageImpl(unescaped);
+          deltaCount = deltaCount + 1;
+        }
+      }
+    }
+  }
+  syncDebugLog('Processed ' + String(deltaCount) + ' deltas from batch, lastSeq now ' + String(syncLastSeq));
+  // Save updated lastSeq
+  if (syncPairedRoomId.length > 0 && syncPairedDeviceName.length > 0) {
+    saveSyncSession(syncPairedRoomId, syncPairedDeviceName);
+  }
 }
 
 function onRelayMessageImpl(data: string): void {
   syncDebugLog('RECV: ' + data.substring(0, 200));
+
+  // Track seq for delta catch-up — extract "seq":N from envelope
+  const seqKeyIdx = data.indexOf('"seq"');
+  if (seqKeyIdx >= 0) {
+    let sStart = seqKeyIdx + 5;
+    // Skip : and whitespace
+    while (sStart < data.length && (data.charCodeAt(sStart) === 58 || data.charCodeAt(sStart) === 32)) sStart = sStart + 1;
+    let sEnd = sStart;
+    while (sEnd < data.length && data.charCodeAt(sEnd) >= 48 && data.charCodeAt(sEnd) <= 57) sEnd = sEnd + 1;
+    if (sEnd > sStart) {
+      const msgSeq = Number(data.substring(sStart, sEnd));
+      if (msgSeq > syncLastSeq) {
+        syncLastSeq = msgSeq;
+      }
+    }
+  }
+
+  // Handle relay system messages ("type":"joined", "type":"deltas")
+  // These don't have a "payload" field in the relay envelope
+  const typeIdx = data.indexOf('"type"');
+  if (typeIdx >= 0) {
+    // Check for "deltas" batch: {"type":"deltas","room":"...","deltas":[...]}
+    if (data.indexOf('"deltas"') >= 0 && data.indexOf('"type":"deltas"') >= 0) {
+      handleDeltasBatch(data);
+      return;
+    }
+    // "joined" confirmation — just log it, no payload to process
+    if (data.indexOf('"joined"') >= 0) {
+      syncDebugLog('Joined room confirmed');
+      return;
+    }
+  }
 
   // Extract "from" field to detect self-messages
   let msgFrom = '';
@@ -3595,7 +3797,9 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
     setTimeout(() => { initSplitSidebarExplorer(); }, 100);
 
     _lastThemeName = getWorkbenchSettings().colorTheme;
+    _lastSettingsVersion = getSettingsVersion();
     onSettingsChange(() => { onSettingsChanged(); });
+    setInterval(() => { pollSettingsVersion(); }, 250);
 
     telemetryTrackStartup(Date.now() - _renderStartMs);
     return shell;
@@ -3729,7 +3933,9 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
 
   // Register settings change listener for live theme switching
   _lastThemeName = settings.colorTheme;
+  _lastSettingsVersion = getSettingsVersion();
   onSettingsChange(() => { onSettingsChanged(); });
+  setInterval(() => { pollSettingsVersion(); }, 250);
 
   // Poll for files opened via macOS "Open With" or command-line args
   setInterval(checkOpenFileRequests, 500);

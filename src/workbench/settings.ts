@@ -173,6 +173,7 @@ let _settings_syncDeviceToken: string = '';
 let _settings_telemetryEnabled: number = 0;
 let _settings_setupComplete: number = 0;
 let _settingsLoaded: number = 0;
+let _settingsVersion: number = 0;
 
 const _listeners: SettingsChangeListener[] = [];
 
@@ -612,10 +613,16 @@ export function updateSettings(patch: Partial<WorkbenchSettings>): void {
 }
 
 function notifyListeners(): void {
+  _settingsVersion = _settingsVersion + 1;
   const snap = buildSnapshot();
   for (let i = 0; i < _listeners.length; i++) {
     _listeners[i](snap);
   }
+}
+
+/** Get the settings change version counter (increments on every change). */
+export function getSettingsVersion(): number {
+  return _settingsVersion;
 }
 
 /** Register a callback for settings changes. */

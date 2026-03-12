@@ -19,6 +19,7 @@ import {
 } from '../../settings';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getEditorForeground, getEditorBackground, getPanelBorder, getButtonBackground, getInputPlaceholderForeground } from '../../theme/theme-colors';
+import { applyThemeSwitch } from '../../render';
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -164,9 +165,11 @@ function deferredAction(): void {
   const s = getWorkbenchSettings();
 
   if (action === 1) {
-    const next = s.colorTheme.charCodeAt(5) === 68 ? 'Hone Light' : 'Hone Dark';
+    const isDark = s.colorTheme.charCodeAt(5) === 68 ? 0 : 1;
+    const next = isDark > 0 ? 'Hone Dark' : 'Hone Light';
     setStringSetting('colorTheme', next);
     if (_hThemeBtn) buttonSetTitle(_hThemeBtn, next);
+    applyThemeSwitch(isDark);
   }
   if (action === 2) {
     const next = s.sidebarLocation.charCodeAt(0) === 108 ? 'right' : 'left';

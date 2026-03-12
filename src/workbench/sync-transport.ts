@@ -25,6 +25,8 @@ let seqCounter: number = 0;
 let pollCount: number = 0;
 let keepAliveTimerId: number = 0;
 let lastPingSent: number = 0;
+let relayToken = '';
+let relayLastSeq: number = 0;
 
 // Event callbacks
 let _onRelayConnected: () => void = _noopVoid;
@@ -36,6 +38,14 @@ function _noopVoid(): void {}
 function _noopData(d: string): void {}
 
 // --- Public API ---
+
+export function setRelayToken(token: string): void {
+  relayToken = token;
+}
+
+export function setRelayLastSeq(seq: number): void {
+  relayLastSeq = seq;
+}
 
 export function connectToRelay(url: string, roomId: string, deviceId: string): void {
   if (wsConnected > 0 || wsConnecting > 0) {
@@ -235,14 +245,24 @@ function pollRelay(): void {
 }
 
 function onConnectedToRelay(): void {
-  // Send join message
+  // Send join message with token + lastSeq for auth + delta catch-up
   if (joinSent < 1) {
     joinSent = 1;
-    let msg = '{"type":"join","room":"';
+    let msg = '{"join":true,"room":"';
     msg += relayRoomId;
     msg += '","device":"';
     msg += relayDeviceId;
-    msg += '"}';
+    msg += '"';
+    if (relayToken.length > 0) {
+      msg += ',"token":"';
+      msg += relayToken;
+      msg += '"';
+    }
+    if (relayLastSeq > 0) {
+      msg += ',"lastSeq":';
+      msg += String(relayLastSeq);
+    }
+    msg += '}';
     let dbg = 'Sending join: ';
     dbg += msg;
     _onDebug(dbg);
