@@ -219,6 +219,32 @@ function decodeUHexCP(s: string, pos: number): string {
 // Title stream guard
 let titleStreamActive: number = 0;
 
+// Claude Code metadata (from system event)
+let claudeModelDisplay = '';
+let claudeVersionDisplay = '';
+let claudePermModeDisplay = '';
+let claudeInfoRow: unknown = null;
+
+// Rate limit state
+let claudeRateLimited: number = 0;
+let claudeRateLimitResetEpoch: number = 0;
+let claudeRateLimitTimer: number = 0;
+let claudeRateLimitLabel: unknown = null;
+
+// Tool use tracking (for linking tool calls to results)
+let claudeLastToolUseId = '';
+let claudeLastToolUseName = '';
+
+// Thinking block state
+let thinkingBlockWidget: unknown = null;
+let thinkingBlockContent: unknown = null;
+let thinkingBlockExpanded: number = 0;
+
+// Per-session stats
+let claudeTotalDurationMs: number = 0;
+let claudeTotalInputTokens: number = 0;
+let claudeTotalOutputTokens: number = 0;
+
 // ---------------------------------------------------------------------------
 // Public setters (called from render.ts)
 // ---------------------------------------------------------------------------
@@ -271,7 +297,7 @@ export function startClaudeForRelay(prompt: string): void {
   claudeLogFilePath = logPath;
 
   const storedUUID = loadClaudeSessionUUID(getActiveSessionId());
-  claudeSpawnedPid = startClaudeSession(prompt, wsRoot, storedUUID, logPath);
+  claudeSpawnedPid = startClaudeSession(prompt, wsRoot, storedUUID, logPath, '', '', 0);
   claudePollTimer = setInterval(() => { claudePollTick(); }, 50);
 }
 
@@ -1447,21 +1473,46 @@ function onClaudeToolActivity(name: string, status: string, inputDetail: string)
   }
 }
 
-function onClaudeToolResult(output: string): void {
+function onClaudeToolResult(output: string, isError: number, filePath: string): void {
   if (!claudeToolContainer) return;
-  if (output.length < 1) return;
+  if (output.length < 1 && filePath.length < 1) return;
 
-  let displayOutput = output;
-  if (displayOutput.length > 300) {
-    displayOutput = output.slice(0, 300);
-    displayOutput += '\n... (truncated)';
+  // Show file path header if available
+  if (filePath.length > 0) {
+    let fpLabel = Text(filePath);
+    textSetFontSize(fpLabel, 10);
+    textSetFontFamily(fpLabel, 10, 'Menlo');
+    setFg(fpLabel, getSecondaryTextColor());
+    widgetAddChild(claudeToolContainer, fpLabel);
   }
-  const resultText = Text(displayOutput);
-  textSetFontSize(resultText, 10);
-  textSetFontFamily(resultText, 10, 'Menlo');
-  textSetWraps(resultText, 300);
-  setFg(resultText, getSideBarForeground());
-  widgetAddChild(claudeToolContainer, resultText);
+
+  if (output.length > 0) {
+    let displayOutput = output;
+    if (displayOutput.length > 500) {
+      displayOutput = output.slice(0, 500);
+      displayOutput += '\n... (truncated)';
+    }
+
+    if (isError > 0) {
+      // Error result — red tinted container
+      let errContainer = VStackWithInsets(2, 4, 4, 4, 4);
+      widgetSetBackgroundColor(errContainer, 0.3, 0.12, 0.12, 1.0);
+      let errLabel = Text(displayOutput);
+      textSetFontSize(errLabel, 10);
+      textSetFontFamily(errLabel, 10, 'Menlo');
+      textSetWraps(errLabel, 300);
+      setFg(errLabel, getSideBarForeground());
+      widgetAddChild(errContainer, errLabel);
+      widgetAddChild(claudeToolContainer, errContainer);
+    } else {
+      let resultLabel = Text(displayOutput);
+      textSetFontSize(resultLabel, 10);
+      textSetFontFamily(resultLabel, 10, 'Menlo');
+      textSetWraps(resultLabel, 300);
+      setFg(resultLabel, getSecondaryTextColor());
+      widgetAddChild(claudeToolContainer, resultLabel);
+    }
+  }
 }
 
 /** Continue the agent loop after tool execution. */
@@ -2029,19 +2080,30 @@ function lineContains(line: string, sub: string): number {
  * Returns: 1=system, 2=assistant, 3=result, 4=user, 0=unknown
  */
 function detectClaudeEventType(line: string): number {
-  // Look for "type":"system" / "type":"assistant" / "type":"result" / "type":"user"
-  // "type":"system" → check for "system" at the right spot
+  // Look for "type":"X" near the start of the line (first 30 chars) to avoid
+  // matching nested "type":"tool_result" etc.
+  // 1=system, 2=assistant, 3=result, 4=user, 5=rate_limit_event
   if (lineContains(line, '"type":"system"') > 0) return 1;
   if (lineContains(line, '"type":"assistant"') > 0) return 2;
-  if (lineContains(line, '"type":"result"') > 0) return 3;
+  if (lineContains(line, '"type":"rate_limit_event"') > 0) return 5;
+  // Check "type":"result" BEFORE "type":"user" — result events also contain
+  // "type":"tool_result" in permission_denials, but "type":"result" appears first
+  if (line.length > 15 && line.charCodeAt(9) === 114 && line.charCodeAt(10) === 101) {
+    // Quick check: {"type":"re... — likely "result"
+    if (lineContains(line, '"type":"result"') > 0) return 3;
+  }
   if (lineContains(line, '"type":"user"') > 0) return 4;
+  // Fallback: check result without position hint
+  if (lineContains(line, '"type":"result"') > 0) return 3;
   return 0;
 }
 
 /**
  * Process a single NDJSON line from Claude Code output.
  * All processing is inline in this module — no cross-module dependencies.
- * Uses exact pattern matching ("key":) to avoid ambiguous key/value collisions.
+ *
+ * Handles: system, assistant (text + tool_use + thinking), user (tool results),
+ * result (final output + permission denials + stop reason), rate_limit_event.
  */
 function handleClaudeLine(line: string): void {
   if (line.length < 10) return;
@@ -2054,73 +2116,111 @@ function handleClaudeLine(line: string): void {
     _relayForwardFn(line);
   }
 
-  // System event (1) — session init
+  // -----------------------------------------------------------------------
+  // System event (1) — session init with metadata
+  // -----------------------------------------------------------------------
   if (evtType === 1) {
-    // Extract session_id using exact pattern "session_id":"
     let sid = inlineExtractValue(line, '"session_id":');
     if (sid.length > 0) {
       claudeSessionUUID = sid;
       saveClaudeSessionUUID(getActiveSessionId(), sid);
     }
+    // Extract metadata for info display
+    claudeModelDisplay = inlineExtractValue(line, '"model":');
+    claudeVersionDisplay = inlineExtractValue(line, '"claude_code_version":');
+    claudePermModeDisplay = inlineExtractValue(line, '"permissionMode":');
+
+    // Show session info row
+    if (chatMessagesContainer) {
+      let infoStr = '';
+      if (claudeVersionDisplay.length > 0) {
+        infoStr += 'Claude Code v';
+        infoStr += claudeVersionDisplay;
+      }
+      if (claudeModelDisplay.length > 0) {
+        if (infoStr.length > 0) infoStr += ' | ';
+        infoStr += claudeModelDisplay;
+      }
+      if (claudePermModeDisplay.length > 0) {
+        if (infoStr.length > 0) infoStr += ' | ';
+        infoStr += claudePermModeDisplay;
+      }
+      if (infoStr.length > 0) {
+        claudeInfoRow = Text(infoStr);
+        textSetFontSize(claudeInfoRow, 10);
+        textSetFontFamily(claudeInfoRow, 10, 'Menlo');
+        setFg(claudeInfoRow, getSecondaryTextColor());
+        widgetAddChild(chatMessagesContainer, claudeInfoRow);
+      }
+    }
     stopThinking();
     return;
   }
 
-  // Assistant event (2) — text or tool_use
-  if (evtType === 2) {
-    // Check for tool_use blocks
-    if (lineContains(line, 'tool_use') > 0) {
-      let toolName = inlineExtractValue(line, '"name":');
-      if (toolName.length > 0) {
-        // Extract tool input details
-        let toolInput = inlineExtractValue(line, '"command":');
-        if (toolInput.length < 1) toolInput = inlineExtractValue(line, '"file_path":');
-        if (toolInput.length < 1) toolInput = inlineExtractValue(line, '"pattern":');
-        onClaudeToolActivity(toolName, 'running', toolInput);
-      }
+  // -----------------------------------------------------------------------
+  // Rate limit event (5) — show warning with countdown
+  // -----------------------------------------------------------------------
+  if (evtType === 5) {
+    let rlStatus = inlineExtractValue(line, '"status":');
+    // "rate_limited" starts with 'r'(114) at [0] and 'l'(108) at [5]
+    let isLimited: number = 0;
+    if (rlStatus.length > 10 && rlStatus.charCodeAt(0) === 114 && rlStatus.charCodeAt(5) === 108) {
+      isLimited = 1;
     }
-    // Extract text content — look for "text":" pattern after "type":"text"
-    // The assistant message has content blocks like: {"type":"text","text":"actual content"}
-    // We need the value of the second "text" key (the content), not "type":"text"
-    if (lineContains(line, '"type":"text"') > 0) {
-      // Find "type":"text" then extract the next "text":"..." value after it
-      let searchPattern = '"type":"text"';
-      let foundPos = -1;
-      for (let i = 0; i <= line.length - searchPattern.length; i++) {
-        let m: number = 1;
-        for (let j = 0; j < searchPattern.length; j++) {
-          if (line.charCodeAt(i + j) !== searchPattern.charCodeAt(j)) {
-            m = 0;
-            break;
-          }
-        }
-        if (m > 0) {
-          foundPos = i + searchPattern.length;
-          break;
-        }
+    if (isLimited > 0) {
+      claudeRateLimited = 1;
+      // Extract resetsAt as number (inline)
+      let resetStr = inlineExtractValue(line, '"resetsAt":');
+      if (resetStr.length > 0) {
+        claudeRateLimitResetEpoch = Number(resetStr);
       }
-      if (foundPos > 0) {
-        // Now extract "text":"value" from the remainder after "type":"text"
-        let remainder = line.slice(foundPos);
-        let textVal = inlineExtractValue(remainder, '"text":');
-        if (textVal.length > 0) {
-          streamAccumulated += textVal;
-          updateStreamingDisplay();
-        }
+      // Show rate limit banner
+      if (chatMessagesContainer) {
+        let rlBlock = VStackWithInsets(4, 8, 8, 8, 8);
+        widgetSetBackgroundColor(rlBlock, 0.35, 0.25, 0.05, 1.0);
+        claudeRateLimitLabel = Text('Rate limited. Waiting...');
+        textSetFontSize(claudeRateLimitLabel, 12);
+        textSetFontFamily(claudeRateLimitLabel, 12, 'Menlo');
+        setFg(claudeRateLimitLabel, getSideBarForeground());
+        widgetAddChild(rlBlock, claudeRateLimitLabel);
+        widgetAddChild(chatMessagesContainer, rlBlock);
+        lastAddedWidget = rlBlock;
+        scrollToBottom();
+      }
+      // Start countdown timer
+      if (claudeRateLimitTimer > 0) { clearInterval(claudeRateLimitTimer); }
+      claudeRateLimitTimer = setInterval(() => { updateRateLimitCountdown(); }, 1000) as unknown as number;
+    } else {
+      // Rate limit cleared
+      claudeRateLimited = 0;
+      if (claudeRateLimitTimer > 0) {
+        clearInterval(claudeRateLimitTimer);
+        claudeRateLimitTimer = 0;
+      }
+      if (claudeRateLimitLabel) {
+        textSetString(claudeRateLimitLabel, 'Rate limit cleared');
       }
     }
     return;
   }
 
-  // Result event (3) — final output
+  // -----------------------------------------------------------------------
+  // Assistant event (2) — iterate content blocks (text, tool_use, thinking)
+  // -----------------------------------------------------------------------
+  if (evtType === 2) {
+    processAssistantBlocks(line);
+    return;
+  }
+
+  // -----------------------------------------------------------------------
+  // Result event (3) — final output with stop_reason, permission denials, duration
+  // -----------------------------------------------------------------------
   if (evtType === 3) {
-    // Check for error: "is_error":true
     let isError: number = 0;
     if (lineContains(line, '"is_error":true') > 0) {
       isError = 1;
     }
 
-    // Extract result text using EXACT pattern: ,"result":" (with leading comma to disambiguate from "type":"result")
     let resultText = inlineExtractValue(line, ',"result":');
     let costVal = parseNDJSONCost(line);
     let turnsVal = parseNDJSONTurns(line);
@@ -2129,6 +2229,15 @@ function handleClaudeLine(line: string): void {
       claudeSessionUUID = sid;
       saveClaudeSessionUUID(getActiveSessionId(), sid);
       claudeResumeSessionId = sid;
+    }
+
+    // Extract stop_reason
+    let stopReason = inlineExtractValue(line, '"stop_reason":');
+
+    // Extract duration
+    let durationStr = inlineExtractValue(line, '"duration_ms":');
+    if (durationStr.length > 0) {
+      claudeTotalDurationMs = Number(durationStr);
     }
 
     // On error, clear stale resume ID so next attempt starts fresh
@@ -2143,13 +2252,19 @@ function handleClaudeLine(line: string): void {
       clearInterval(claudePollTimer);
       claudePollTimer = 0;
     }
+    // Clear rate limit state
+    if (claudeRateLimitTimer > 0) {
+      clearInterval(claudeRateLimitTimer);
+      claudeRateLimitTimer = 0;
+    }
+    claudeRateLimited = 0;
+
     // Finalize UI
     stopThinking();
     claudeModeActive = 0;
     isRelayHostMode = 0;
 
     if (isError > 0) {
-      // Show error message
       let errMsg = resultText;
       if (errMsg.length < 1) errMsg = 'Claude Code returned an error.';
       if (chatMessagesContainer) {
@@ -2178,41 +2293,420 @@ function handleClaudeLine(line: string): void {
     streamAccumulated = '';
     streamDisplayLabel = null;
     streamContainer = null;
-    // Show cost
-    if (chatMessagesContainer && costVal >= 0) {
-      let costStr = 'Cost: $';
-      let costInt = Math.floor(costVal * 10000);
-      let costMain = Math.floor(costInt / 10000);
-      let costFrac = costInt % 10000;
-      costStr += String(costMain);
-      costStr += '.';
-      if (costFrac < 1000) costStr += '0';
-      if (costFrac < 100) costStr += '0';
-      if (costFrac < 10) costStr += '0';
-      costStr += String(costFrac);
-      if (turnsVal >= 0) {
-        costStr += ' | Turns: ';
-        costStr += String(turnsVal);
+
+    // Show stats row: Cost, Turns, Duration, Stop Reason, Permission Denials
+    if (chatMessagesContainer) {
+      let statsStr = '';
+      if (costVal >= 0) {
+        statsStr += 'Cost: $';
+        let costInt = Math.floor(costVal * 10000);
+        let costMain = Math.floor(costVal);
+        let costFrac = costInt % 10000;
+        statsStr += String(costMain);
+        statsStr += '.';
+        if (costFrac < 1000) statsStr += '0';
+        if (costFrac < 100) statsStr += '0';
+        if (costFrac < 10) statsStr += '0';
+        statsStr += String(costFrac);
       }
-      claudeCostLabel = Text(costStr);
-      textSetFontSize(claudeCostLabel, 10);
-      textSetFontFamily(claudeCostLabel, 10, 'Menlo');
-      setFg(claudeCostLabel, getSideBarForeground());
-      widgetAddChild(chatMessagesContainer, claudeCostLabel);
-      lastAddedWidget = claudeCostLabel;
+      if (turnsVal >= 0) {
+        if (statsStr.length > 0) statsStr += ' | ';
+        statsStr += 'Turns: ';
+        statsStr += String(turnsVal);
+      }
+      if (claudeTotalDurationMs > 0) {
+        if (statsStr.length > 0) statsStr += ' | ';
+        let secs = Math.floor(claudeTotalDurationMs / 100) / 10;
+        statsStr += String(secs);
+        statsStr += 's';
+      }
+      // Show stop_reason if not normal end_turn
+      // "max_turns" — m(0)a(1)x(2)_(3)t(4)
+      if (stopReason.length > 5 && stopReason.charCodeAt(0) === 109 && stopReason.charCodeAt(3) === 95) {
+        if (statsStr.length > 0) statsStr += ' | ';
+        statsStr += 'INCOMPLETE (max turns reached)';
+      }
+      if (claudeTotalInputTokens > 0 || claudeTotalOutputTokens > 0) {
+        if (statsStr.length > 0) statsStr += ' | ';
+        statsStr += 'Tokens: ';
+        statsStr += String(claudeTotalInputTokens);
+        statsStr += ' in / ';
+        statsStr += String(claudeTotalOutputTokens);
+        statsStr += ' out';
+      }
+
+      if (statsStr.length > 0) {
+        claudeCostLabel = Text(statsStr);
+        textSetFontSize(claudeCostLabel, 10);
+        textSetFontFamily(claudeCostLabel, 10, 'Menlo');
+        setFg(claudeCostLabel, getSecondaryTextColor());
+        widgetAddChild(chatMessagesContainer, claudeCostLabel);
+        lastAddedWidget = claudeCostLabel;
+      }
+
+      // Show permission denials as warning
+      showPermissionDenials(line);
     }
     updateMessages();
     return;
   }
 
-  // User event (4) — tool results (internal to Claude Code)
+  // -----------------------------------------------------------------------
+  // User event (4) — tool results with error detection and ID linking
+  // -----------------------------------------------------------------------
   if (evtType === 4) {
-    // Extract tool output before marking done
+    // Check if tool result is an error
+    let isToolError: number = 0;
+    if (lineContains(line, '"is_error":true') > 0) {
+      isToolError = 1;
+    }
+    // Extract tool output — try tool_use_result first (richer), then stdout, then content
     let toolOutput = inlineExtractValue(line, '"stdout":');
-    if (toolOutput.length < 1) toolOutput = inlineExtractValue(line, '"content":');
-    onClaudeToolResult(toolOutput);
+    if (toolOutput.length < 1) {
+      // Try content field within tool_result
+      let trPos = lineContainPos(line, '"tool_result"');
+      if (trPos >= 0) {
+        let trRemainder = line.slice(trPos);
+        toolOutput = inlineExtractValue(trRemainder, '"content":');
+      }
+    }
+    if (toolOutput.length < 1) {
+      toolOutput = inlineExtractValue(line, '"content":');
+    }
+    // Extract file path from tool_use_result if present
+    let resultFilePath = inlineExtractValue(line, '"filePath":');
+    if (resultFilePath.length > 0 && toolOutput.length < 1) {
+      toolOutput = inlineExtractValue(line, '"content":');
+    }
+
+    onClaudeToolResult(toolOutput, isToolError, resultFilePath);
     onClaudeToolActivity('', 'done', '');
   }
+}
+
+// -----------------------------------------------------------------------
+// Multi-block assistant event parser
+// -----------------------------------------------------------------------
+
+/**
+ * Parse content blocks from an assistant event. Handles: text, tool_use, thinking.
+ * Walks through "content":[{...},{...},...] by tracking brace depth.
+ */
+function processAssistantBlocks(line: string): void {
+  // Find "content":[ in the line
+  let contentStart = lineContainPos(line, '"content":[');
+  if (contentStart < 0) return;
+  let pos = contentStart + 11; // after '['
+
+  let depth: number = 0;
+  let blockStart: number = -1;
+  let inString: number = 0;
+  let hadUpdate: number = 0;
+
+  for (let i = pos; i < line.length; i++) {
+    let ch = line.charCodeAt(i);
+
+    // Track string boundaries to skip braces inside strings
+    if (ch === 34 && (i === 0 || line.charCodeAt(i - 1) !== 92)) { // " not preceded by backslash
+      inString = inString > 0 ? 0 : 1;
+      continue;
+    }
+    if (inString > 0) continue;
+
+    if (ch === 123) { // {
+      if (depth === 0) blockStart = i;
+      depth += 1;
+    }
+    if (ch === 125) { // }
+      depth -= 1;
+      if (depth === 0 && blockStart >= 0) {
+        let block = line.slice(blockStart, i + 1);
+        hadUpdate += processOneContentBlock(block);
+        blockStart = -1;
+      }
+    }
+    if (ch === 93 && depth === 0) break; // ] end of content array
+  }
+
+  // Accumulate token usage from this assistant event's usage block
+  let inputTokStr = inlineExtractValue(line, '"input_tokens":');
+  if (inputTokStr.length > 0) {
+    let tokVal = Number(inputTokStr);
+    if (tokVal > 0) claudeTotalInputTokens = tokVal; // latest cumulative value
+  }
+  let outputTokStr = inlineExtractValue(line, '"output_tokens":');
+  if (outputTokStr.length > 0) {
+    let tokVal = Number(outputTokStr);
+    if (tokVal > 0) claudeTotalOutputTokens = tokVal;
+  }
+
+  if (hadUpdate > 0) {
+    updateStreamingDisplay();
+  }
+}
+
+/**
+ * Process a single content block JSON object. Returns 1 if text was added.
+ */
+function processOneContentBlock(block: string): number {
+  // Determine block type
+  let blockType = inlineExtractValue(block, '"type":');
+
+  // --- text block ---
+  // "text" — t(0)e(1)x(2)t(3), length 4
+  if (blockType.length === 4 && blockType.charCodeAt(0) === 116 && blockType.charCodeAt(2) === 120) {
+    let textVal = inlineExtractValue(block, '"text":');
+    if (textVal.length > 0) {
+      streamAccumulated += textVal;
+      return 1;
+    }
+    return 0;
+  }
+
+  // --- tool_use block ---
+  // "tool_use" — t(0)o(1)o(2)l(3)_(4)u(5)s(6)e(7), length 8
+  if (blockType.length === 8 && blockType.charCodeAt(0) === 116 && blockType.charCodeAt(4) === 95) {
+    let toolName = inlineExtractValue(block, '"name":');
+    let toolId = inlineExtractValue(block, '"id":');
+    if (toolName.length > 0) {
+      claudeLastToolUseId = toolId;
+      claudeLastToolUseName = toolName;
+      // Extract tool input — try many keys for comprehensive coverage
+      let toolInput = inlineExtractValue(block, '"command":');
+      if (toolInput.length < 1) toolInput = inlineExtractValue(block, '"file_path":');
+      if (toolInput.length < 1) toolInput = inlineExtractValue(block, '"path":');
+      if (toolInput.length < 1) toolInput = inlineExtractValue(block, '"pattern":');
+      if (toolInput.length < 1) toolInput = inlineExtractValue(block, '"query":');
+      if (toolInput.length < 1) toolInput = inlineExtractValue(block, '"url":');
+      if (toolInput.length < 1) toolInput = inlineExtractValue(block, '"description":');
+      if (toolInput.length < 1) toolInput = inlineExtractValue(block, '"skill":');
+      if (toolInput.length < 1) toolInput = inlineExtractValue(block, '"old_string":');
+      if (toolInput.length < 1) toolInput = inlineExtractValue(block, '"content":');
+
+      // Check for Edit tool — show old_string/new_string as diff
+      let isEdit: number = 0;
+      // "Edit" — E(69)d(100)i(105)t(116)
+      if (toolName.length === 4 && toolName.charCodeAt(0) === 69 && toolName.charCodeAt(3) === 116) {
+        isEdit = 1;
+      }
+      // "Write" — W(87)r(114)i(105)t(116)e(101)
+      if (toolName.length === 5 && toolName.charCodeAt(0) === 87) {
+        isEdit = 1;
+      }
+      if (isEdit > 0) {
+        onClaudeToolActivityWithDiff(toolName, toolInput, block);
+      } else {
+        onClaudeToolActivity(toolName, 'running', toolInput);
+      }
+    }
+    return 0;
+  }
+
+  // --- thinking block ---
+  // "thinking" — t(0)h(1)i(2)n(3)k(4)i(5)n(6)g(7), length 8
+  if (blockType.length === 8 && blockType.charCodeAt(0) === 116 && blockType.charCodeAt(1) === 104) {
+    let thinkingText = inlineExtractValue(block, '"thinking":');
+    if (thinkingText.length > 0) {
+      showThinkingBlock(thinkingText);
+    }
+    return 0;
+  }
+
+  return 0;
+}
+
+/** Find position of substring in line. Returns -1 if not found. */
+function lineContainPos(line: string, sub: string): number {
+  if (sub.length > line.length) return -1;
+  for (let i = 0; i <= line.length - sub.length; i++) {
+    let m: number = 1;
+    for (let j = 0; j < sub.length; j++) {
+      if (line.charCodeAt(i + j) !== sub.charCodeAt(j)) {
+        m = 0;
+        break;
+      }
+    }
+    if (m > 0) return i;
+  }
+  return -1;
+}
+
+// -----------------------------------------------------------------------
+// Rate limit countdown
+// -----------------------------------------------------------------------
+
+function updateRateLimitCountdown(): void {
+  let nowSec = Math.floor(Date.now() / 1000);
+  let remaining = claudeRateLimitResetEpoch - nowSec;
+  if (remaining <= 0) {
+    claudeRateLimited = 0;
+    if (claudeRateLimitTimer > 0) {
+      clearInterval(claudeRateLimitTimer);
+      claudeRateLimitTimer = 0;
+    }
+    if (claudeRateLimitLabel) {
+      textSetString(claudeRateLimitLabel, 'Rate limit cleared');
+    }
+    return;
+  }
+  let mins = Math.floor(remaining / 60);
+  let secs = remaining % 60;
+  let text = 'Rate limited. Resets in ';
+  text += String(mins);
+  text += 'm ';
+  text += String(secs);
+  text += 's';
+  if (claudeRateLimitLabel) textSetString(claudeRateLimitLabel, text);
+}
+
+// -----------------------------------------------------------------------
+// Permission denials display
+// -----------------------------------------------------------------------
+
+function showPermissionDenials(line: string): void {
+  if (!chatMessagesContainer) return;
+  // Only show if permission_denials is non-empty
+  if (lineContains(line, 'permission_denials') < 1) return;
+  // Check for empty array
+  if (lineContains(line, '"permission_denials":[]') > 0) return;
+
+  // Extract tool names from permission_denials array
+  let pdPos = lineContainPos(line, 'permission_denials');
+  if (pdPos < 0) return;
+  let after = line.slice(pdPos);
+  let toolNames = '';
+  let searchOff = 0;
+  let count = 0;
+  while (count < 10) {
+    let tnPos = lineContainPos(after.slice(searchOff), '"tool_name":');
+    if (tnPos < 0) break;
+    let absOff = searchOff + tnPos;
+    let snippet = after.slice(absOff);
+    let tn = inlineExtractValue(snippet, '"tool_name":');
+    if (tn.length > 0) {
+      if (toolNames.length > 0) toolNames += ', ';
+      toolNames += tn;
+    }
+    searchOff = absOff + 12;
+    count += 1;
+  }
+  if (toolNames.length < 1) return;
+
+  let warnBlock = VStackWithInsets(4, 8, 8, 8, 8);
+  widgetSetBackgroundColor(warnBlock, 0.35, 0.25, 0.05, 1.0);
+  let warnStr = '\u26A0 Permission denied for: ';
+  warnStr += toolNames;
+  let warnLabel = Text(warnStr);
+  textSetFontSize(warnLabel, 11);
+  textSetWraps(warnLabel, 300);
+  setFg(warnLabel, getSideBarForeground());
+  widgetAddChild(warnBlock, warnLabel);
+  widgetAddChild(chatMessagesContainer, warnBlock);
+  lastAddedWidget = warnBlock;
+}
+
+// -----------------------------------------------------------------------
+// Thinking block display (collapsible)
+// -----------------------------------------------------------------------
+
+function showThinkingBlock(text: string): void {
+  if (!chatMessagesContainer) return;
+  let container = VStackWithInsets(2, 6, 6, 6, 6);
+  widgetSetBackgroundColor(container, 0.12, 0.12, 0.15, 1.0);
+
+  // Header — click toggles content
+  let headerBtn = Button('\u{1F4AD} Thinking...', () => { toggleThinkingExpand(); });
+  buttonSetBordered(headerBtn, 0);
+  textSetFontSize(headerBtn, 10);
+  setBtnFg(headerBtn, getSecondaryTextColor());
+  widgetAddChild(container, headerBtn);
+
+  // Content — hidden by default
+  let contentLabel = Text(text);
+  textSetFontSize(contentLabel, 10);
+  textSetFontFamily(contentLabel, 10, 'Menlo');
+  textSetWraps(contentLabel, 300);
+  setFg(contentLabel, getSecondaryTextColor());
+  widgetSetHidden(contentLabel, 1);
+  widgetAddChild(container, contentLabel);
+
+  thinkingBlockWidget = container;
+  thinkingBlockContent = contentLabel;
+  thinkingBlockExpanded = 0;
+
+  widgetAddChild(chatMessagesContainer, container);
+  lastAddedWidget = container;
+  scrollToBottom();
+}
+
+function toggleThinkingExpand(): void {
+  if (!thinkingBlockContent) return;
+  thinkingBlockExpanded = thinkingBlockExpanded > 0 ? 0 : 1;
+  widgetSetHidden(thinkingBlockContent, thinkingBlockExpanded > 0 ? 0 : 1);
+}
+
+// -----------------------------------------------------------------------
+// Enhanced tool activity display (with diff for Edit/Write)
+// -----------------------------------------------------------------------
+
+function onClaudeToolActivityWithDiff(toolName: string, filePath: string, block: string): void {
+  if (!chatMessagesContainer) return;
+
+  let toolLabel = '\u2699 ';
+  toolLabel += toolName;
+  if (filePath.length > 0) {
+    toolLabel += ': ';
+    if (filePath.length > 80) {
+      toolLabel += filePath.slice(0, 80);
+      toolLabel += '...';
+    } else {
+      toolLabel += filePath;
+    }
+  }
+  let toolText = Text(toolLabel);
+  textSetFontSize(toolText, 11);
+  textSetFontFamily(toolText, 11, 'Menlo');
+  textSetWraps(toolText, 300);
+  setFg(toolText, getSideBarForeground());
+
+  claudeToolContainer = VStackWithInsets(2, 4, 8, 4, 8);
+  widgetSetBackgroundColor(claudeToolContainer, 0.15, 0.15, 0.18, 1.0);
+  widgetAddChild(claudeToolContainer, toolText);
+
+  // Extract old_string and new_string for diff display
+  let oldStr = inlineExtractValue(block, '"old_string":');
+  let newStr = inlineExtractValue(block, '"new_string":');
+
+  if (oldStr.length > 0) {
+    let oldTrunc = oldStr;
+    if (oldTrunc.length > 200) oldTrunc = oldStr.slice(0, 200) + '...';
+    let oldBlock = VStackWithInsets(2, 4, 4, 4, 4);
+    widgetSetBackgroundColor(oldBlock, 0.25, 0.10, 0.10, 1.0);
+    let oldLabel = Text('- ' + oldTrunc);
+    textSetFontSize(oldLabel, 10);
+    textSetFontFamily(oldLabel, 10, 'Menlo');
+    textSetWraps(oldLabel, 280);
+    setFg(oldLabel, getSideBarForeground());
+    widgetAddChild(oldBlock, oldLabel);
+    widgetAddChild(claudeToolContainer, oldBlock);
+  }
+  if (newStr.length > 0) {
+    let newTrunc = newStr;
+    if (newTrunc.length > 200) newTrunc = newStr.slice(0, 200) + '...';
+    let newBlock = VStackWithInsets(2, 4, 4, 4, 4);
+    widgetSetBackgroundColor(newBlock, 0.10, 0.25, 0.10, 1.0);
+    let newLabel = Text('+ ' + newTrunc);
+    textSetFontSize(newLabel, 10);
+    textSetFontFamily(newLabel, 10, 'Menlo');
+    textSetWraps(newLabel, 280);
+    setFg(newLabel, getSideBarForeground());
+    widgetAddChild(newBlock, newLabel);
+    widgetAddChild(claudeToolContainer, newBlock);
+  }
+
+  widgetAddChild(chatMessagesContainer, claudeToolContainer);
+  lastAddedWidget = claudeToolContainer;
+  scrollToBottom();
 }
 
 /**
@@ -2371,7 +2865,10 @@ function onSend(): void {
     const storedUUID = loadClaudeSessionUUID(getActiveSessionId());
 
     // Pass log path to startClaudeSession so it redirects output there
-    claudeSpawnedPid = startClaudeSession(sendText, wsRoot, storedUUID, logPath);
+    // Use resume ID from module-level var if available (multi-turn support)
+    let resumeId = claudeResumeSessionId;
+    if (resumeId.length < 1) resumeId = storedUUID;
+    claudeSpawnedPid = startClaudeSession(sendText, wsRoot, resumeId, logPath, '', '', 0);
 
     // Start polling from THIS module (same-module setInterval pattern works in Perry)
     claudePollTimer = setInterval(() => { claudePollTick(); }, 50);
@@ -2408,6 +2905,22 @@ function onNewChat(): void {
   claudeResumeSessionId = '';
   claudeProcessDone = 0;
   streamAccumulated = '';
+  claudeModelDisplay = '';
+  claudeVersionDisplay = '';
+  claudePermModeDisplay = '';
+  claudeInfoRow = null;
+  claudeRateLimited = 0;
+  claudeRateLimitResetEpoch = 0;
+  if (claudeRateLimitTimer > 0) { clearInterval(claudeRateLimitTimer); claudeRateLimitTimer = 0; }
+  claudeRateLimitLabel = null;
+  claudeLastToolUseId = '';
+  claudeLastToolUseName = '';
+  thinkingBlockWidget = null;
+  thinkingBlockContent = null;
+  thinkingBlockExpanded = 0;
+  claudeTotalDurationMs = 0;
+  claudeTotalInputTokens = 0;
+  claudeTotalOutputTokens = 0;
   streamingMsgBlock = null;
   streamContainer = null;
   firstUserMsgSent = 0;

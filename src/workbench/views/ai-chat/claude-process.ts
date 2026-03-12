@@ -153,8 +153,11 @@ function shellEscape(s: string): string {
  * @param workspaceRoot - Workspace root directory
  * @param resumeId - Optional session ID to resume (from previous session)
  * @param logFilePath - Log file path (caller generates this so it can poll directly)
+ * @param model - Optional model override (empty = use default)
+ * @param permissionMode - Permission mode (empty = 'acceptEdits')
+ * @param maxTurns - Max turns (0 = use default 25)
  */
-export function startClaudeSession(prompt: string, workspaceRoot: string, resumeId: string, logFilePath: string): number {
+export function startClaudeSession(prompt: string, workspaceRoot: string, resumeId: string, logFilePath: string, model: string, permissionMode: string, maxTurns: number): number {
   const bin = findClaudeBinary();
   if (bin.length < 3) {
     setClaudeError('Claude Code not found. Install: npm install -g @anthropic-ai/claude-code');
@@ -194,8 +197,25 @@ export function startClaudeSession(prompt: string, workspaceRoot: string, resume
   cmd += ')"';
   cmd += ' --output-format stream-json';
   cmd += ' --verbose';
-  cmd += ' --max-turns 25';
-  cmd += ' --permission-mode acceptEdits';
+
+  if (maxTurns > 0) {
+    cmd += ' --max-turns ';
+    cmd += String(maxTurns);
+  } else {
+    cmd += ' --max-turns 25';
+  }
+
+  if (permissionMode.length > 0) {
+    cmd += ' --permission-mode ';
+    cmd += shellEscape(permissionMode);
+  } else {
+    cmd += ' --permission-mode acceptEdits';
+  }
+
+  if (model.length > 0) {
+    cmd += ' --model ';
+    cmd += shellEscape(model);
+  }
 
   if (workspaceRoot.length > 0) {
     cmd += ' --add-dir ';

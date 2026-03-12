@@ -9,26 +9,45 @@
  *   3 = TOOL_RUNNING (Claude Code is executing a tool internally)
  *   4 = COMPLETED (result event received)
  *   5 = ERROR
+ *   6 = RATE_LIMITED (waiting for rate limit to clear)
  *
  * All state is module-level (Perry constraint).
  */
 
 import {
   parseNDJSONType, isSystemEvent, isAssistantEvent, isResultEvent,
+  isRateLimitEvent,
   parseNDJSONSessionId, parseNDJSONText, parseNDJSONToolUse,
   parseNDJSONResult, parseNDJSONCost, parseNDJSONTurns,
   parseNDJSONModel, hasToolUseBlock,
+  parseRateLimitStatus, parseRateLimitResetsAt,
 } from './claude-events';
 
 // --- Module-level state ---
 
-let claudeStatus: number = 0; // 0=idle,1=starting,2=streaming,3=tool,4=completed,5=error
+let claudeStatus: number = 0; // 0=idle,1=starting,2=streaming,3=tool,4=completed,5=error,6=rate_limited
 let claudeSessionUUID = '';
 let claudeModelName = '';
 let claudeResultText = '';
 let claudeResultCost: number = -1;
 let claudeResultTurns: number = -1;
 let claudeAccumulatedText = '';
+
+// Rate limit state
+let claudeRateLimited: number = 0;
+let claudeRateLimitResetsAt: number = 0;
+
+// System metadata
+let claudeVersion = '';
+let claudePermMode = '';
+
+// Per-turn tracking
+let claudeLastToolId = '';
+let claudeLastToolName = '';
+let claudeLastStopReason = '';
+let claudeDurationMs: number = 0;
+let claudeInputTokens: number = 0;
+let claudeOutputTokens: number = 0;
 
 // Callbacks set by chat-panel
 let onTextDeltaCb: ((text: string) => void) | null = null;
@@ -46,6 +65,16 @@ export function getClaudeResultText(): string { return claudeResultText; }
 export function getClaudeResultCost(): number { return claudeResultCost; }
 export function getClaudeResultTurns(): number { return claudeResultTurns; }
 export function getClaudeAccumulatedText(): string { return claudeAccumulatedText; }
+export function getClaudeRateLimited(): number { return claudeRateLimited; }
+export function getClaudeRateLimitResetsAt(): number { return claudeRateLimitResetsAt; }
+export function getClaudeVersion(): string { return claudeVersion; }
+export function getClaudePermMode(): string { return claudePermMode; }
+export function getClaudeLastToolId(): string { return claudeLastToolId; }
+export function getClaudeLastToolName(): string { return claudeLastToolName; }
+export function getClaudeLastStopReason(): string { return claudeLastStopReason; }
+export function getClaudeDurationMs(): number { return claudeDurationMs; }
+export function getClaudeInputTokens(): number { return claudeInputTokens; }
+export function getClaudeOutputTokens(): number { return claudeOutputTokens; }
 
 export function setClaudeCallbacks(
   onTextDelta: (text: string) => void,
@@ -69,6 +98,16 @@ export function resetClaudeState(): void {
   claudeResultCost = -1;
   claudeResultTurns = -1;
   claudeAccumulatedText = '';
+  claudeRateLimited = 0;
+  claudeRateLimitResetsAt = 0;
+  claudeVersion = '';
+  claudePermMode = '';
+  claudeLastToolId = '';
+  claudeLastToolName = '';
+  claudeLastStopReason = '';
+  claudeDurationMs = 0;
+  claudeInputTokens = 0;
+  claudeOutputTokens = 0;
 }
 
 export function setClaudeStarting(): void {
@@ -108,6 +147,20 @@ export function processClaudeLine(line: string): void {
     return;
   }
 
+  // Rate limit event
+  if (isRateLimitEvent(evtType) > 0) {
+    const rlStatus = parseRateLimitStatus(line);
+    // "rate_limited" — r(0)a(1)t(2)e(3)_(4)l(5)i(6)m(7)
+    if (rlStatus.length > 10 && rlStatus.charCodeAt(5) === 108) {
+      claudeRateLimited = 1;
+      claudeRateLimitResetsAt = parseRateLimitResetsAt(line);
+      claudeStatus = 6;
+    } else {
+      claudeRateLimited = 0;
+    }
+    return;
+  }
+
   // Assistant event — text or tool_use
   if (isAssistantEvent(evtType) > 0) {
     // Check for tool_use blocks first
@@ -115,6 +168,7 @@ export function processClaudeLine(line: string): void {
       const toolName = parseNDJSONToolUse(line);
       if (toolName.length > 0) {
         claudeStatus = 3; // TOOL_RUNNING
+        claudeLastToolName = toolName;
         if (onToolActivityCb) onToolActivityCb(toolName, 'running');
       }
     }
