@@ -2,6 +2,24 @@
  * SSE / JSON parsing utilities — Perry-safe (charCodeAt, no JSON.parse).
  */
 
+function hexVal(ch: number): number {
+  if (ch >= 48 && ch <= 57) return ch - 48;
+  if (ch >= 65 && ch <= 70) return ch - 55;
+  if (ch >= 97 && ch <= 102) return ch - 87;
+  return -1;
+}
+
+function decodeUHex(s: string, pos: number): string {
+  if (pos + 5 >= s.length) return ' ';
+  const a = hexVal(s.charCodeAt(pos + 2));
+  const b = hexVal(s.charCodeAt(pos + 3));
+  const c = hexVal(s.charCodeAt(pos + 4));
+  const d = hexVal(s.charCodeAt(pos + 5));
+  if (a < 0 || b < 0 || c < 0 || d < 0) return ' ';
+  const code = (a << 12) | (b << 8) | (c << 4) | d;
+  return String.fromCharCode(code);
+}
+
 /** Extract a JSON string value for a given key. */
 export function extractJsonString(json: string, key: string): string {
   let pattern = '"';
@@ -69,8 +87,8 @@ export function extractJsonString(json: string, key: string): string {
           else if (next === 34) { result += '"'; }
           else if (next === 92) { result += '\\'; }
           else if (next === 117) {
+            result += decodeUHex(json, afterKey - 1);
             afterKey += 4;
-            result += ' ';
           } else {
             result += json.slice(afterKey, afterKey + 1);
           }
@@ -104,6 +122,13 @@ export function jsonEscape(s: string): string {
       result += '\\r';
     } else if (ch === 9) {
       result += '\\t';
+    } else if (ch < 32) {
+      // Control characters: emit \u00XX
+      result += '\\u00';
+      const hi = (ch >> 4) & 0xF;
+      const lo = ch & 0xF;
+      if (hi < 10) { result += String.fromCharCode(48 + hi); } else { result += String.fromCharCode(87 + hi); }
+      if (lo < 10) { result += String.fromCharCode(48 + lo); } else { result += String.fromCharCode(87 + lo); }
     } else {
       result += s.slice(i, i + 1);
     }

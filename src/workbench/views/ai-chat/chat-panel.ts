@@ -195,6 +195,31 @@ let isRelayHostMode: number = 0;
 function _noopRelay(p: string): void {}
 
 // ---------------------------------------------------------------------------
+// Unicode decode helpers (inline — cross-module function calls from getters are unreliable in Perry)
+// ---------------------------------------------------------------------------
+
+function hexValCP(ch: number): number {
+  if (ch >= 48 && ch <= 57) return ch - 48;
+  if (ch >= 65 && ch <= 70) return ch - 55;
+  if (ch >= 97 && ch <= 102) return ch - 87;
+  return -1;
+}
+
+function decodeUHexCP(s: string, pos: number): string {
+  if (pos + 5 >= s.length) return ' ';
+  const a = hexValCP(s.charCodeAt(pos + 2));
+  const b = hexValCP(s.charCodeAt(pos + 3));
+  const c = hexValCP(s.charCodeAt(pos + 4));
+  const d = hexValCP(s.charCodeAt(pos + 5));
+  if (a < 0 || b < 0 || c < 0 || d < 0) return ' ';
+  const code = (a << 12) | (b << 8) | (c << 4) | d;
+  return String.fromCharCode(code);
+}
+
+// Title stream guard
+let titleStreamActive: number = 0;
+
+// ---------------------------------------------------------------------------
 // Public setters (called from render.ts)
 // ---------------------------------------------------------------------------
 
@@ -421,6 +446,7 @@ function inlineExtractRelayField(json: string, keyWithColon: string): string {
         else if (next === 114) { result += '\r'; }
         else if (next === 34) { result += '"'; }
         else if (next === 92) { result += '\\'; }
+        else if (next === 117) { result += decodeUHexCP(json, pos - 1); pos += 4; }
         else { result += json.slice(pos, pos + 1); }
       }
     } else if (ch === 34) {
@@ -772,7 +798,7 @@ function inlineExtractText(): void {
             else if (next === 116) { result += '\t'; }
             else if (next === 34) { result += '"'; }
             else if (next === 92) { result += '\\'; }
-            else if (next === 117) { j += 4; result += ' '; } // \uXXXX
+            else if (next === 117) { result += decodeUHexCP(sseDataPayload, j - 1); j += 4; } // \uXXXX
             else { result += sseDataPayload.slice(j, j + 1); }
           }
         } else if (ch === 34) { // closing "
@@ -861,7 +887,7 @@ function inlineExtractOpenAIContent(): void {
             else if (next === 116) { result += '\t'; }
             else if (next === 34) { result += '"'; }
             else if (next === 92) { result += '\\'; }
-            else if (next === 117) { j += 4; result += ' '; }
+            else if (next === 117) { result += decodeUHexCP(sseDataPayload, j - 1); j += 4; }
             else { result += sseDataPayload.slice(j, j + 1); }
           }
         } else if (ch === 34) {
@@ -943,7 +969,7 @@ function processOllamaLine(): void {
             else if (next === 116) { result += '\t'; }
             else if (next === 34) { result += '"'; }
             else if (next === 92) { result += '\\'; }
-            else if (next === 117) { j += 4; result += ' '; }
+            else if (next === 117) { result += decodeUHexCP(line, j - 1); j += 4; }
             else { result += line.slice(j, j + 1); }
           }
         } else if (ch === 34) {
@@ -1012,7 +1038,7 @@ function updateStreamingDisplay(): void {
   const timeDiff = now - streamLastRenderTime;
   let shouldRebuild: number = 0;
   if (streamLastRenderLen < 1) shouldRebuild = 1;
-  if (timeDiff > 300 && lenDiff > 20) shouldRebuild = 1;
+  if (timeDiff > 300 || lenDiff > 20) shouldRebuild = 1;
 
   if (shouldRebuild > 0) {
     widgetClearChildren(streamContainer);
@@ -1076,11 +1102,13 @@ let titleStreamTimer: number = 0;
 let titleAccumulated = '';
 
 function requestTitleGeneration(): void {
+  if (titleStreamActive > 0) return;
+  titleStreamActive = 1;
   // Get the first user message for context
   const fp = getCurrentMsgFilePath();
   let fileContent = '';
   try { fileContent = readFileSync(fp); } catch (e) {}
-  if (fileContent.length < 2) return;
+  if (fileContent.length < 2) { titleStreamActive = 0; return; }
 
   // Extract first user message (line 1 = 'U', line 2 = content)
   let firstLine = 1;
@@ -1097,7 +1125,7 @@ function requestTitleGeneration(): void {
       if (lineIdx > 2) break;
     }
   }
-  if (userMsg.length < 3) return;
+  if (userMsg.length < 3) { titleStreamActive = 0; return; }
 
   // Truncate to avoid large requests
   if (userMsg.length > 200) userMsg = userMsg.slice(0, 200);
@@ -1105,7 +1133,7 @@ function requestTitleGeneration(): void {
   // Build a small request to generate a title
   const providerIdx = getProviderIndex(selectedModelId);
   const apiKey = loadProviderApiKey(providerIdx);
-  if (apiKey.length < 3 && providerIdx !== 5) return;
+  if (apiKey.length < 3 && providerIdx !== 5) { titleStreamActive = 0; return; }
 
   let prompt = 'Generate a concise 3-8 word title summarizing this message. Return ONLY the title, nothing else.\n\nMessage: ';
   prompt += userMsg;
@@ -1130,6 +1158,7 @@ function requestTitleGeneration(): void {
     body += '"}]}';
   } else {
     // Skip for Google/Ollama — use heuristic title
+    titleStreamActive = 0;
     return;
   }
 
@@ -1150,6 +1179,7 @@ function pollTitleStream(): void {
     if (titleStreamTimer > 0) { clearInterval(titleStreamTimer); titleStreamTimer = 0; }
     streamClose(titleStreamHandle);
     titleStreamHandle = 0;
+    titleStreamActive = 0;
     if (titleAccumulated.length > 2) {
       // Clean up: remove quotes, trim
       let title = titleAccumulated;
@@ -1962,7 +1992,7 @@ function inlineExtractValue(json: string, keyWithQuotes: string): string {
         else if (next === 114) { result += '\r'; }
         else if (next === 34) { result += '"'; }
         else if (next === 92) { result += '\\'; }
-        else if (next === 117) { pos += 4; result += ' '; }
+        else if (next === 117) { result += decodeUHexCP(json, pos - 1); pos += 4; }
         else { result += json.slice(pos, pos + 1); }
       }
     } else if (ch === 34) {

@@ -217,6 +217,14 @@ export function startClaudeSession(prompt: string, workspaceRoot: string, resume
   const result = spawnBackground('/bin/sh', ['-c', cmd], '/dev/null');
   claudePid = result.pid;
   claudeHandleId = result.handleId;
+
+  if (claudePid < 1) {
+    setClaudeError('Failed to spawn Claude Code process');
+    claudeAlive = 0;
+    claudeHandleId = 0;
+    return 0;
+  }
+
   claudeAlive = 1;
   claudeLastOffset = 0;
 
@@ -224,7 +232,7 @@ export function startClaudeSession(prompt: string, workspaceRoot: string, resume
   // Do NOT start setInterval here — Perry setInterval from cross-module calls may not fire.
 
   // Clean up prompt file after a delay (give process time to read it)
-  setTimeout(() => { cleanupPromptFile(promptFile); }, 2000);
+  setTimeout(() => { cleanupPromptFile(promptFile); }, 10000);
 
   return claudePid;
 }

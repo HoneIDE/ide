@@ -7,6 +7,70 @@ import { execSync } from 'child_process';
 import { jsonEscape } from './sse-parser';
 import { getTempDir, canRunShellCommands } from '../../paths';
 
+// ---------------------------------------------------------------------------
+// Path safety helpers
+// ---------------------------------------------------------------------------
+
+function normalizePath(p: string): string {
+  const parts: string[] = [];
+  let start = 0;
+  for (let i = 0; i <= p.length; i++) {
+    if (i === p.length || p.charCodeAt(i) === 47) {
+      const seg = p.slice(start, i);
+      if (seg === '..') {
+        if (parts.length > 0) parts.pop();
+      } else if (seg !== '.' && seg !== '') {
+        parts.push(seg);
+      }
+      start = i + 1;
+    }
+  }
+  let result = '';
+  for (let i = 0; i < parts.length; i++) {
+    result += '/' + parts[i];
+  }
+  return result === '' ? '/' : result;
+}
+
+function isPathSafe(filePath: string, workspaceRoot: string): number {
+  const norm = normalizePath(filePath);
+  if (norm.length < workspaceRoot.length) return 0;
+  if (norm.slice(0, workspaceRoot.length) !== workspaceRoot) return 0;
+  if (norm.length > workspaceRoot.length && norm.charCodeAt(workspaceRoot.length) !== 47) return 0;
+  return 1;
+}
+
+function shellEscapePath(p: string): string {
+  let out = "'";
+  for (let i = 0; i < p.length; i++) {
+    if (p.charCodeAt(i) === 39) {
+      out += "'\\''";
+    } else {
+      out += p.slice(i, i + 1);
+    }
+  }
+  out += "'";
+  return out;
+}
+
+function hexValTool(ch: number): number {
+  if (ch >= 48 && ch <= 57) return ch - 48;
+  if (ch >= 65 && ch <= 70) return ch - 55;
+  if (ch >= 97 && ch <= 102) return ch - 87;
+  return -1;
+}
+
+function decodeUHexTool(s: string, pos: number): string {
+  if (pos + 5 >= s.length) return ' ';
+  const a = hexValTool(s.charCodeAt(pos + 2));
+  const b = hexValTool(s.charCodeAt(pos + 3));
+  const c = hexValTool(s.charCodeAt(pos + 4));
+  const d = hexValTool(s.charCodeAt(pos + 5));
+  if (a < 0 || b < 0 || c < 0 || d < 0) return ' ';
+  const code = (a << 12) | (b << 8) | (c << 4) | d;
+  return String.fromCharCode(code);
+}
+
 // Module-level state
 let toolWorkspaceRoot = '';
 
@@ -20,6 +84,9 @@ export function getToolWorkspaceRoot(): string {
 
 /** Read a file, capped at 10000 chars. */
 function executeToolFileRead(filePath: string): string {
+  if (toolWorkspaceRoot.length > 0 && isPathSafe(filePath, toolWorkspaceRoot) < 1) {
+    return 'Error: Path is outside the workspace';
+  }
   try {
     const content = readFileSync(filePath);
     if (content.length > 10000) {
@@ -33,6 +100,9 @@ function executeToolFileRead(filePath: string): string {
 
 /** Edit a file: find oldText and replace with newText. */
 function executeToolFileEdit(filePath: string, oldText: string, newText: string): string {
+  if (toolWorkspaceRoot.length > 0 && isPathSafe(filePath, toolWorkspaceRoot) < 1) {
+    return 'Error: Path is outside the workspace';
+  }
   try {
     const content = readFileSync(filePath);
     // Find oldText using charCodeAt
@@ -65,6 +135,9 @@ function executeToolFileEdit(filePath: string, oldText: string, newText: string)
 
 /** Create a new file. */
 function executeToolFileCreate(filePath: string, content: string): string {
+  if (toolWorkspaceRoot.length > 0 && isPathSafe(filePath, toolWorkspaceRoot) < 1) {
+    return 'Error: Path is outside the workspace';
+  }
   try {
     writeFileSync(filePath, content);
     return 'File created successfully';
@@ -73,25 +146,9 @@ function executeToolFileCreate(filePath: string, content: string): string {
   }
 }
 
-/** Run a terminal command, capped at 4000 chars output. */
+/** Disabled — arbitrary command execution requires sandboxing. */
 function executeToolTerminalRun(command: string, cwd: string): string {
-  let dir = cwd;
-  if (dir.length < 1) dir = toolWorkspaceRoot;
-  if (dir.length < 1) dir = getTempDir();
-  try {
-    let cmd = 'cd "';
-    cmd += dir;
-    cmd += '" && ';
-    cmd += command;
-    cmd += ' 2>&1';
-    const output = execSync(cmd) as unknown as string;
-    if (output.length > 4000) {
-      return output.slice(0, 4000) + '\n... (truncated)';
-    }
-    return output;
-  } catch (e: any) {
-    return 'Error: Command failed';
-  }
+  return 'Error: terminal_run is disabled for security. Use specific tools (file_read, file_edit, search, git_status, git_diff, list_dir) instead.';
 }
 
 // Search state — module-level for Perry (no nested function closures)
@@ -160,6 +217,9 @@ function executeToolSearch(query: string, searchRoot: string): string {
   let root = searchRoot;
   if (root.length < 1) root = toolWorkspaceRoot;
   if (root.length < 1) return 'Error: No workspace root set';
+  if (toolWorkspaceRoot.length > 0 && isPathSafe(root, toolWorkspaceRoot) < 1) {
+    return 'Error: Path is outside the workspace';
+  }
 
   searchResults = '';
   searchResultCount = 0;
@@ -173,9 +233,9 @@ function executeToolSearch(query: string, searchRoot: string): string {
 function executeToolGitStatus(): string {
   if (toolWorkspaceRoot.length < 1) return 'Error: No workspace root';
   try {
-    let cmd = 'cd "';
-    cmd += toolWorkspaceRoot;
-    cmd += '" && git status --short 2>&1';
+    let cmd = 'cd ';
+    cmd += shellEscapePath(toolWorkspaceRoot);
+    cmd += ' && git status --short 2>&1';
     const output = execSync(cmd) as unknown as string;
     if (output.length > 4000) return output.slice(0, 4000);
     return output;
@@ -187,15 +247,17 @@ function executeToolGitStatus(): string {
 /** Git diff, optionally staged, optionally for a specific path. */
 function executeToolGitDiff(staged: number, filePath: string): string {
   if (toolWorkspaceRoot.length < 1) return 'Error: No workspace root';
+  if (filePath.length > 0 && isPathSafe(filePath, toolWorkspaceRoot) < 1) {
+    return 'Error: Path is outside the workspace';
+  }
   try {
-    let cmd = 'cd "';
-    cmd += toolWorkspaceRoot;
-    cmd += '" && git diff';
+    let cmd = 'cd ';
+    cmd += shellEscapePath(toolWorkspaceRoot);
+    cmd += ' && git diff';
     if (staged > 0) cmd += ' --cached';
     if (filePath.length > 0) {
-      cmd += ' -- "';
-      cmd += filePath;
-      cmd += '"';
+      cmd += ' -- ';
+      cmd += shellEscapePath(filePath);
     }
     cmd += ' 2>&1';
     const output = execSync(cmd) as unknown as string;
@@ -210,10 +272,13 @@ function executeToolGitDiff(staged: number, filePath: string): string {
 function executeToolListDir(dirPath: string): string {
   let dir = dirPath;
   if (dir.length < 1) dir = toolWorkspaceRoot;
+  if (toolWorkspaceRoot.length > 0 && isPathSafe(dir, toolWorkspaceRoot) < 1) {
+    return 'Error: Path is outside the workspace';
+  }
   try {
-    let cmd = 'ls -la "';
-    cmd += dir;
-    cmd += '" 2>&1';
+    let cmd = 'ls -la ';
+    cmd += shellEscapePath(dir);
+    cmd += ' 2>&1';
     const output = execSync(cmd) as unknown as string;
     if (output.length > 4000) return output.slice(0, 4000);
     return output;
@@ -348,6 +413,7 @@ function extractToolArg(argsJson: string, key: string): string {
           else if (next === 114) { result += '\r'; }
           else if (next === 34) { result += '"'; }
           else if (next === 92) { result += '\\'; }
+          else if (next === 117) { result += decodeUHexTool(argsJson, afterKey - 1); afterKey += 4; }
           else { result += argsJson.slice(afterKey, afterKey + 1); }
         }
       } else if (ch === 34) { break; }
