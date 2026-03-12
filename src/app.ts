@@ -65,7 +65,11 @@ if (_layoutNum === 1) _layoutMode = 'split';
 setupNativeMenuBar();
 
 // Check if first-run setup is needed
-const _needsSetup = isSetupComplete();
+// On mobile (compact/split), skip setup if settings loading is unreliable
+let _needsSetup = isSetupComplete();
+if (_layoutNum === 0 || _layoutNum === 1) {
+  _needsSetup = 1; // Skip setup on iOS — settings path resolution is unreliable
+}
 
 let body: unknown;
 

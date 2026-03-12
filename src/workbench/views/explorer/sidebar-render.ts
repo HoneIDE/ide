@@ -104,11 +104,14 @@ function collapseAllDirs(): void {
   setTimeout(() => { refreshSidebar(); }, 0);
 }
 
-// IDs >= 900000000 are file click IDs — subtract 900000000 to get file index
+// File click IDs use offset 9e15 (above any pathId hash, ~7e12 max).
+// Dir IDs are always < 1e13 from pathId hash.
+const FILE_ID_OFFSET = 9000000000000000;
+
 function onDirToggle(id: number): void {
-  if (id >= 900000000) {
+  if (id >= FILE_ID_OFFSET) {
     // This is a file click — decode the index
-    const fIdx = id - 900000000;
+    const fIdx = id - FILE_ID_OFFSET;
     onFileClick(fIdx);
     return;
   }
@@ -512,8 +515,8 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     const row = HStackWithInsets(4, 0, indentPx, 0, 4);
     widgetSetHeight(row, 22);
 
-    // Encode file index as 900000000 + idx so onDirToggle can distinguish file clicks
-    const fileId = 900000000 + idx;
+    // Encode file index with large offset so onDirToggle can distinguish file clicks
+    const fileId = FILE_ID_OFFSET + idx;
     const nameBtn = Button(displayName, () => { onDirToggle(fileId); });
     buttonSetBordered(nameBtn, 0);
     textSetFontSize(nameBtn, 13);

@@ -44,6 +44,10 @@ let searchResultCountLabel: unknown = null;
 let searchResultsContainer: unknown = null;
 let searchPanelReady: number = 0;
 
+// Debounce: search pending flag + generation counter
+let searchPending: number = 0;
+let searchGeneration: number = 0;
+
 // Stored colors for result rendering
 let panelColors: ResolvedUIColors = null as any;
 let panelContainer: unknown = null;
@@ -115,6 +119,8 @@ function searchFile(filePath: string): void {
   if (srCount >= 500) return;
   let content = '';
   try { content = readFileSync(filePath); } catch (e) { return; }
+  // Skip very large files (> 256KB) to avoid memory pressure
+  if (content.length > 262144) return;
   let lineStart = 0;
   let lineNum = 1;
   for (let i = 0; i <= content.length; i++) {
@@ -133,6 +139,32 @@ function searchFile(filePath: string): void {
   }
 }
 
+/** Check if a directory name should be skipped during search. */
+function shouldSkipDir(name: string): number {
+  // Skip common large/irrelevant directories
+  if (name === 'node_modules') return 1;
+  if (name === 'target') return 1;
+  if (name === 'dist') return 1;
+  if (name === 'build') return 1;
+  if (name === '__pycache__') return 1;
+  if (name === 'vendor') return 1;
+  if (name === 'android-build') return 1;
+  if (name === 'test-runs') return 1;
+  if (name === 'coverage') return 1;
+  if (name === '.git') return 1;
+  // Skip .app bundles (macOS)
+  const len = name.length;
+  if (len > 4) {
+    if (name.charCodeAt(len - 4) === 46 &&
+        name.charCodeAt(len - 3) === 97 &&
+        name.charCodeAt(len - 2) === 112 &&
+        name.charCodeAt(len - 1) === 112) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
 /** Recursively search a directory. */
 function searchDir(dirPath: string, depth: number): void {
   if (depth > 9) return;
@@ -145,7 +177,9 @@ function searchDir(dirPath: string, depth: number): void {
     if (srCount >= 500) return;
     const fullPath = join(dirPath, name);
     if (isDirectory(fullPath)) {
-      searchDir(fullPath, depth + 1);
+      if (shouldSkipDir(name) < 1) {
+        searchDir(fullPath, depth + 1);
+      }
     } else if (isTextFile(name)) {
       searchFile(fullPath);
     }
@@ -241,6 +275,17 @@ function onSearchResultClick(filePath: string): void {
 
 function onSearchInput(text: string): void {
   searchQuery = text;
+  // Debounce: schedule search after 300ms of no input
+  searchGeneration = searchGeneration + 1;
+  const gen = searchGeneration;
+  searchPending = 1;
+  setTimeout(() => { debouncedSearch(gen); }, 300);
+}
+
+function debouncedSearch(gen: number): void {
+  if (gen !== searchGeneration) return; // newer input superseded this
+  if (searchPending < 1) return;
+  searchPending = 0;
   performSearch();
 }
 
