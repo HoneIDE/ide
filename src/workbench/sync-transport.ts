@@ -27,6 +27,7 @@ let keepAliveTimerId: number = 0;
 let lastPingSent: number = 0;
 let relayToken = '';
 let relayLastSeq: number = 0;
+let maxMsgsPerPoll: number = 50; // default high for desktop; lower for Android
 
 // Event callbacks
 let _onRelayConnected: () => void = _noopVoid;
@@ -45,6 +46,10 @@ export function setRelayToken(token: string): void {
 
 export function setRelayLastSeq(seq: number): void {
   relayLastSeq = seq;
+}
+
+export function setMaxMessagesPerPoll(n: number): void {
+  maxMsgsPerPoll = n;
 }
 
 export function connectToRelay(url: string, roomId: string, deviceId: string): void {
@@ -233,9 +238,10 @@ function pollRelay(): void {
       return;
     }
 
-    // Poll for incoming messages
+    // Poll for incoming messages (capped to avoid UI thread starvation on Android)
     const count = messageCount(wsHandle);
-    for (let i = 0; i < count; i++) {
+    const limit = count < maxMsgsPerPoll ? count : maxMsgsPerPoll;
+    for (let i = 0; i < limit; i++) {
       const msg = receive(wsHandle);
       if (msg.length > 0) {
         _onRelayMessage(msg);

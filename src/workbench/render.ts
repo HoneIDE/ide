@@ -113,7 +113,7 @@ import {
   connectToRelay, disconnectFromRelay, sendToRelay,
   setOnRelayConnected, setOnRelayDisconnected,
   setOnRelayMessage, isRelayConnected, setOnTransportDebug,
-  setRelayToken, setRelayLastSeq,
+  setRelayToken, setRelayLastSeq, setMaxMessagesPerPoll,
 } from './sync-transport';
 
 // Compile-time platform ID injected by Perry codegen:
@@ -133,6 +133,7 @@ let _debugInfo = '';
 export function setDebugInfo(info: string): void {
   _debugInfo = info;
 }
+
 
 // ---------------------------------------------------------------------------
 // Data
@@ -1625,8 +1626,9 @@ let syncTreeEntries: Map<number, string> = new Map();
 
 function syncDebugLog(msg: string): void {
   try {
-    // Use device-specific log file to avoid cross-process corruption
-    let logFile = '/tmp/hone-sync-';
+    // Use platform-safe temp dir + device-specific log file
+    let logFile = getTempDir();
+    logFile += '/hone-sync-';
     logFile += syncDeviceId.substring(0, 8);
     logFile += '.log';
     let prev = '';
@@ -1671,7 +1673,7 @@ function tryRestoreSyncSession(): void {
   let path = getAppDataDir();
   path += '/sync-session';
   try {
-    if (!existsSync(path)) return;
+    if (!existsSync(path)) { return; }
     const data = readFileSync(path);
     if (data.length < 3) return;
     // Parse: roomId\npartnerName\nrole\nlastSeq
@@ -1728,12 +1730,11 @@ function tryRestoreSyncSession(): void {
     // Reconnect to the same relay room
     connectToRelay(syncRelayUrl, roomId, syncDeviceId);
     addSyncDevice(partnerName, 'reconnecting');
-    setSyncStatusText('Reconnecting...');
     // After connecting, request fresh file tree (for guests)
     if (syncRestoredRole > 0) {
       setTimeout(() => { requestFileTreeAfterRestore(); }, 2000);
     }
-  } catch (e: any) {}
+  } catch (e: any) { syncDebugLog('restore: ERROR'); }
 }
 
 function requestFileTreeAfterRestore(): void {
@@ -1805,6 +1806,12 @@ function initSyncSystem(layoutMode: LayoutMode): void {
   setOnRelayMessage(onRelayMessageImpl);
   setOnTransportDebug(onTransportDebugImpl);
 
+  // Throttle sync message processing on mobile to prevent UI thread starvation
+  // __platform__: 1=iOS, 2=Android
+  if (__platform__ === 1 || __platform__ === 2) {
+    setMaxMessagesPerPoll(3);
+  }
+
   // Wire remote file click callback (for sync guest)
   setRemoteFileClickCallback(onRemoteFileClicked);
 
@@ -1854,6 +1861,8 @@ function initSyncSystem(layoutMode: LayoutMode): void {
 
   // Poll sync panel refresh every 5s
   setInterval(() => { refreshSyncPanelDeferred(); }, 5000);
+
+  // (debug ticker removed)
 }
 
 function autoConnectDebug(): void {
@@ -3560,14 +3569,16 @@ function handleFileContentResponse(payload: string): void {
   // Always cache the file content
   fileCacheSet(relPath, content);
 
-  // Update bulk sync progress
+  // Update bulk sync progress (throttle UI updates to every 5th file)
   if (bulkSyncDone < 1 && bulkSyncTotal > 0) {
     bulkSyncReceived = bulkSyncReceived + 1;
-    let progressMsg = 'Syncing: ';
-    progressMsg += String(bulkSyncReceived);
-    progressMsg += '/';
-    progressMsg += String(bulkSyncTotal);
-    setSyncStatusText(progressMsg);
+    if (bulkSyncReceived % 5 === 0 || bulkSyncReceived === bulkSyncTotal) {
+      let progressMsg = 'Syncing: ';
+      progressMsg += String(bulkSyncReceived);
+      progressMsg += '/';
+      progressMsg += String(bulkSyncTotal);
+      setSyncStatusText(progressMsg);
+    }
   }
 
   // Only display in editor if this was a user-requested file
