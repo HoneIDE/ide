@@ -13,6 +13,7 @@ import {
   getPlatformContext,
   onPlatformContextChange,
   getLayoutModeNum,
+  isWebPlatform,
   type PlatformContext,
   type LayoutMode,
 } from './platform';
@@ -69,6 +70,9 @@ setupNativeMenuBar();
 let _needsSetup = isSetupComplete();
 if (_layoutNum === 0 || _layoutNum === 1) {
   _needsSetup = 1; // Skip setup on iOS — settings path resolution is unreliable
+}
+if (isWebPlatform() > 0) {
+  _needsSetup = 1; // Skip setup on web — use sensible defaults
 }
 
 let body: unknown;

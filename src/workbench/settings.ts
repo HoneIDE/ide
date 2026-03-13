@@ -8,6 +8,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { getHomeDir, getAppDataDir } from './paths';
+import { isWebPlatform } from '../platform';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -185,6 +186,16 @@ const _listeners: SettingsChangeListener[] = [];
 export function initSettings(): void {
   if (_settingsLoaded > 0) return;
   _settingsLoaded = 1;
+
+  // Web defaults: dark mode, sync disabled, telemetry on, setup done
+  if (isWebPlatform() > 0) {
+    _settings_colorTheme = 'Hone Dark';
+    _settings_syncEnabled = 0;
+    _settings_telemetryEnabled = 1;
+    _settings_setupComplete = 1;
+    return;
+  }
+
   const path = getSettingsPath();
   let text = '';
   try {

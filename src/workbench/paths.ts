@@ -54,6 +54,12 @@ function trimNewline(s: string): string {
 export function getHomeDir(): string {
   if (_homeDir.length > 0) return _homeDir;
 
+  // Web — use virtual documents directory (localStorage-backed)
+  if (__platform__ === 5) {
+    _homeDir = '/documents';
+    return _homeDir;
+  }
+
   // iOS — use Documents directory (sandbox, no $HOME)
   if (__platform__ === 1) {
     try {
@@ -125,6 +131,15 @@ export function getTempDir(): string {
     return _tempDir;
   }
 
+  if (__platform__ === 5) {
+    // Web: use virtual tmp under documents
+    let dir = getHomeDir();
+    dir += '/tmp';
+    ensureDirExists(dir);
+    _tempDir = dir;
+    return _tempDir;
+  }
+
   _tempDir = '/tmp';
   return _tempDir;
 }
@@ -181,8 +196,8 @@ function ensureDirExists(dir: string): void {
  * - iOS/Android: falls back to home directory
  */
 export function getCwd(): string {
-  // iOS and Android don't have a meaningful cwd
-  if (__platform__ === 1 || __platform__ === 2) {
+  // iOS, Android, and Web don't have a meaningful cwd
+  if (__platform__ === 1 || __platform__ === 2 || __platform__ === 5) {
     return getHomeDir();
   }
 

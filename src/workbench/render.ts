@@ -53,7 +53,7 @@ import { join } from 'path';
 import { spawnBackground } from 'child_process';
 import { execSync } from 'child_process';
 import { getTempDir, getCwd, getHomeDir, getAppDataDir } from './paths';
-import { getPlatformContext } from '../platform';
+import { getPlatformContext, isWebPlatform } from '../platform';
 
 import { registerBuiltinCommands, registerCommand } from '../commands';
 
@@ -94,7 +94,10 @@ import {
   updateStatusBarLanguage as updateStatusBarLanguageImpl,
   pollCursorPosition as pollCursorPositionImpl,
   recolorStatusBar, getStatusBarWidget,
+  showUpdateIndicator, setUpdateBtnClickHandler,
 } from './views/status-bar/status-bar';
+import { initUpdateChecker, setOnUpdateAvailable, getLatestVersion, isUpdateAvailable, checkForUpdatesManual } from './views/update/update-checker';
+import { renderUpdateTab, resetUpdateTab } from './views/update/update-tab';
 // Extensions panel hidden for now — no runtime extension system yet
 import { renderChatPanel, focusChatInput, getChatInputHandle, setChatWorkspaceRoot, setChatFilePathGetter, setChatFileContentGetter, setChatRemoteGuest, setChatRelaySendFn, setChatRelayForwardFn, startClaudeForRelay, handleClaudeRelayLine, handleClaudeRelayEvent } from './views/ai-chat/chat-panel';
 import { renderTerminalPanel, setTerminalCwd, destroyTerminalPanel, setTerminalCloseCallback, setTerminalProblemsFileOpener, applyTerminalThemeColors } from './views/terminal/terminal-panel';
@@ -302,6 +305,7 @@ function updateBreadcrumb(): void {
 
 export function toggleTerminalAction(): void {
   if (!terminalArea) return;
+  if (isWebPlatform() > 0) return;
   if (terminalVisible > 0) {
     terminalVisible = 0;
     widgetSetHidden(terminalArea, 1);
@@ -751,6 +755,10 @@ let activeDiffEditors: unknown = null;
 let activeSettingsWidget: unknown = null;
 let settingsTabCreated: number = 0;
 
+// Module-level ref for update tab widget in editorPane
+let activeUpdateWidget: unknown = null;
+let updateTabCreated: number = 0;
+
 /** Show the diff view for a file. Adds diff widgets alongside editor. */
 function showDiffForFile(filePath: string, relPath: string): void {
   if (!editorPaneWidget) return;
@@ -814,17 +822,46 @@ function hideSettingsInEditorPane(): void {
   if (editorWidget) widgetSetHidden(editorWidget, 0);
 }
 
+/** Show the update tab in the editor pane. */
+function showUpdateInEditorPane(): void {
+  if (!editorPaneWidget) return;
+  if (activeDiffEditors) hideDiffView();
+  if (activeSettingsWidget) hideSettingsInEditorPane();
+  if (editorWidget) widgetSetHidden(editorWidget, 1);
+  if (activeUpdateWidget) {
+    widgetSetHidden(activeUpdateWidget, 0);
+    return;
+  }
+  const updateCtr = VStack(0, []);
+  widgetSetHugging(updateCtr, 1);
+  renderUpdateTab(updateCtr);
+  widgetAddChild(editorPaneWidget, updateCtr);
+  activeUpdateWidget = updateCtr;
+}
+
+/** Hide the update tab from the editor pane. */
+function hideUpdateInEditorPane(): void {
+  if (!activeUpdateWidget) return;
+  widgetSetHidden(activeUpdateWidget, 1);
+  if (editorWidget) widgetSetHidden(editorWidget, 0);
+}
+
 function displayFileContent(filePath: string): void {
-  // Virtual paths (__settings__, __welcome__) — don't read file
+  // Virtual paths (__settings__, __update__, __welcome__) — don't read file
   if (filePath.length > 2 && filePath.charCodeAt(0) === 95 && filePath.charCodeAt(1) === 95) {
     // __settings__ (length 12)
     if (filePath.length === 12 && filePath.charCodeAt(2) === 115) {
       showSettingsInEditorPane();
     }
+    // __update__ (length 10, charCodeAt(2) === 117 'u')
+    if (filePath.length === 10 && filePath.charCodeAt(2) === 117) {
+      showUpdateInEditorPane();
+    }
     return;
   }
-  // Switching away from settings — hide it
+  // Switching away from virtual tabs — hide them
   if (activeSettingsWidget) hideSettingsInEditorPane();
+  if (activeUpdateWidget) hideUpdateInEditorPane();
   currentEditorFilePath = filePath;
   setSidebarCurrentEditorPath(filePath);
   updateBreadcrumb();
@@ -1019,9 +1056,14 @@ function renderActivityBarDesktop(): unknown {
   activityIndicators = [];
 
   // Icons: 0=Files, 1=Search, 2=Git, 3=Sync, 4=AI Chat
+  // On web: skip Git (idx 2) — execSync not available
   const icons = ['doc.on.doc', 'magnifyingglass', 'arrow.triangle.branch', 'arrow.triangle.2.circlepath', 'sparkles'];
+  const _isWeb = isWebPlatform();
 
   for (let i = 0; i < 5; i++) {
+    // Skip git panel on web
+    if (_isWeb > 0 && i === 2) continue;
+
     const idx = i;
     const btn = Button('', () => { onActivityClick(idx); });
     buttonSetBordered(btn, 0);
@@ -1482,6 +1524,43 @@ function activateSettingsTab(): void {
       return;
     }
   }
+}
+
+/** Open the Update tab in the editor pane. */
+export function openUpdateAction(): void {
+  setTimeout(() => { openUpdateDeferred(); }, 0);
+}
+
+function openUpdateDeferred(): void {
+  if (updateTabCreated < 1) {
+    openTab('__update__', 'Update');
+    updateTabCreated = 1;
+  } else {
+    activateUpdateTab();
+  }
+  showUpdateInEditorPane();
+}
+
+function activateUpdateTab(): void {
+  // __update__ (length 10, starts with __)
+  for (let i = 0; i < getOpenTabCount(); i++) {
+    const p = getOpenTabPath(i);
+    if (p.length === 10 && p.charCodeAt(0) === 95 && p.charCodeAt(2) === 117) {
+      setActiveTabByIndex(i);
+      return;
+    }
+  }
+}
+
+/** Called when update checker finds a new version. */
+function onUpdateFound(): void {
+  const ver = getLatestVersion();
+  showUpdateIndicator(ver);
+}
+
+/** Manual check for updates — called from menu. */
+export function checkForUpdatesAction(): void {
+  checkForUpdatesManual();
 }
 
 // Listen for settings changes — detect theme toggle and apply live
@@ -3743,6 +3822,11 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   // Initialize anonymous telemetry (opt-in, privacy-first)
   initTelemetry();
 
+  // Initialize auto-update checker (desktop only)
+  setOnUpdateAvailable(() => { onUpdateFound(); });
+  setUpdateBtnClickHandler(() => { openUpdateAction(); });
+  initUpdateChecker();
+
   // Initialize git state for status bar
   refreshGitState();
   updateStatusBarBranch();
@@ -3862,21 +3946,23 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   // Platform context for responsive sizing
   const ctx = getPlatformContext();
 
-  // Terminal bottom panel
-  let termHeight = Math.floor(ctx.screen.height * 0.25);
-  if (termHeight < 150) termHeight = 150;
-  if (termHeight > 250) termHeight = 250;
+  // Terminal bottom panel (skip on web — no PTY available)
   const termPanel = VStack(0, []);
   setBg(termPanel, getEditorBackground());
-  widgetSetHeight(termPanel, termHeight);
-  widgetSetHugging(termPanel, 750);
-  setTerminalCloseCallback(toggleTerminalAction);
-  setTerminalProblemsFileOpener(openFileFromSearchPanel);
-  renderTerminalPanel(termPanel, null as any);
-  if (settings.terminalVisible === false) {
-    widgetSetHidden(termPanel, 1);
-  } else {
-    terminalVisible = 1;
+  widgetSetHidden(termPanel, 1);
+  if (isWebPlatform() < 1) {
+    let termHeight = Math.floor(ctx.screen.height * 0.25);
+    if (termHeight < 150) termHeight = 150;
+    if (termHeight > 250) termHeight = 250;
+    widgetSetHeight(termPanel, termHeight);
+    widgetSetHugging(termPanel, 750);
+    setTerminalCloseCallback(toggleTerminalAction);
+    setTerminalProblemsFileOpener(openFileFromSearchPanel);
+    renderTerminalPanel(termPanel, null as any);
+    if (settings.terminalVisible === true) {
+      widgetSetHidden(termPanel, 0);
+      terminalVisible = 1;
+    }
   }
   terminalArea = termPanel;
   termPanelWidget = termPanel;

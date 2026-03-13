@@ -145,6 +145,10 @@ export function detectScreen(): ScreenInfo {
     // iPhone default (393×852 = iPhone 15)
     return { width: 393, height: 852, scaleFactor: 3, orientation: 'portrait' };
   }
+  // Web fallback: use reasonable defaults if FFI somehow failed
+  if (__platform__ === 5) {
+    return { width: 1280, height: 720, scaleFactor: 1, orientation: 'landscape' };
+  }
   // Desktop fallback
   return { width: 1440, height: 900, scaleFactor: 2, orientation: 'landscape' };
 }
@@ -239,6 +243,12 @@ export function getDeviceClassNum(): number {
   return 2;
 }
 
+/** Returns true (1) if running on web platform. Safe to call from any module. */
+export function isWebPlatform(): number {
+  if (__platform__ === 5) return 1;
+  return 0;
+}
+
 export function getScreenWidth(): number {
   const ctx = getPlatformContext();
   return ctx.screen.width;
@@ -281,6 +291,13 @@ function notifyListeners(): void {
 }
 
 function installNativeListeners(): void {
+  // Web platform: listen for viewport resize and update context
+  if (__platform__ === 5) {
+    perry_on_layout_change(() => {
+      _current = buildContext();
+      notifyListeners();
+    });
+  }
   // perry_on_resize / perry_on_orientation_change FFI not available on Windows yet.
   // TODO: Implement via Win32 WM_SIZE / WM_DISPLAYCHANGE messages.
 }
