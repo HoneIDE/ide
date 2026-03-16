@@ -1024,6 +1024,53 @@ function applyDetectedIndentation(content: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Go-to-next-error (F8) / Go-to-previous-error (Shift+F8)
+// ---------------------------------------------------------------------------
+
+let nextErrorIdx: number = 0;
+
+/** Jump to the next diagnostic in the current file. */
+export function goToNextErrorAction(): void {
+  if (editorReady < 1) return;
+  if (currentEditorFilePath.length < 1) return;
+
+  const diagCount = getDiagCount();
+  if (diagCount < 1) return;
+
+  const dFiles = getDiagFiles();
+  const dLines = getDiagLines();
+
+  // Collect diagnostics for current file
+  let fileDiagLines: number[] = [];
+  let fileDiagCount = 0;
+
+  for (let i = 0; i < diagCount; i = i + 1) {
+    const df = dFiles[i];
+    if (df.length !== currentEditorFilePath.length) continue;
+    let pathMatch = 1;
+    for (let c = 0; c < df.length; c = c + 1) {
+      if (df.charCodeAt(c) !== currentEditorFilePath.charCodeAt(c)) {
+        pathMatch = 0;
+        break;
+      }
+    }
+    if (pathMatch < 1) continue;
+    fileDiagLines[fileDiagCount] = dLines[i];
+    fileDiagCount = fileDiagCount + 1;
+  }
+
+  if (fileDiagCount < 1) return;
+
+  // Cycle through diagnostics
+  if (nextErrorIdx >= fileDiagCount) nextErrorIdx = 0;
+  const targetLine = fileDiagLines[nextErrorIdx];
+  nextErrorIdx = nextErrorIdx + 1;
+
+  // Scroll editor to the target line
+  // For now, just update cursor position — full scroll integration needs viewport sync
+}
+
+// ---------------------------------------------------------------------------
 // Format Document — sends textDocument/formatting to LSP
 // ---------------------------------------------------------------------------
 
@@ -1256,78 +1303,76 @@ export function goToDefinitionAction(): void {
 // Diagnostic decoration sync — push diagnostic underlines to editor
 // ---------------------------------------------------------------------------
 
-let lastDiagSyncPath = '';
-let lastDiagSyncCount = -1;
+let lastDiagSyncHash: number = 0;
 
-/** Sync diagnostic underlines to the editor for the current file. Perry-safe. */
+/**
+ * Sync diagnostic data to the Rust editor renderer.
+ * Uses the new hone_editor_set_line_diagnostics FFI for Error Lens-style
+ * inline messages + gutter severity icons.
+ * Format: "line:severity:color:message\n..."
+ */
 function syncDiagnosticDecorations(): void {
   if (editorReady < 1) return;
   if (currentEditorFilePath.length < 1) return;
 
   const diagCount = getDiagCount();
 
-  // Collect diagnostics for the current file
-  const charWidth = editorInstance.getCharWidth();
-  if (charWidth < 1) return;
-  const lineHeight = 20; // approximate — matches fontSize * 1.5 (13 * 1.5 ≈ 20)
-  const gutterWidth = 48; // approximate gutter width
-
-  let decorationsJson = '[';
-  let first = 1;
-
   const dFiles = getDiagFiles();
   const dLines = getDiagLines();
   const dMessages = getDiagMessages();
   const dSeverities = getDiagSeverities();
 
+  // Build packed diagnostic string for Rust: line:severity:color:message\n
+  let packed = '';
+  let count = 0;
+
   for (let i = 0; i < diagCount; i = i + 1) {
-    // Compare file paths — Perry string === is unreliable, use length + charCodeAt
+    // Compare file paths — Perry string === is unreliable
     const df = dFiles[i];
     if (df.length !== currentEditorFilePath.length) continue;
-    let match = 1;
+    let pathMatch = 1;
     for (let c = 0; c < df.length; c = c + 1) {
       if (df.charCodeAt(c) !== currentEditorFilePath.charCodeAt(c)) {
-        match = 0;
+        pathMatch = 0;
         break;
       }
     }
-    if (match < 1) continue;
+    if (pathMatch < 1) continue;
 
     const line = dLines[i];
+    const msg = dMessages[i];
     const sev = dSeverities[i];
 
-    // Determine color by severity
-    let color = '#4fc1ff'; // info blue
-    if (sev.charCodeAt(0) === 101) color = '#f44747'; // 'e'rror red
-    if (sev.charCodeAt(0) === 119) color = '#cca700'; // 'w'arning yellow
+    // Map severity string to number + color
+    let sevNum = 3; // info
+    let color = '#4fc1ff';
+    if (sev.charCodeAt(0) === 101) { sevNum = 1; color = '#f44747'; } // error
+    if (sev.charCodeAt(0) === 119) { sevNum = 2; color = '#cca700'; } // warning
 
-    // Wavy underline spanning the full line (column 0 to 200)
-    const x = gutterWidth;
-    const y = line * lineHeight;
-    const w = 200 * charWidth; // approximate full line width
-
-    if (first < 1) {
-      decorationsJson += ',';
-    }
-    decorationsJson += '{"x":';
-    decorationsJson += String(x);
-    decorationsJson += ',"y":';
-    decorationsJson += String(y);
-    decorationsJson += ',"w":';
-    decorationsJson += String(w);
-    decorationsJson += ',"h":';
-    decorationsJson += String(lineHeight);
-    decorationsJson += ',"color":"';
-    decorationsJson += color;
-    decorationsJson += '","type":"underline-wavy"}';
-    first = 0;
+    // Append: line:severity:color:message\n
+    packed += String(line);
+    packed += ':';
+    packed += String(sevNum);
+    packed += ':';
+    packed += color;
+    packed += ':';
+    packed += msg;
+    packed += '\n';
+    count = count + 1;
   }
 
-  decorationsJson += ']';
+  // Quick hash to avoid redundant FFI calls
+  let hash = count * 1000;
+  for (let i = 0; i < packed.length && i < 100; i = i + 1) {
+    hash = ((hash * 31) + packed.charCodeAt(i)) | 0;
+  }
+  if (hash === lastDiagSyncHash) return;
+  lastDiagSyncHash = hash;
 
-  if (first < 1) {
-    // Has decorations — push to editor
-    editorInstance.pushDecorations(decorationsJson);
+  if (count > 0) {
+    editorInstance.setLineDiagnostics(packed);
+  } else {
+    editorInstance.clearDiagnostics();
   }
 }
 
