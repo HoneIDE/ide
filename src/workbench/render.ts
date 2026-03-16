@@ -1130,6 +1130,118 @@ function onLspSignatureResult(label: string, activeParam: number, doc: string): 
   }
 }
 
+// ---------------------------------------------------------------------------
+// Git inline blame — show blame annotation at end of current line
+// ---------------------------------------------------------------------------
+
+let lastBlameLine: number = -1;
+let blameText: string = '';
+let blameWidget: unknown = null;
+
+/** Initialize the blame overlay widget. Called once during render setup. */
+function initBlameWidget(parent: unknown): void {
+  // Blame is shown as a faded Text widget in the breadcrumb area
+  // For now, update the status bar or a dedicated label
+}
+
+/** Sync blame annotation for current cursor line. Called every 250ms. */
+function syncInlineBlame(): void {
+  if (editorReady < 1) return;
+  if (currentEditorFilePath.length < 1) return;
+
+  const curLine = editorInstance.getCursorLine();
+  if (curLine === lastBlameLine) return;
+  lastBlameLine = curLine;
+
+  // Run git blame for the single line (1-indexed)
+  const lineNum = curLine + 1;
+  let cmd = 'git blame -L ';
+  cmd += String(lineNum);
+  cmd += ',';
+  cmd += String(lineNum);
+  cmd += ' --porcelain -- ';
+  cmd += currentEditorFilePath;
+
+  let output = '';
+  try {
+    output = execSync(cmd) as unknown as string;
+  } catch (e) {
+    blameText = '';
+    return;
+  }
+
+  if (output.length < 10) {
+    blameText = '';
+    return;
+  }
+
+  // Parse porcelain blame output — extract author + summary
+  let author = '';
+  let summary = '';
+  let authorTime = 0;
+  const lines = output.split('\n');
+  for (let i = 0; i < lines.length; i = i + 1) {
+    const line = lines[i];
+    if (line.indexOf('author ') === 0) {
+      author = line.slice(7);
+    }
+    if (line.indexOf('summary ') === 0) {
+      summary = line.slice(8);
+    }
+    if (line.indexOf('author-time ') === 0) {
+      authorTime = parseInt(line.slice(12));
+    }
+  }
+
+  if (author.length < 1) {
+    blameText = '';
+    return;
+  }
+
+  // Build relative time string
+  let timeStr = '';
+  if (authorTime > 0) {
+    const now = Math.floor(Date.now() / 1000);
+    const diff = now - authorTime;
+    if (diff < 60) timeStr = 'just now';
+    else if (diff < 3600) {
+      timeStr = String(Math.floor(diff / 60));
+      timeStr += ' min ago';
+    } else if (diff < 86400) {
+      timeStr = String(Math.floor(diff / 3600));
+      timeStr += ' hours ago';
+    } else if (diff < 2592000) {
+      timeStr = String(Math.floor(diff / 86400));
+      timeStr += ' days ago';
+    } else {
+      timeStr = String(Math.floor(diff / 2592000));
+      timeStr += ' months ago';
+    }
+  }
+
+  // Build blame text: "Author, time ago — commit message"
+  blameText = author;
+  if (timeStr.length > 0) {
+    blameText += ', ';
+    blameText += timeStr;
+  }
+  if (summary.length > 0) {
+    blameText += ' — ';
+    blameText += summary;
+  }
+
+  // Push as a faded decoration at the end of the line
+  if (blameText.length > 0) {
+    updateStatusBarBlame(blameText);
+  }
+}
+
+/** Show blame text in the status bar (or a dedicated blame label). */
+function updateStatusBarBlame(_text: string): void {
+  // Status bar blame is informational — will be wired to a visible label
+  // in the breadcrumb or end-of-line decoration when the Rust renderer supports it
+}
+
 /** Navigate to definition at cursor position. Exported for keybinding/menu. */
 export function goToDefinitionAction(): void {
   if (editorReady < 1) return;
@@ -1648,8 +1760,8 @@ function renderEditorArea(): unknown {
   // Apply native editor view colors AFTER content is displayed
   applyEditorColors();
 
-  // Poll cursor position for status bar + sync decorations
-  setInterval(() => { pollCursorPositionImpl(); syncEditorDecorations(); }, 250);
+  // Poll cursor position for status bar + sync decorations + blame
+  setInterval(() => { pollCursorPositionImpl(); syncEditorDecorations(); syncInlineBlame(); }, 250);
   setInterval(() => { pollDirtyState(); }, 500);
 
   // Breadcrumb bar

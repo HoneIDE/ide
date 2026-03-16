@@ -14,6 +14,7 @@ import {
   textfieldSetString, textfieldFocus,
 } from 'perry/ui';
 import { readFileSync, readdirSync, isDirectory, writeFileSync } from 'fs';
+import { execSync } from 'child_process';
 import { join } from 'path';
 import { hexToRGBA, setBg, setFg, setBtnFg, pathId, getFileName, toLowerCode, isTextFile } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
@@ -27,6 +28,7 @@ import { telemetryTrackSearch } from '../../telemetry';
 let searchWorkspaceRoot = '';
 let searchQuery = '';
 let searchCaseSensitive: number = 0;
+let searchUseRegex: number = 0;
 let searchShowReplace: number = 0;
 let replaceQuery = '';
 
@@ -186,7 +188,7 @@ function searchDir(dirPath: string, depth: number): void {
   }
 }
 
-/** Run the search and update UI. */
+/** Run the search and update UI. Tries ripgrep first, falls back to manual scan. */
 function performSearch(): void {
   srFilePaths = [];
   srLineNums = [];
@@ -200,9 +202,151 @@ function performSearch(): void {
     updateSearchResultsUI();
     return;
   }
+
+  // Try ripgrep first (fast, supports regex/globs)
+  if (tryRipgrepSearch() > 0) {
+    updateSearchResultsUI();
+    telemetryTrackSearch();
+    return;
+  }
+
+  // Fallback to manual filesystem scan
   searchDir(searchWorkspaceRoot, 0);
   updateSearchResultsUI();
   telemetryTrackSearch();
+}
+
+/** Try to run search via ripgrep. Returns 1 if rg was available, 0 if not. */
+function tryRipgrepSearch(): number {
+  // Build rg command
+  let cmd = 'rg --json --max-count 500';
+  if (searchCaseSensitive > 0) {
+    cmd += ' --case-sensitive';
+  } else {
+    cmd += ' --smart-case';
+  }
+  if (searchUseRegex > 0) {
+    cmd += ' --regexp';
+  } else {
+    cmd += ' --fixed-strings';
+  }
+  // Escape the query for shell — wrap in single quotes, escape existing single quotes
+  cmd += " '";
+  for (let i = 0; i < searchQuery.length; i = i + 1) {
+    const ch = searchQuery.charCodeAt(i);
+    if (ch === 39) {
+      // Single quote → end quote, escaped quote, start quote
+      cmd += "'\\''";
+    } else {
+      cmd += searchQuery.charAt(i);
+    }
+  }
+  cmd += "' ";
+  cmd += searchWorkspaceRoot;
+
+  let output = '';
+  try {
+    output = execSync(cmd) as unknown as string;
+  } catch (e) {
+    // rg not found or no results (exit code 1 = no matches, 2 = error)
+    // Check if it was just "no matches" — empty output is fine
+    return 0;
+  }
+
+  if (output.length < 2) return 1; // No matches, but rg worked
+
+  // Parse ripgrep JSON output (newline-delimited JSON)
+  parseRipgrepOutput(output);
+  return 1;
+}
+
+/** Parse ripgrep --json output into parallel arrays. */
+function parseRipgrepOutput(output: string): void {
+  // Each line is a JSON object. Match lines have type:"match"
+  let lineStart = 0;
+  for (let i = 0; i <= output.length; i = i + 1) {
+    if (i === output.length || output.charCodeAt(i) === 10) {
+      if (i > lineStart + 10) {
+        const line = output.slice(lineStart, i);
+        parseRipgrepLine(line);
+      }
+      lineStart = i + 1;
+    }
+  }
+}
+
+/** Parse a single ripgrep JSON line. */
+function parseRipgrepLine(json: string): void {
+  if (srCount >= 500) return;
+
+  // Quick check: must contain "type":"match"
+  if (json.indexOf('"type":"match"') < 0) return;
+
+  // Extract file path: "path":{"text":"..."}
+  const pathIdx = json.indexOf('"path":{"text":"');
+  if (pathIdx < 0) return;
+  const pathStart = pathIdx + 16;
+  let pathEnd = pathStart;
+  for (let i = pathStart; i < json.length; i = i + 1) {
+    if (json.charCodeAt(i) === 34) { pathEnd = i; break; }
+  }
+  const filePath = json.slice(pathStart, pathEnd);
+
+  // Extract line number: "line_number":N
+  const lnIdx = json.indexOf('"line_number":');
+  if (lnIdx < 0) return;
+  let lnStr = '';
+  for (let i = lnIdx + 14; i < json.length; i = i + 1) {
+    const ch = json.charCodeAt(i);
+    if (ch >= 48 && ch <= 57) {
+      lnStr += json.charAt(i);
+    } else {
+      break;
+    }
+  }
+  const lineNum = parseInt(lnStr);
+
+  // Extract line text: "lines":{"text":"..."}
+  const ltIdx = json.indexOf('"lines":{"text":"');
+  if (ltIdx < 0) return;
+  const ltStart = ltIdx + 17;
+  let ltEnd = ltStart;
+  let escaped = 0;
+  for (let i = ltStart; i < json.length; i = i + 1) {
+    if (escaped > 0) { escaped = 0; continue; }
+    if (json.charCodeAt(i) === 92) { escaped = 1; continue; }
+    if (json.charCodeAt(i) === 34) { ltEnd = i; break; }
+  }
+  let lineText = json.slice(ltStart, ltEnd);
+  // Trim trailing newline from line text
+  if (lineText.length > 0 && lineText.charCodeAt(lineText.length - 1) === 10) {
+    lineText = lineText.slice(0, lineText.length - 1);
+  }
+  // Unescape \\n and \\t
+  let unescaped = '';
+  for (let i = 0; i < lineText.length; i = i + 1) {
+    if (lineText.charCodeAt(i) === 92 && i + 1 < lineText.length) {
+      const next = lineText.charCodeAt(i + 1);
+      if (next === 110) { unescaped += '\n'; i = i + 1; continue; }
+      if (next === 116) { unescaped += '\t'; i = i + 1; continue; }
+      if (next === 92) { unescaped += '\\'; i = i + 1; continue; }
+    }
+    unescaped += lineText.charAt(i);
+  }
+
+  srFilePaths[srCount] = filePath;
+  srLineNums[srCount] = lineNum;
+  srLineTexts[srCount] = unescaped;
+  srCount = srCount + 1;
+}
+
+/** Toggle regex search mode. */
+function toggleRegex(): void {
+  searchUseRegex = searchUseRegex > 0 ? 0 : 1;
+  if (searchQuery.length > 0) {
+    searchGeneration = searchGeneration + 1;
+    searchPending = 1;
+  }
 }
 
 /** Update the search results display. */
@@ -407,16 +551,20 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
     textfieldSetString(searchTextField, searchQuery);
   }
 
-  // Controls row: Aa (case) + Replace toggle
+  // Controls row: Aa (case) + .* (regex) + Replace toggle
   const caseBtn = Button('Aa', () => { toggleCaseSensitive(); });
   buttonSetBordered(caseBtn, 0);
   textSetFontSize(caseBtn, 11);
   if (colors) setBtnFg(caseBtn, getSideBarForeground());
+  const regexBtn = Button('.*', () => { toggleRegex(); });
+  buttonSetBordered(regexBtn, 0);
+  textSetFontSize(regexBtn, 11);
+  if (colors) setBtnFg(regexBtn, getSideBarForeground());
   const replToggleBtn = Button('Replace', () => { toggleReplaceField(); });
   buttonSetBordered(replToggleBtn, 0);
   textSetFontSize(replToggleBtn, 11);
   if (colors) setBtnFg(replToggleBtn, getSideBarForeground());
-  const controlsRow = HStack(4, [caseBtn, replToggleBtn]);
+  const controlsRow = HStack(4, [caseBtn, regexBtn, replToggleBtn]);
   widgetAddChild(container, controlsRow);
 
   // Replace container (hidden by default)

@@ -297,6 +297,37 @@ function gitCommit(): void {
   telemetryTrackGitCommit();
 }
 
+function gitPush(): void {
+  const result = gitExec('git -C ' + gitWorkspaceRoot + ' push');
+  updateStatusBarBranch();
+  refreshGitState();
+  if (gitPanelReady > 0) updateGitResultsUI();
+}
+
+function gitPull(): void {
+  const result = gitExec('git -C ' + gitWorkspaceRoot + ' pull');
+  refreshGitState();
+  if (gitPanelReady > 0) updateGitResultsUI();
+  updateStatusBarBranch();
+}
+
+function gitFetch(): void {
+  gitExec('git -C ' + gitWorkspaceRoot + ' fetch');
+  updateStatusBarBranch();
+}
+
+function gitStash(): void {
+  gitExec('git -C ' + gitWorkspaceRoot + ' stash');
+  refreshGitState();
+  if (gitPanelReady > 0) updateGitResultsUI();
+}
+
+function gitStashPop(): void {
+  gitExec('git -C ' + gitWorkspaceRoot + ' stash pop');
+  refreshGitState();
+  if (gitPanelReady > 0) updateGitResultsUI();
+}
+
 export function updateStatusBarBranch(): void {
   if (gitIsRepo > 0 && gitBranch.length > 0) {
     _statusBarUpdater(gitBranch);
@@ -538,6 +569,33 @@ export function renderGitPanel(container: unknown, colors: ResolvedUIColors): vo
   if (colors) setBtnFg(refreshBtn, getSideBarForeground());
   const actionRow = HStack(8, [commitBtn, refreshBtn]);
   widgetAddChild(container, actionRow);
+
+  // Push / Pull / Fetch / Stash buttons
+  const pushBtn = Button('Push', () => { gitPush(); });
+  buttonSetBordered(pushBtn, 0);
+  textSetFontSize(pushBtn, 11);
+  if (colors) setBtnFg(pushBtn, getSideBarForeground());
+  const pullBtn = Button('Pull', () => { gitPull(); });
+  buttonSetBordered(pullBtn, 0);
+  textSetFontSize(pullBtn, 11);
+  if (colors) setBtnFg(pullBtn, getSideBarForeground());
+  const fetchBtn = Button('Fetch', () => { gitFetch(); });
+  buttonSetBordered(fetchBtn, 0);
+  textSetFontSize(fetchBtn, 11);
+  if (colors) setBtnFg(fetchBtn, getSideBarForeground());
+  const syncRow = HStack(8, [pushBtn, pullBtn, fetchBtn]);
+  widgetAddChild(container, syncRow);
+
+  const stashBtn = Button('Stash', () => { gitStash(); });
+  buttonSetBordered(stashBtn, 0);
+  textSetFontSize(stashBtn, 11);
+  if (colors) setBtnFg(stashBtn, getSideBarForeground());
+  const popBtn = Button('Pop', () => { gitStashPop(); });
+  buttonSetBordered(popBtn, 0);
+  textSetFontSize(popBtn, 11);
+  if (colors) setBtnFg(popBtn, getSideBarForeground());
+  const stashRow = HStack(8, [stashBtn, popBtn]);
+  widgetAddChild(container, stashRow);
 
   // Results container for file lists
   gitResultsContainer = VStack(2, []);
