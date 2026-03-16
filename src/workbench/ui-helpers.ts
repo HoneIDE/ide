@@ -104,49 +104,98 @@ export function detectLanguage(filePath: string): string {
   return 'plaintext';
 }
 
-/** Get the SF Symbol icon name for a file based on its extension. */
+/** Get the SF Symbol icon name for a file based on its extension (50+ types). */
 export function getFileIcon(name: string): string {
   if (name.endsWith('.ts') || name.endsWith('.tsx')) return 'swift';
   if (name.endsWith('.js') || name.endsWith('.jsx') || name.endsWith('.mjs') || name.endsWith('.cjs')) return 'swift';
-  if (name.endsWith('.json') || name.endsWith('.jsonc')) return 'curlybraces';
+  if (name.endsWith('.json') || name.endsWith('.jsonc') || name.endsWith('.json5')) return 'curlybraces';
+  if (name.endsWith('.toml') || name.endsWith('.yaml') || name.endsWith('.yml') || name.endsWith('.ini') || name.endsWith('.env')) return 'gearshape';
+  if (name.endsWith('.xml') || name.endsWith('.svg') || name.endsWith('.plist')) return 'chevron.left.forwardslash.chevron.right';
   if (name.endsWith('.rs')) return 'gearshape.2';
-  if (name.endsWith('.html') || name.endsWith('.htm')) return 'chevron.left.forwardslash.chevron.right';
-  if (name.endsWith('.css') || name.endsWith('.scss') || name.endsWith('.less')) return 'paintbrush';
-  if (name.endsWith('.md')) return 'doc.plaintext';
-  if (name.endsWith('.py')) return 'chevron.left.forwardslash.chevron.right';
-  if (name.endsWith('.sh') || name.endsWith('.bash') || name.endsWith('.zsh')) return 'terminal';
-  if (name.endsWith('.toml') || name.endsWith('.yaml') || name.endsWith('.yml')) return 'gearshape';
-  if (name.endsWith('.swift')) return 'swift';
-  if (name.endsWith('.c') || name.endsWith('.h') || name.endsWith('.cpp') || name.endsWith('.hpp')) return 'chevron.left.forwardslash.chevron.right';
+  if (name.endsWith('.c') || name.endsWith('.h') || name.endsWith('.cpp') || name.endsWith('.hpp') || name.endsWith('.cc') || name.endsWith('.cxx')) return 'chevron.left.forwardslash.chevron.right';
   if (name.endsWith('.go')) return 'chevron.left.forwardslash.chevron.right';
-  if (name.endsWith('.java')) return 'cup.and.saucer';
-  if (name.endsWith('.rb')) return 'diamond';
+  if (name.endsWith('.swift')) return 'swift';
+  if (name.endsWith('.java') || name.endsWith('.kt') || name.endsWith('.kts')) return 'cup.and.saucer';
+  if (name.endsWith('.cs')) return 'chevron.left.forwardslash.chevron.right';
+  if (name.endsWith('.zig')) return 'chevron.left.forwardslash.chevron.right';
+  if (name.endsWith('.py') || name.endsWith('.pyi')) return 'chevron.left.forwardslash.chevron.right';
+  if (name.endsWith('.rb') || name.endsWith('.erb')) return 'diamond';
   if (name.endsWith('.php')) return 'chevron.left.forwardslash.chevron.right';
-  if (name.endsWith('.sql')) return 'cylinder';
-  if (name.endsWith('.xml') || name.endsWith('.svg')) return 'chevron.left.forwardslash.chevron.right';
+  if (name.endsWith('.lua')) return 'moon';
+  if (name.endsWith('.r') || name.endsWith('.R')) return 'chart.bar';
+  if (name.endsWith('.ex') || name.endsWith('.exs')) return 'drop';
+  if (name.endsWith('.hs')) return 'chevron.left.forwardslash.chevron.right';
+  if (name.endsWith('.scala') || name.endsWith('.sc')) return 'chevron.left.forwardslash.chevron.right';
+  if (name.endsWith('.clj') || name.endsWith('.cljs')) return 'chevron.left.forwardslash.chevron.right';
+  if (name.endsWith('.html') || name.endsWith('.htm') || name.endsWith('.ejs') || name.endsWith('.hbs')) return 'chevron.left.forwardslash.chevron.right';
+  if (name.endsWith('.css') || name.endsWith('.scss') || name.endsWith('.less') || name.endsWith('.sass') || name.endsWith('.styl')) return 'paintbrush';
+  if (name.endsWith('.vue') || name.endsWith('.svelte') || name.endsWith('.astro')) return 'chevron.left.forwardslash.chevron.right';
+  if (name.endsWith('.graphql') || name.endsWith('.gql')) return 'arrow.triangle.branch';
+  if (name.endsWith('.wasm')) return 'cpu';
+  if (name.endsWith('.md') || name.endsWith('.mdx') || name.endsWith('.rst') || name.endsWith('.txt')) return 'doc.plaintext';
+  if (name.endsWith('.tex') || name.endsWith('.bib')) return 'doc.plaintext';
+  if (name.endsWith('.sh') || name.endsWith('.bash') || name.endsWith('.zsh') || name.endsWith('.fish') || name.endsWith('.ps1')) return 'terminal';
+  if (name.endsWith('.dockerfile')) return 'shippingbox';
+  if (name.endsWith('.tf') || name.endsWith('.tfvars')) return 'cloud';
+  if (name.endsWith('.sql') || name.endsWith('.sqlite') || name.endsWith('.db')) return 'cylinder';
+  if (name.endsWith('.csv') || name.endsWith('.tsv')) return 'tablecells';
+  if (name.endsWith('.proto')) return 'arrow.triangle.branch';
+  if (name.endsWith('.cmake') || name.endsWith('.make') || name.endsWith('.mk')) return 'hammer';
+  if (name.endsWith('.gradle')) return 'hammer';
+  if (name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.gif') || name.endsWith('.ico') || name.endsWith('.webp')) return 'photo';
+  if (name.endsWith('.mp4') || name.endsWith('.mov') || name.endsWith('.avi') || name.endsWith('.webm')) return 'film';
+  if (name.endsWith('.mp3') || name.endsWith('.wav') || name.endsWith('.ogg') || name.endsWith('.flac')) return 'music.note';
+  if (name.endsWith('.ttf') || name.endsWith('.otf') || name.endsWith('.woff') || name.endsWith('.woff2')) return 'textformat';
+  if (name.endsWith('.zip') || name.endsWith('.tar') || name.endsWith('.gz') || name.endsWith('.7z')) return 'archivebox';
+  if (name.endsWith('.lock') || name.endsWith('.lockb')) return 'lock';
+  if (name === 'Dockerfile' || name === 'docker-compose.yml' || name === 'docker-compose.yaml') return 'shippingbox';
+  if (name === 'Makefile' || name === 'CMakeLists.txt') return 'hammer';
+  if (name === 'LICENSE' || name === 'LICENCE') return 'doc.text';
+  if (name === '.gitignore' || name === '.gitattributes') return 'arrow.triangle.branch';
   return 'doc';
 }
 
-/** Get the color hex for a file icon based on its extension. */
+/** Get the color hex for a file icon based on its extension (50+ types). */
 export function getFileIconColor(name: string): string {
   if (name.endsWith('.ts') || name.endsWith('.tsx')) return '#3178C6';
   if (name.endsWith('.js') || name.endsWith('.jsx') || name.endsWith('.mjs') || name.endsWith('.cjs')) return '#F7DF1E';
-  if (name.endsWith('.json') || name.endsWith('.jsonc')) return '#F7DF1E';
+  if (name.endsWith('.json') || name.endsWith('.jsonc') || name.endsWith('.json5')) return '#F7DF1E';
   if (name.endsWith('.rs')) return '#CE422B';
-  if (name.endsWith('.html') || name.endsWith('.htm')) return '#E44D26';
-  if (name.endsWith('.css') || name.endsWith('.scss') || name.endsWith('.less')) return '#1572B6';
-  if (name.endsWith('.md')) return '#519ABA';
-  if (name.endsWith('.py')) return '#3776AB';
-  if (name.endsWith('.sh') || name.endsWith('.bash') || name.endsWith('.zsh')) return '#4EAA25';
-  if (name.endsWith('.toml') || name.endsWith('.yaml') || name.endsWith('.yml')) return '#6D8086';
-  if (name.endsWith('.swift')) return '#F05138';
-  if (name.endsWith('.c') || name.endsWith('.h') || name.endsWith('.cpp') || name.endsWith('.hpp')) return '#659AD2';
   if (name.endsWith('.go')) return '#00ADD8';
-  if (name.endsWith('.java')) return '#B07219';
-  if (name.endsWith('.rb')) return '#CC342D';
+  if (name.endsWith('.swift')) return '#F05138';
+  if (name.endsWith('.c') || name.endsWith('.h') || name.endsWith('.cpp') || name.endsWith('.hpp') || name.endsWith('.cc')) return '#659AD2';
+  if (name.endsWith('.java') || name.endsWith('.kt') || name.endsWith('.kts')) return '#B07219';
+  if (name.endsWith('.cs')) return '#68217A';
+  if (name.endsWith('.zig')) return '#F7A41D';
+  if (name.endsWith('.py') || name.endsWith('.pyi')) return '#3776AB';
+  if (name.endsWith('.rb') || name.endsWith('.erb')) return '#CC342D';
   if (name.endsWith('.php')) return '#777BB4';
-  if (name.endsWith('.sql')) return '#E38C00';
-  if (name.endsWith('.xml') || name.endsWith('.svg')) return '#E44D26';
+  if (name.endsWith('.lua')) return '#000080';
+  if (name.endsWith('.r') || name.endsWith('.R')) return '#276DC3';
+  if (name.endsWith('.ex') || name.endsWith('.exs')) return '#6E4A7E';
+  if (name.endsWith('.hs')) return '#5E5086';
+  if (name.endsWith('.scala') || name.endsWith('.sc')) return '#DC322F';
+  if (name.endsWith('.clj') || name.endsWith('.cljs')) return '#63B132';
+  if (name.endsWith('.html') || name.endsWith('.htm') || name.endsWith('.ejs')) return '#E44D26';
+  if (name.endsWith('.css') || name.endsWith('.scss') || name.endsWith('.less') || name.endsWith('.sass')) return '#1572B6';
+  if (name.endsWith('.vue')) return '#41B883';
+  if (name.endsWith('.svelte')) return '#FF3E00';
+  if (name.endsWith('.astro')) return '#FF5D01';
+  if (name.endsWith('.graphql') || name.endsWith('.gql')) return '#E535AB';
+  if (name.endsWith('.md') || name.endsWith('.mdx')) return '#519ABA';
+  if (name.endsWith('.sh') || name.endsWith('.bash') || name.endsWith('.zsh') || name.endsWith('.fish')) return '#4EAA25';
+  if (name.endsWith('.dockerfile') || name === 'Dockerfile') return '#2496ED';
+  if (name.endsWith('.tf') || name.endsWith('.tfvars')) return '#7B42BC';
+  if (name.endsWith('.toml') || name.endsWith('.yaml') || name.endsWith('.yml') || name.endsWith('.ini')) return '#6D8086';
+  if (name.endsWith('.xml') || name.endsWith('.svg') || name.endsWith('.plist')) return '#E44D26';
+  if (name.endsWith('.sql') || name.endsWith('.sqlite')) return '#E38C00';
+  if (name.endsWith('.csv') || name.endsWith('.tsv')) return '#237346';
+  if (name.endsWith('.wasm')) return '#654FF0';
+  if (name.endsWith('.proto')) return '#6D8086';
+  if (name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.gif') || name.endsWith('.webp')) return '#A074C4';
+  if (name.endsWith('.lock') || name.endsWith('.lockb')) return '#6D8086';
+  if (name === '.gitignore' || name === '.gitattributes') return '#F05032';
+  if (name === '.env' || name.endsWith('.env')) return '#ECD53F';
   return '';
 }
 
