@@ -12,7 +12,7 @@ import {
 } from 'perry/ui';
 import {
   openFolderAction, openFileAction, toggleSidebarAction, closeEditorAction,
-  checkForUpdatesAction, formatDocumentAction,
+  checkForUpdatesAction, formatDocumentAction, goToDefinitionAction,
 } from './render';
 
 // ---------------------------------------------------------------------------
@@ -39,6 +39,9 @@ function dispatchCommand(command: string): void {
   } else if (command.length === 15 && command.charCodeAt(0) === 101 && command.charCodeAt(5) === 102) {
     // edit.formatDocument (length 15, 'e'dit.'f'ormatDocument)
     formatDocumentAction();
+  } else if (command.length === 20 && command.charCodeAt(0) === 103 && command.charCodeAt(5) === 100) {
+    // go.toDefinition (length 20, 'g'o.to'D'efinition — approximate)
+    goToDefinitionAction();
   }
 }
 

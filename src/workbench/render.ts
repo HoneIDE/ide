@@ -121,7 +121,9 @@ import {
 
 import { dispatchPluginHook, isPluginSystemEnabled, setDecorationRenderCallback } from '../plugins';
 import { getDiagFiles, getDiagLines, getDiagMessages, getDiagSeverities, getDiagCount } from './views/lsp/diagnostics-panel';
-import { lspDidOpen, lspDidSave, lspFormatDocument } from './views/lsp/lsp-bridge';
+import { lspDidOpen, lspDidSave, lspFormatDocument, lspHover, lspDefinition, lspSignatureHelp, setHoverCallback, setDefinitionCallback, setSignatureCallback } from './views/lsp/lsp-bridge';
+import { createHoverPopup, showHoverPopup, hideHoverPopup, isHoverVisible } from './views/lsp/hover-popup';
+import { createSignaturePopup, showSignaturePopup, hideSignaturePopup, isSignatureVisible } from './views/lsp/signature-popup';
 
 // Compile-time platform ID injected by Perry codegen:
 // 0 = macOS, 1 = iOS, 2 = Android, 3 = Windows, 4 = Linux, 5 = Web
@@ -1038,10 +1040,104 @@ function updateStatusBarIndent(_tabSize: number, _useTabs: boolean): void {
   // takes precedence. Future: apply detected indent to editor.
 }
 
-/** Sync all editor decorations — bracket matching + diagnostics. Perry-safe. */
+/** Sync all editor decorations — bracket matching + diagnostics + hover. Perry-safe. */
 function syncEditorDecorations(): void {
   syncBracketMatchDecoration();
   syncDiagnosticDecorations();
+  syncHoverRequest();
+}
+
+// ---------------------------------------------------------------------------
+// Hover dwell tracking — request hover after cursor dwells 500ms
+// ---------------------------------------------------------------------------
+
+let lastHoverLine: number = -1;
+let lastHoverCol: number = -1;
+let hoverDwellTicks: number = 0;
+let hoverRequested: number = 0;
+
+/** Track cursor position for hover requests. Called every 250ms. */
+function syncHoverRequest(): void {
+  if (editorReady < 1) return;
+  if (currentEditorFilePath.length < 1) return;
+
+  const curLine = editorInstance.getCursorLine();
+  const curCol = editorInstance.getCursorColumn();
+
+  // Cursor moved — reset dwell timer, hide hover
+  if (curLine !== lastHoverLine || curCol !== lastHoverCol) {
+    lastHoverLine = curLine;
+    lastHoverCol = curCol;
+    hoverDwellTicks = 0;
+    hoverRequested = 0;
+    if (isHoverVisible() > 0) {
+      hideHoverPopup();
+    }
+    if (isSignatureVisible() > 0) {
+      hideSignaturePopup();
+    }
+    return;
+  }
+
+  // Cursor hasn't moved — increment dwell counter
+  hoverDwellTicks = hoverDwellTicks + 1;
+
+  // After ~500ms (2 ticks at 250ms), request hover
+  if (hoverDwellTicks === 2 && hoverRequested < 1) {
+    hoverRequested = 1;
+    lspHover(currentEditorFilePath, curLine, curCol);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Go-to-definition — Cmd+Click on a symbol
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// LSP result callbacks (module-level, Perry-safe)
+// ---------------------------------------------------------------------------
+
+/** Called when hover result arrives from LSP. */
+function onLspHoverResult(text: string): void {
+  if (text.length > 0) {
+    showHoverPopup(text);
+  }
+}
+
+/** Called when definition result arrives from LSP. */
+function onLspDefinitionResult(filePath: string, line: number): void {
+  if (filePath.length < 1) return;
+
+  // Extract file name from path
+  let lastSlash = -1;
+  for (let i = filePath.length - 1; i >= 0; i = i - 1) {
+    if (filePath.charCodeAt(i) === 47) { lastSlash = i; break; }
+  }
+  let name = filePath;
+  if (lastSlash >= 0) {
+    name = filePath.slice(lastSlash + 1);
+  }
+
+  openFileInEditor(filePath, name);
+
+  // TODO: scroll to the target line after file opens
+}
+
+/** Called when signature help result arrives from LSP. */
+function onLspSignatureResult(label: string, activeParam: number, doc: string): void {
+  if (label.length > 0) {
+    showSignaturePopup(label, activeParam, doc);
+  }
+}
+
+/** Navigate to definition at cursor position. Exported for keybinding/menu. */
+export function goToDefinitionAction(): void {
+  if (editorReady < 1) return;
+  if (currentEditorFilePath.length < 1) return;
+
+  const curLine = editorInstance.getCursorLine();
+  const curCol = editorInstance.getCursorColumn();
+  lspDefinition(currentEditorFilePath, curLine, curCol);
 }
 
 // ---------------------------------------------------------------------------
@@ -1565,12 +1661,22 @@ function renderEditorArea(): unknown {
   widgetSetHugging(editorWidget, 1);
   tabBarContainer = tbc;
 
-  const editorPane = VStack(0, [tbc, breadcrumbContainer, editorWidget]);
+  // Create LSP popups (hover, signature)
+  const colors = null as any; // Will use theme colors from getters
+  const hoverPopup = createHoverPopup(colors);
+  const signaturePopup = createSignaturePopup(colors);
+
+  const editorPane = VStack(0, [tbc, breadcrumbContainer, hoverPopup, signaturePopup, editorWidget]);
   setBg(editorPane, getEditorBackground());
   widgetSetHugging(editorPane, 1); // editor pane stretches in mainRow
   // Embedded NSView has no intrinsic width — pin it to fill the VStack's width
   widgetMatchParentWidth(editorWidget);
   editorPaneWidget = editorPane;
+
+  // Wire LSP callbacks
+  setHoverCallback(onLspHoverResult);
+  setDefinitionCallback(onLspDefinitionResult);
+  setSignatureCallback(onLspSignatureResult);
 
   return editorPane;
 }

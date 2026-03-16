@@ -225,6 +225,37 @@ export function setDefinitionCallback(fn: (file: string, line: number) => void):
   _definitionCallback = fn;
 }
 
+// Signature help callback
+let _signatureCallback: ((label: string, activeParam: number, doc: string) => void) | null = null;
+
+/** Set callback for signature help results. */
+export function setSignatureCallback(fn: (label: string, activeParam: number, doc: string) => void): void {
+  _signatureCallback = fn;
+}
+
+/** Request signature help. */
+export function lspSignatureHelp(filePath: string, line: number, character: number): void {
+  if (lspServerHandle < 0 || lspInitialized < 1) return;
+
+  const id = lspNextRequestId;
+  lspNextRequestId = lspNextRequestId + 1;
+
+  let uri = 'file://';
+  uri += filePath;
+  let json = '{"jsonrpc":"2.0","id":';
+  json += String(id);
+  json += ',"method":"textDocument/signatureHelp","params":{"textDocument":{"uri":"';
+  json += uri;
+  json += '"},"position":{"line":';
+  json += String(line);
+  json += ',"character":';
+  json += String(character);
+  json += '}}}';
+
+  trackPendingRequest(id, 'textDocument/signatureHelp');
+  hone_lsp_send(lspServerHandle, json as any);
+}
+
 // Trigger immediate diagnostics (called on file save)
 export function triggerDiagnostics(): void {
   if (lspReady < 1) return;
@@ -383,27 +414,127 @@ function pollLspMessages(): void {
 }
 
 function handleLspMessage(json: string): void {
-  // Parse JSON — Perry doesn't have JSON.parse, so do minimal extraction
-  // Check if this is a response (has "id" and "result") or notification (has "method")
-
-  // Check for "method":"textDocument/publishDiagnostics"
+  // Check for notifications (no "id", has "method")
   if (json.indexOf('publishDiagnostics') > 0) {
     handleDiagnosticsNotification(json);
     return;
   }
 
-  // Check for response to initialize
-  if (json.indexOf('"result"') > 0) {
-    // Find the id
-    const idVal = extractJsonNumber(json, '"id":');
-    if (idVal >= 0) {
-      const method = findPendingMethod(idVal);
-      if (method.length >= 10 && method.charCodeAt(0) === 105) { // 'i'nitialize
-        sendInitialized();
-      }
-      removePendingRequest(idVal);
-    }
+  // Check for responses (has "id" and "result")
+  if (json.indexOf('"id"') < 0) return;
+
+  const idVal = extractJsonNumber(json, '"id":');
+  if (idVal < 0) return;
+
+  const method = findPendingMethod(idVal);
+  removePendingRequest(idVal);
+
+  if (method.length < 1) return;
+
+  // Route by method
+  // 'i'nitialize (charCodeAt(0) === 105)
+  if (method.charCodeAt(0) === 105 && method.length >= 10) {
+    sendInitialized();
+    return;
   }
+
+  // 'textDocument/hover' — charCodeAt(13) === 104 ('h')
+  if (method.length > 15 && method.indexOf('hover') > 0) {
+    handleHoverResponse(json);
+    return;
+  }
+
+  // 'textDocument/definition' — contains 'definition'
+  if (method.indexOf('definition') > 0) {
+    handleDefinitionResponse(json);
+    return;
+  }
+
+  // 'textDocument/signatureHelp' — contains 'signatureHelp'
+  if (method.indexOf('signatureHelp') > 0) {
+    handleSignatureResponse(json);
+    return;
+  }
+}
+
+function handleHoverResponse(json: string): void {
+  if (_hoverCallback === null) return;
+
+  // Extract hover content: result.contents can be string, MarkupContent, or MarkedString
+  // Look for "value":" in the result
+  const resultIdx = json.indexOf('"result"');
+  if (resultIdx < 0) return;
+  const resultStr = json.slice(resultIdx);
+
+  // Try to find "value":" (MarkupContent format)
+  let content = extractJsonString(resultStr, '"value":"');
+  if (content.length < 1) {
+    // Try plain string: "result":"..."
+    content = extractJsonString(resultStr, '"result":"');
+  }
+
+  if (content.length > 0) {
+    // Unescape \\n to real newlines
+    let unescaped = '';
+    for (let i = 0; i < content.length; i = i + 1) {
+      if (content.charCodeAt(i) === 92 && i + 1 < content.length && content.charCodeAt(i + 1) === 110) {
+        unescaped += '\n';
+        i = i + 1;
+      } else {
+        unescaped += content.charAt(i);
+      }
+    }
+    _hoverCallback(unescaped);
+  }
+}
+
+function handleDefinitionResponse(json: string): void {
+  if (_definitionCallback === null) return;
+
+  // Extract Location: { uri: "file:///...", range: { start: { line: N, character: N } } }
+  const resultIdx = json.indexOf('"result"');
+  if (resultIdx < 0) return;
+  const resultStr = json.slice(resultIdx);
+
+  const uri = extractJsonString(resultStr, '"uri":"');
+  if (uri.length < 1) return;
+
+  // Convert URI to file path
+  let filePath = uri;
+  if (uri.indexOf('file://') === 0) {
+    filePath = uri.slice(7);
+  }
+
+  // Extract start line
+  const startIdx = resultStr.indexOf('"start"');
+  if (startIdx < 0) return;
+  const startStr = resultStr.slice(startIdx);
+  const line = extractJsonNumber(startStr, '"line":');
+
+  _definitionCallback(filePath, line >= 0 ? line : 0);
+}
+
+function handleSignatureResponse(json: string): void {
+  if (_signatureCallback === null) return;
+
+  const resultIdx = json.indexOf('"result"');
+  if (resultIdx < 0) return;
+  const resultStr = json.slice(resultIdx);
+
+  // Check for null result
+  if (resultStr.indexOf('"result":null') >= 0) return;
+
+  // Extract signature label
+  const label = extractJsonString(resultStr, '"label":"');
+  if (label.length < 1) return;
+
+  // Extract activeParameter
+  const activeParam = extractJsonNumber(resultStr, '"activeParameter":');
+
+  // Extract documentation (if present)
+  const doc = extractJsonString(resultStr, '"documentation":"');
+
+  _signatureCallback(label, activeParam >= 0 ? activeParam : 0, doc);
 }
 
 function handleDiagnosticsNotification(json: string): void {
