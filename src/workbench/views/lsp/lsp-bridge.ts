@@ -312,17 +312,53 @@ function tryStartServer(): void {
 }
 
 function startTypeScriptServer(): void {
-  // Find typescript-language-server
+  // Find TypeScript LSP server. Priority:
+  // 1. tsgo --lsp (Microsoft's Go-native TS compiler — single binary, no Node.js)
+  // 2. typescript-language-server --stdio (Node.js-based, legacy fallback)
   let serverCmd = '';
   let serverArgs = '';
 
-  // Check bundled location first
-  const bundledTsServer = lspWorkspaceRoot + '/node_modules/.bin/typescript-language-server';
-  if (fileExistsSafe(bundledTsServer)) {
-    serverCmd = bundledTsServer;
-    serverArgs = '--stdio';
-  } else {
-    // Check global
+  // Check for tsgo (bundled with Hone or on PATH)
+  // tsgo is a single Go binary (~30-40MB) with built-in LSP server.
+  // Covers: diagnostics, completions, hover, go-to-def, references, formatting.
+  const tsgoLocations = [
+    lspWorkspaceRoot + '/node_modules/.bin/tsgo',
+    '/usr/local/bin/tsgo',
+  ];
+  for (let i = 0; i < tsgoLocations.length; i = i + 1) {
+    if (fileExistsSafe(tsgoLocations[i])) {
+      serverCmd = tsgoLocations[i];
+      serverArgs = '--lsp';
+      break;
+    }
+  }
+
+  // Try which tsgo
+  if (serverCmd.length < 1) {
+    try {
+      const which = execSync('which tsgo');
+      if (which.length > 0) {
+        serverCmd = which.trim();
+        serverArgs = '--lsp';
+      }
+    } catch (e: any) { /* not found */ }
+  }
+
+  // Fallback: typescript-language-server (requires Node.js)
+  if (serverCmd.length < 1) {
+    const tslsLocations = [
+      lspWorkspaceRoot + '/node_modules/.bin/typescript-language-server',
+    ];
+    for (let i = 0; i < tslsLocations.length; i = i + 1) {
+      if (fileExistsSafe(tslsLocations[i])) {
+        serverCmd = tslsLocations[i];
+        serverArgs = '--stdio';
+        break;
+      }
+    }
+  }
+
+  if (serverCmd.length < 1) {
     try {
       const which = execSync('which typescript-language-server');
       if (which.length > 0) {
