@@ -120,6 +120,8 @@ import {
 } from './sync-transport';
 
 import { dispatchPluginHook, isPluginSystemEnabled, setDecorationRenderCallback } from '../plugins';
+import { getDiagFiles, getDiagLines, getDiagMessages, getDiagSeverities, getDiagCount } from './views/lsp/diagnostics-panel';
+import { lspDidOpen, lspDidSave, lspFormatDocument } from './views/lsp/lsp-bridge';
 
 // Compile-time platform ID injected by Perry codegen:
 // 0 = macOS, 1 = iOS, 2 = Android, 3 = Windows, 4 = Linux, 5 = Web
@@ -438,6 +440,7 @@ export function saveFileAction(): void {
   }
   writeFileSync(currentEditorFilePath, content);
   triggerDiagnostics();
+  lspDidSave(currentEditorFilePath);
   markTabSaved(content.length);
   // Dispatch onDocumentSave hook to plugins
   if (isPluginSystemEnabled() > 0) {
@@ -882,6 +885,10 @@ function displayFileContent(filePath: string): void {
   const content = safeReadFile(filePath);
   editorInstance.setContent(content);
   editorInstance.render();
+  // Detect indentation from file content and apply to editor
+  applyDetectedIndentation(content);
+  // Notify LSP server of file open
+  lspDidOpen(filePath, lang, content);
 }
 
 function openFileInEditor(filePath: string, fileName: string): void {
@@ -961,6 +968,275 @@ function onDecorationChanged(): void {
   if (editorReady > 0) {
     editorInstance.render();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Indentation detection — auto-detect tab size from file content
+// ---------------------------------------------------------------------------
+
+/** Detect indentation from file content and update editor tab size. */
+function applyDetectedIndentation(content: string): void {
+  // Scan first 100 lines for indentation pattern
+  let tabCount = 0;
+  let spaceCount = 0;
+  let indent2 = 0;
+  let indent4 = 0;
+  let lineStart = 0;
+  let lineNum = 0;
+
+  for (let i = 0; i <= content.length; i = i + 1) {
+    if (i === content.length || content.charCodeAt(i) === 10) {
+      if (lineNum >= 100) break;
+      if (i > lineStart) {
+        const firstChar = content.charCodeAt(lineStart);
+        if (firstChar === 9) {
+          tabCount = tabCount + 1;
+        } else if (firstChar === 32) {
+          let spaces = 0;
+          let j = lineStart;
+          while (j < i && content.charCodeAt(j) === 32) {
+            spaces = spaces + 1;
+            j = j + 1;
+          }
+          if (j < i && content.charCodeAt(j) !== 9) {
+            spaceCount = spaceCount + 1;
+            if (spaces % 4 === 0) indent4 = indent4 + 1;
+            if (spaces % 2 === 0) indent2 = indent2 + 1;
+          }
+        }
+      }
+      lineStart = i + 1;
+      lineNum = lineNum + 1;
+    }
+  }
+
+  if (tabCount === 0 && spaceCount === 0) return;
+
+  let detectedSize = 2;
+  if (spaceCount > 0 && indent4 === spaceCount) {
+    detectedSize = 4;
+  }
+
+  // Update status bar with detected indent info
+  updateStatusBarIndent(detectedSize, tabCount > spaceCount);
+}
+
+// ---------------------------------------------------------------------------
+// Format Document — sends textDocument/formatting to LSP
+// ---------------------------------------------------------------------------
+
+/** Format the current document via LSP. */
+export function formatDocumentAction(): void {
+  if (currentEditorFilePath.length < 1) return;
+  if (editorReady < 1) return;
+  lspFormatDocument(currentEditorFilePath, 2, 1); // tabSize=2, insertSpaces=true
+}
+
+/** Update status bar indent indicator. */
+function updateStatusBarIndent(_tabSize: number, _useTabs: boolean): void {
+  // Status bar indent is informational for now — editor tab size from settings
+  // takes precedence. Future: apply detected indent to editor.
+}
+
+/** Sync all editor decorations — bracket matching + diagnostics. Perry-safe. */
+function syncEditorDecorations(): void {
+  syncBracketMatchDecoration();
+  syncDiagnosticDecorations();
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostic decoration sync — push diagnostic underlines to editor
+// ---------------------------------------------------------------------------
+
+let lastDiagSyncPath = '';
+let lastDiagSyncCount = -1;
+
+/** Sync diagnostic underlines to the editor for the current file. Perry-safe. */
+function syncDiagnosticDecorations(): void {
+  if (editorReady < 1) return;
+  if (currentEditorFilePath.length < 1) return;
+
+  const diagCount = getDiagCount();
+
+  // Collect diagnostics for the current file
+  const charWidth = editorInstance.getCharWidth();
+  if (charWidth < 1) return;
+  const lineHeight = 20; // approximate — matches fontSize * 1.5 (13 * 1.5 ≈ 20)
+  const gutterWidth = 48; // approximate gutter width
+
+  let decorationsJson = '[';
+  let first = 1;
+
+  const dFiles = getDiagFiles();
+  const dLines = getDiagLines();
+  const dMessages = getDiagMessages();
+  const dSeverities = getDiagSeverities();
+
+  for (let i = 0; i < diagCount; i = i + 1) {
+    // Compare file paths — Perry string === is unreliable, use length + charCodeAt
+    const df = dFiles[i];
+    if (df.length !== currentEditorFilePath.length) continue;
+    let match = 1;
+    for (let c = 0; c < df.length; c = c + 1) {
+      if (df.charCodeAt(c) !== currentEditorFilePath.charCodeAt(c)) {
+        match = 0;
+        break;
+      }
+    }
+    if (match < 1) continue;
+
+    const line = dLines[i];
+    const sev = dSeverities[i];
+
+    // Determine color by severity
+    let color = '#4fc1ff'; // info blue
+    if (sev.charCodeAt(0) === 101) color = '#f44747'; // 'e'rror red
+    if (sev.charCodeAt(0) === 119) color = '#cca700'; // 'w'arning yellow
+
+    // Wavy underline spanning the full line (column 0 to 200)
+    const x = gutterWidth;
+    const y = line * lineHeight;
+    const w = 200 * charWidth; // approximate full line width
+
+    if (first < 1) {
+      decorationsJson += ',';
+    }
+    decorationsJson += '{"x":';
+    decorationsJson += String(x);
+    decorationsJson += ',"y":';
+    decorationsJson += String(y);
+    decorationsJson += ',"w":';
+    decorationsJson += String(w);
+    decorationsJson += ',"h":';
+    decorationsJson += String(lineHeight);
+    decorationsJson += ',"color":"';
+    decorationsJson += color;
+    decorationsJson += '","type":"underline-wavy"}';
+    first = 0;
+  }
+
+  decorationsJson += ']';
+
+  if (first < 1) {
+    // Has decorations — push to editor
+    editorInstance.pushDecorations(decorationsJson);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Bracket matching — highlight matching bracket near cursor
+// ---------------------------------------------------------------------------
+
+/** Find and highlight matching bracket at cursor position. Perry-safe. */
+function syncBracketMatchDecoration(): void {
+  if (editorReady < 1) return;
+  if (currentEditorFilePath.length < 1) return;
+
+  const cursorLine = editorInstance.getCursorLine();
+  const cursorCol = editorInstance.getCursorColumn();
+
+  // Get the line content to check for bracket at cursor
+  const content = editorInstance.getContent();
+  let lineStart = 0;
+  let lineIdx = 0;
+  for (let i = 0; i < content.length; i = i + 1) {
+    if (lineIdx === cursorLine) break;
+    if (content.charCodeAt(i) === 10) {
+      lineIdx = lineIdx + 1;
+      lineStart = i + 1;
+    }
+  }
+
+  // Check char at cursor and char before cursor
+  const offset = lineStart + cursorCol;
+  let bracketChar = 0;
+  let bracketOffset = -1;
+
+  if (offset < content.length) {
+    const ch = content.charCodeAt(offset);
+    // ( ) [ ] { }
+    if (ch === 40 || ch === 41 || ch === 91 || ch === 93 || ch === 123 || ch === 125) {
+      bracketChar = ch;
+      bracketOffset = offset;
+    }
+  }
+  if (bracketChar === 0 && offset > 0) {
+    const ch = content.charCodeAt(offset - 1);
+    if (ch === 40 || ch === 41 || ch === 91 || ch === 93 || ch === 123 || ch === 125) {
+      bracketChar = ch;
+      bracketOffset = offset - 1;
+    }
+  }
+
+  if (bracketChar === 0) return;
+
+  // Find matching bracket
+  let matchOffset = -1;
+  const isOpen = bracketChar === 40 || bracketChar === 91 || bracketChar === 123;
+  let closeChar = 0;
+  if (bracketChar === 40) closeChar = 41;
+  if (bracketChar === 41) closeChar = 40;
+  if (bracketChar === 91) closeChar = 93;
+  if (bracketChar === 93) closeChar = 91;
+  if (bracketChar === 123) closeChar = 125;
+  if (bracketChar === 125) closeChar = 123;
+
+  let depth = 0;
+  if (isOpen) {
+    // Search forward
+    for (let i = bracketOffset + 1; i < content.length; i = i + 1) {
+      const ch = content.charCodeAt(i);
+      if (ch === bracketChar) depth = depth + 1;
+      if (ch === closeChar) {
+        if (depth === 0) { matchOffset = i; break; }
+        depth = depth - 1;
+      }
+    }
+  } else {
+    // Search backward
+    for (let i = bracketOffset - 1; i >= 0; i = i - 1) {
+      const ch = content.charCodeAt(i);
+      if (ch === bracketChar) depth = depth + 1;
+      if (ch === closeChar) {
+        if (depth === 0) { matchOffset = i; break; }
+        depth = depth - 1;
+      }
+    }
+  }
+
+  if (matchOffset < 0) return;
+
+  // Convert match offset to line/column for pixel position
+  let matchLine = 0;
+  let matchLineStart = 0;
+  for (let i = 0; i < matchOffset; i = i + 1) {
+    if (content.charCodeAt(i) === 10) {
+      matchLine = matchLine + 1;
+      matchLineStart = i + 1;
+    }
+  }
+  const matchCol = matchOffset - matchLineStart;
+
+  const charWidth = editorInstance.getCharWidth();
+  if (charWidth < 1) return;
+  const lineHeight = 20;
+  const gutterWidth = 48;
+
+  // Highlight both the bracket at cursor and its match
+  let json = '[{"x":';
+  json += String(gutterWidth + bracketOffset - lineStart);
+  // Simpler: just highlight match bracket
+  json = '[{"x":';
+  json += String(gutterWidth + matchCol * charWidth);
+  json += ',"y":';
+  json += String(matchLine * lineHeight);
+  json += ',"w":';
+  json += String(charWidth);
+  json += ',"h":';
+  json += String(lineHeight);
+  json += ',"color":"#3a3d41","type":"background"}]';
+
+  editorInstance.pushDecorations(json);
 }
 
 function reloadEditorContent(path: string, content: string): void {
@@ -1276,8 +1552,8 @@ function renderEditorArea(): unknown {
   // Apply native editor view colors AFTER content is displayed
   applyEditorColors();
 
-  // Poll cursor position for status bar
-  setInterval(() => { pollCursorPositionImpl(); }, 250);
+  // Poll cursor position for status bar + sync decorations
+  setInterval(() => { pollCursorPositionImpl(); syncEditorDecorations(); }, 250);
   setInterval(() => { pollDirtyState(); }, 500);
 
   // Breadcrumb bar

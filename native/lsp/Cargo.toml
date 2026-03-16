@@ -1,0 +1,11 @@
+[package]
+name = "hone-lsp-bridge"
+version = "0.1.0"
+edition = "2021"
+description = "LSP subprocess bridge — spawn language servers, pipe JSON-RPC over stdin/stdout"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+libc = "0.2"

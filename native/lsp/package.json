@@ -1,0 +1,33 @@
+{
+  "name": "@honeide/lsp-bridge",
+  "version": "0.1.0",
+  "description": "LSP subprocess bridge — spawn language servers, pipe JSON-RPC",
+  "main": "perry/live.ts",
+  "exports": {
+    ".": "./perry/live.ts",
+    "./perry/live": "./perry/live.ts"
+  },
+  "license": "MIT",
+  "perry": {
+    "nativeLibrary": {
+      "module": "@honeide/lsp-bridge",
+      "functions": [
+        { "name": "hone_lsp_start", "params": ["i64", "i64", "i64"], "returns": "f64" },
+        { "name": "hone_lsp_send", "params": ["f64", "i64"], "returns": "f64" },
+        { "name": "hone_lsp_poll", "params": ["f64"], "returns": "i64" },
+        { "name": "hone_lsp_is_alive", "params": ["f64"], "returns": "f64" },
+        { "name": "hone_lsp_stop", "params": ["f64"], "returns": "f64" }
+      ],
+      "targets": {
+        "macos": {
+          "crate": "./",
+          "lib": "libhone_lsp_bridge.a"
+        },
+        "linux": {
+          "crate": "./",
+          "lib": "libhone_lsp_bridge.a"
+        }
+      }
+    }
+  }
+}

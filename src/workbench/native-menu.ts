@@ -7,10 +7,12 @@ import type { MenuItem } from '../menu';
 import { getPlatformContext } from '../platform';
 import {
   menuCreate, menuAddItem, menuAddSeparator, menuAddSubmenu,
+  menuAddStandardAction,
   menuBarCreate, menuBarAddMenu, menuBarAttach,
 } from 'perry/ui';
 import {
   openFolderAction, openFileAction, toggleSidebarAction, closeEditorAction,
+  checkForUpdatesAction, formatDocumentAction,
 } from './render';
 
 // ---------------------------------------------------------------------------
@@ -31,7 +33,36 @@ function dispatchCommand(command: string): void {
   } else if (command.length === 37 && command.charCodeAt(0) === 119) {
     // workbench.action.closeActiveEditor
     closeEditorAction();
+  } else if (command.length === 32 && command.charCodeAt(10) === 97 && command.charCodeAt(17) === 99) {
+    // workbench.action.checkForUpdates (length 32, charCodeAt(10)='a', charCodeAt(17)='c')
+    checkForUpdatesAction();
+  } else if (command.length === 15 && command.charCodeAt(0) === 101 && command.charCodeAt(5) === 102) {
+    // edit.formatDocument (length 15, 'e'dit.'f'ormatDocument)
+    formatDocumentAction();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Standard action mapping — Edit menu items that go via responder chain
+// ---------------------------------------------------------------------------
+
+/**
+ * Map edit commands to their macOS selectors.
+ * Returns the selector string (e.g. "copy:") or empty string if not a standard action.
+ * Perry-safe: uses length + charCodeAt matching.
+ */
+function getStandardSelector(cmd: string): string {
+  // edit.cut (length 8, 'e'=101, 'd'=100, '.'=46, 'c'=99, 'u'=117, 't'=116)
+  if (cmd.length === 8 && cmd.charCodeAt(0) === 101 && cmd.charCodeAt(5) === 99 && cmd.charCodeAt(7) === 116) return 'cut:';
+  // edit.copy (length 9, starts with 'e', charCodeAt(5)='c', charCodeAt(8)='y')
+  if (cmd.length === 9 && cmd.charCodeAt(0) === 101 && cmd.charCodeAt(5) === 99 && cmd.charCodeAt(8) === 121) return 'copy:';
+  // edit.paste (length 10, starts with 'e', charCodeAt(5)='p')
+  if (cmd.length === 10 && cmd.charCodeAt(0) === 101 && cmd.charCodeAt(5) === 112) return 'paste:';
+  // NOTE: undo/redo intentionally NOT standard actions — macOS disables them
+  // when no NSUndoManager exists. Cmd+Z handled in Rust keyDown instead.
+  // edit.selectAll (length 14, starts with 'e', charCodeAt(5)='s')
+  if (cmd.length === 14 && cmd.charCodeAt(0) === 101 && cmd.charCodeAt(5) === 115) return 'selectAll:';
+  return '';
 }
 
 // ---------------------------------------------------------------------------
@@ -60,8 +91,23 @@ function buildNativeMenu(items: MenuItem[]): unknown {
       menuAddSubmenu(menu, mi.label, sub);
     } else {
       const cmd = mi.command || '';
-      const shortcut = mi.shortcut || '';
-      if (shortcut.length > 0) {
+      let shortcut = mi.shortcut || '';
+
+      // Strip shortcuts from undo/redo — Cmd+Z handled in Rust keyDown.
+      // Without this, menu captures Cmd+Z and macOS disables it (no NSUndoManager).
+      // edit.undo: length 9, charCodeAt(5)='u'=117; edit.redo: length 9, charCodeAt(5)='r'=114
+      if (cmd.length === 9 && cmd.charCodeAt(0) === 101) {
+        if (cmd.charCodeAt(5) === 117 || cmd.charCodeAt(5) === 114) {
+          shortcut = '';
+        }
+      }
+
+      // Check if this is a standard Edit action (copy/paste/cut/selectAll).
+      // These use nil-target NSMenuItem so macOS routes via responder chain.
+      const selector = getStandardSelector(cmd);
+      if (selector.length > 0 && shortcut.length > 0) {
+        menuAddStandardAction(menu, mi.label, selector, shortcut);
+      } else if (shortcut.length > 0) {
         menuAddItem(menu, mi.label, () => { dispatchCommand(cmd); }, shortcut);
       } else {
         menuAddItem(menu, mi.label, () => { dispatchCommand(cmd); });
