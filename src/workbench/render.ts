@@ -119,6 +119,8 @@ import {
   setRelayToken, setRelayLastSeq, setMaxMessagesPerPoll,
 } from './sync-transport';
 
+import { dispatchPluginHook, isPluginSystemEnabled, setDecorationRenderCallback } from '../plugins';
+
 // Compile-time platform ID injected by Perry codegen:
 // 0 = macOS, 1 = iOS, 2 = Android, 3 = Windows, 4 = Linux, 5 = Web
 declare const __platform__: number;
@@ -437,6 +439,13 @@ export function saveFileAction(): void {
   writeFileSync(currentEditorFilePath, content);
   triggerDiagnostics();
   markTabSaved(content.length);
+  // Dispatch onDocumentSave hook to plugins
+  if (isPluginSystemEnabled() > 0) {
+    let eventJson = '{"filePath":"';
+    eventJson += currentEditorFilePath;
+    eventJson += '"}';
+    dispatchPluginHook('onDocumentSave', eventJson);
+  }
 }
 
 export function saveFileAsAction(): void {
@@ -884,6 +893,13 @@ function openFileInEditor(filePath: string, fileName: string): void {
   openTab(filePath, fileName);
   displayFileContent(filePath);
   telemetryTrackFileOpen();
+  // Dispatch onDocumentOpen hook to plugins
+  if (isPluginSystemEnabled() > 0) {
+    let eventJson = '{"filePath":"';
+    eventJson += filePath;
+    eventJson += '"}';
+    dispatchPluginHook('onDocumentOpen', eventJson);
+  }
 }
 
 function checkOpenFileRequests(): void {
@@ -940,6 +956,13 @@ function openFileFromSearchPanel(path: string, name: string): void {
 }
 
 /** Called by search panel to reload editor after replace. */
+/** Module-level callback for plugin decoration changes — re-renders editor. Perry-safe. */
+function onDecorationChanged(): void {
+  if (editorReady > 0) {
+    editorInstance.render();
+  }
+}
+
 function reloadEditorContent(path: string, content: string): void {
   if (editorReady > 0) {
     editorInstance.setContent(content);
@@ -1242,6 +1265,11 @@ function renderEditorArea(): unknown {
 
   const nsviewPtr = hone_editor_nsview(ed.nativeHandle as number);
   editorWidget = embedNSView(nsviewPtr);
+
+  // Wire plugin decoration render callback — re-renders editor when decorations change
+  if (isPluginSystemEnabled() > 0) {
+    setDecorationRenderCallback(onDecorationChanged);
+  }
 
   displayFileContent(defaultFile);
 

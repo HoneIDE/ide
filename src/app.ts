@@ -32,6 +32,7 @@ import { renderWorkbench } from './workbench/render';
 import { setupNativeMenuBar } from './workbench/native-menu';
 import { isSetupComplete } from './workbench/settings';
 import { createSetupScreen, setSetupParent } from './workbench/views/setup/setup-screen';
+import { initPluginSystem } from './plugins';
 
 // ---------------------------------------------------------------------------
 // App state
@@ -64,6 +65,12 @@ if (_layoutNum === 0) _layoutMode = 'compact';
 if (_layoutNum === 1) _layoutMode = 'split';
 
 setupNativeMenuBar();
+
+// Initialize plugin system if compiled with --features plugins
+declare const __plugins__: number;
+if (__plugins__) {
+  initPluginSystem();
+}
 
 // Check if first-run setup is needed
 // On mobile (compact/split), skip setup if settings loading is unreliable
