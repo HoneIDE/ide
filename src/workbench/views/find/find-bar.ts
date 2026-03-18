@@ -11,7 +11,7 @@ import {
   TextField,
   textSetFontSize, textSetString,
   buttonSetBordered, buttonSetImage, buttonSetImagePosition,
-  widgetAddChild, widgetSetWidth, widgetSetHeight, widgetSetHidden, widgetSetHugging,
+  widgetAddChild, widgetSetWidth, widgetSetHeight, widgetSetHidden, widgetSetHugging, widgetSetBackgroundColor,
   widgetAddOverlay, widgetSetOverlayFrame,
   textfieldSetString, textfieldFocus, textfieldSetOnSubmit,
   textfieldSetBorderless, textfieldSetBackgroundColor, textfieldSetFontSize, textfieldSetTextColor,
@@ -21,6 +21,7 @@ import {
   getEditorBackground, getEditorForeground,
   getInputBackground, getInputForeground, getInputBorder,
   getButtonBackground, getButtonForeground,
+  isCurrentThemeDark,
 } from '../../theme/theme-colors';
 
 // ---------------------------------------------------------------------------
@@ -32,6 +33,9 @@ let findBarX: number = 0;
 
 // Widget handles
 let findBarContainer: unknown = null;
+let findRowWidget: unknown = null;
+let replaceRowWidget: unknown = null;
+let bottomBorderWidget: unknown = null;
 let findTextField: unknown = null;
 let replaceTextField: unknown = null;
 let matchCountLabel: unknown = null;
@@ -149,14 +153,14 @@ function performSearch(): void {
 
   const qLen = findQuery.length;
   let line = 0;
-  let col = 0;
+  let lineStart = 0;
   const limit = content.length - qLen;
 
   for (let i = 0; i <= limit; i++) {
     const ch = content.charCodeAt(i);
     if (ch === 10) {
       line = line + 1;
-      col = 0;
+      lineStart = i + 1;
       continue;
     }
 
@@ -187,6 +191,8 @@ function performSearch(): void {
       }
 
       if (match > 0 && findMatchCount < 10000) {
+        // Column = byte offset from line start (matches Rust UTF-8 byte indexing)
+        const col = i - lineStart;
         findMatchLines.push(line);
         findMatchCols.push(col);
         findMatchOffsets.push(i);
@@ -194,8 +200,6 @@ function performSearch(): void {
         findMatchCount = findMatchCount + 1;
       }
     }
-
-    col = col + 1;
   }
 
   updateMatchLabel();
@@ -241,6 +245,29 @@ function navigateToCurrentMatch(): void {
   if (findCurrentMatch < 0 || findCurrentMatch >= findMatchCount) return;
   const line = findMatchLines[findCurrentMatch];
   _scrollToLine(line);
+  sendMatchData();
+}
+
+/** Send packed match data to render.ts via _pushDecorations callback.
+ * Format: "CUR:N|LINE,COL,LEN|LINE,COL,LEN|..."
+ * This avoids cross-module array access issues in Perry. */
+function sendMatchData(): void {
+  if (findMatchCount < 1) {
+    _pushDecorations('CLEAR');
+    return;
+  }
+  let data = 'CUR:';
+  data += String(findCurrentMatch);
+  const limit = findMatchCount < 200 ? findMatchCount : 200;
+  for (let i = 0; i < limit; i++) {
+    data += '|';
+    data += String(findMatchLines[i]);
+    data += ',';
+    data += String(findMatchCols[i]);
+    data += ',';
+    data += String(findMatchLengths[i]);
+  }
+  _pushDecorations(data);
 }
 
 // ---------------------------------------------------------------------------
@@ -338,6 +365,7 @@ export function showFindBar(): void {
   if (findBarReady < 1) return;
   findBarVisible = 1;
   widgetSetHidden(findBarContainer, 0);
+  applyFindBarColors();
   if (findTextField) textfieldFocus(findTextField);
 }
 
@@ -347,6 +375,7 @@ export function showFindBarWithReplace(): void {
   replaceRowVisible = 1;
   if (replaceRow) widgetSetHidden(replaceRow, 0);
   widgetSetHidden(findBarContainer, 0);
+  applyFindBarColors();
   if (findTextField) textfieldFocus(findTextField);
 }
 
@@ -362,6 +391,29 @@ export function hideFindBar(): void {
 
 export function isFindBarVisible(): number {
   return findBarVisible;
+}
+
+export function getFindMatchCount(): number {
+  return findMatchCount;
+}
+
+export function getFindMatchLine(idx: number): number {
+  if (idx < 0 || idx >= findMatchCount) return -1;
+  return findMatchLines[idx];
+}
+
+export function getFindMatchCol(idx: number): number {
+  if (idx < 0 || idx >= findMatchCount) return 0;
+  return findMatchCols[idx];
+}
+
+export function getFindMatchLen(idx: number): number {
+  if (idx < 0 || idx >= findMatchCount) return 0;
+  return findMatchLengths[idx];
+}
+
+export function getFindCurrentMatch(): number {
+  return findCurrentMatch;
 }
 
 /**
@@ -393,50 +445,54 @@ export function pushFindHighlights(): void {
     return;
   }
 
-  const charWidth = _getCharWidth();
-  if (charWidth < 1) return;
-  const lineHeight = 21;
-  const gutterWidth = 48;
+  // Clear previous
+  _clearLineBackgrounds();
 
-  let json = '[';
-  let first = 1;
+  // Get the current match's line number
+  let currentMatchLine = -1;
+  if (findCurrentMatch >= 0 && findCurrentMatch < findMatchCount) {
+    currentMatchLine = findMatchLines[findCurrentMatch];
+  }
 
-  // Cap at 200 decorations to keep JSON manageable
+  // Use setLineBackground for each match line — reliable, persists across frames.
+  // Track unique lines to avoid double-setting
+  let prevLine = -1;
+  let count = 0;
   const limit = findMatchCount < 200 ? findMatchCount : 200;
 
   for (let i = 0; i < limit; i++) {
     const line = findMatchLines[i];
-    const col = findMatchCols[i];
-    const matchLen = findMatchLengths[i];
+    if (line === prevLine) continue;
+    prevLine = line;
+    if (count > 200) break;
 
-    // Current match: solid orange, others: semi-transparent yellow
-    // Use 8-char hex (#RRGGBBAA) — the Rust renderer parses alpha from it
-    let color = '#e2c17044'; // yellow 27% alpha
-    if (i === findCurrentMatch) {
-      color = '#e8ab53aa';   // orange 67% alpha
-    }
-
-    if (first > 0) {
-      first = 0;
+    if (line === currentMatchLine) {
+      // Current match line: stronger orange
+      _setLineBackground(line + 1, 0.91, 0.67, 0.33, 0.28);
     } else {
-      json += ',';
+      // Other match lines: subtle yellow
+      _setLineBackground(line + 1, 0.89, 0.76, 0.33, 0.15);
     }
-    json += '{"x":';
-    json += String(gutterWidth + col * charWidth);
-    json += ',"y":';
-    json += String(line * lineHeight);
-    json += ',"w":';
-    json += String(matchLen * charWidth);
-    json += ',"h":';
-    json += String(lineHeight);
-    json += ',"color":"';
-    json += color;
-    json += '","type":"background"}';
+    count = count + 1;
   }
-  json += ']';
 
-  _pushDecorations(json);
-  lastHighlightedLineCount = limit;
+  // Also push character-precise highlights via find_highlights FFI for the
+  // current match only (single JSON entry — avoids Perry string corruption in loops)
+  if (findCurrentMatch >= 0 && findCurrentMatch < findMatchCount) {
+    const curLine = findMatchLines[findCurrentMatch];
+    const curCol = findMatchCols[findCurrentMatch];
+    const curLen = findMatchLengths[findCurrentMatch];
+    let json = '[{"line":';
+    json += String(curLine);
+    json += ',"col":';
+    json += String(curCol);
+    json += ',"len":';
+    json += String(curLen);
+    json += ',"current":1}]';
+    _pushDecorations(json);
+  }
+
+  lastHighlightedLineCount = count;
 }
 
 // ---------------------------------------------------------------------------
@@ -446,6 +502,8 @@ export function pushFindHighlights(): void {
 function onFindTextChanged(text: string): void {
   findQuery = text;
   performSearch();
+  // Send match data to render.ts for highlighting
+  sendMatchData();
 }
 
 function onReplaceTextChanged(text: string): void {
@@ -491,6 +549,23 @@ function onReplaceAllClick(): void {
 // ---------------------------------------------------------------------------
 // Create the find bar widget
 // ---------------------------------------------------------------------------
+
+/** Re-apply find bar background colors using direct RGBA calls. */
+function applyFindBarColors(): void {
+  if (isCurrentThemeDark() > 0) {
+    // Dark theme: #252526 container, #3c3c3c rows, #454545 border
+    widgetSetBackgroundColor(findBarContainer, 0.145, 0.145, 0.149, 1.0);
+    widgetSetBackgroundColor(findRowWidget, 0.235, 0.235, 0.235, 1.0);
+    if (replaceRowWidget) widgetSetBackgroundColor(replaceRowWidget, 0.235, 0.235, 0.235, 1.0);
+    if (bottomBorderWidget) widgetSetBackgroundColor(bottomBorderWidget, 0.271, 0.271, 0.271, 1.0);
+  } else {
+    // Light theme: #f3f3f3 container, #ffffff rows, #c8c8c8 border
+    widgetSetBackgroundColor(findBarContainer, 0.953, 0.953, 0.953, 1.0);
+    widgetSetBackgroundColor(findRowWidget, 1.0, 1.0, 1.0, 1.0);
+    if (replaceRowWidget) widgetSetBackgroundColor(replaceRowWidget, 1.0, 1.0, 1.0, 1.0);
+    if (bottomBorderWidget) widgetSetBackgroundColor(bottomBorderWidget, 0.784, 0.784, 0.784, 1.0);
+  }
+}
 
 export function createFindBar(): unknown {
   // Find row — compact VS Code-like layout
@@ -544,6 +619,7 @@ export function createFindBar(): unknown {
 
   // spacing=3, top=3, right=6, bottom=3, left=4
   const findRow = HStackWithInsets(3, 3, 6, 3, 4);
+  findRowWidget = findRow;
   widgetSetHeight(findRow, 30);
   widgetAddChild(findRow, chevronBtn);
   widgetAddChild(findRow, findTextField);
@@ -579,18 +655,13 @@ export function createFindBar(): unknown {
   widgetSetWidth(replaceAllBtn, 24);
 
   replaceRow = HStackWithInsets(3, 3, 6, 3, 24);
+  replaceRowWidget = replaceRow;
   widgetSetHeight(replaceRow, 30);
   widgetAddChild(replaceRow, replaceSpacer);
   widgetAddChild(replaceRow, replaceTextField);
   widgetAddChild(replaceRow, replaceOneBtn);
   widgetAddChild(replaceRow, replaceAllBtn);
   widgetSetHidden(replaceRow, 1); // hidden by default
-
-  // Container — elevated background for contrast
-  const container = VStackWithInsets(0, 1, 4, 1, 0);
-  widgetAddChild(container, findRow);
-  widgetAddChild(container, replaceRow);
-  widgetSetHugging(container, 750);
 
   // Apply theme colors
   setFg(matchCountLabel, getEditorForeground());
@@ -603,11 +674,13 @@ export function createFindBar(): unknown {
   setBtnFg(replaceOneBtn, getEditorForeground());
   setBtnFg(replaceAllBtn, getEditorForeground());
 
-  // Container background — slightly elevated from editor
-  setBg(container, getInputBackground());
-
-  findBarContainer = container;
+  // Use findRow directly as the container (HStackWithInsets supports setBg, VStack doesn't)
+  findBarContainer = findRow;
+  findRowWidget = findRow;
   findBarReady = 1;
 
-  return container;
+  // Apply background
+  applyFindBarColors();
+
+  return findRow;
 }

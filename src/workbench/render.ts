@@ -25,6 +25,7 @@ import {
   openFolderDialog, openFileDialog, saveFileDialog, pollOpenFile,
   textfieldFocus,
   frameSplitCreate, frameSplitAddChild,
+  menuCreate, menuAddItem, menuAddSeparator, widgetSetContextMenu,
 } from 'perry/ui';
 import { Editor, editorSetBgColor, editorSetFgColor, editorSetGutterFgColor, editorSetSelectionColor, editorSetCursorColor } from '@honeide/editor/perry';
 import { getActiveTheme, setActiveTheme } from './theme/theme-loader';
@@ -82,6 +83,10 @@ import {
   toggleRemoteDir, clickRemoteFile, getExpandedDirCount, getVisibleFileCount,
 } from './views/explorer/sidebar-render';
 import {
+  setContextMenuWorkspaceRoot, setContextMenuRefreshCallback,
+  setContextMenuFileOpener, setContextMenuTerminalOpener,
+} from './views/explorer/context-menu';
+import {
   initTabBar, setTabDisplayCallback, setTabThemeColors,
   openTab, getActiveTabPath, getActiveTabIdx, getTabCount,
   getOpenTabCount, getOpenTabPath, setActiveTabByIndex,
@@ -105,7 +110,7 @@ import { renderSettingsTab } from './views/settings-ui/settings-panel';
 import { setWelcomeActions, setWelcomeRecentCallback, createWelcomeContent } from './views/welcome/welcome-tab';
 import { initNotifications, showNotification } from './views/notifications/notifications';
 import { initRecentItems, addRecentFile, addRecentFolder, getRecentPath, getRecentType } from './views/recent/recent-store';
-import { createFindBar, setFindEditorCallbacks, showFindBar, showFindBarWithReplace, hideFindBar, isFindBarVisible, pushFindHighlights } from './views/find/find-bar';
+import { createFindBar, setFindEditorCallbacks, showFindBar, showFindBarWithReplace, hideFindBar, isFindBarVisible } from './views/find/find-bar';
 import { setLspWorkspaceRoot, initLspBridge, triggerDiagnostics, getCompletions, setDiagnosticsStatusUpdater } from './views/lsp/lsp-bridge';
 import { setDiagnosticsFileOpener } from './views/lsp/diagnostics-panel';
 import { createAutocompletePopup, setAutocompleteAcceptHandler } from './views/lsp/autocomplete-popup';
@@ -123,7 +128,7 @@ import {
 
 import { dispatchPluginHook, isPluginSystemEnabled, setDecorationRenderCallback } from '../plugins';
 import { getDiagFiles, getDiagLines, getDiagMessages, getDiagSeverities, getDiagCount } from './views/lsp/diagnostics-panel';
-import { lspDidOpen, lspDidSave, lspFormatDocument, lspHover, lspDefinition, lspSignatureHelp, setHoverCallback, setDefinitionCallback, setSignatureCallback } from './views/lsp/lsp-bridge';
+import { lspDidOpen, lspDidSave, lspFormatDocument, lspHover, lspDefinition, lspSignatureHelp, setHoverCallback, setDefinitionCallback, setSignatureCallback, setFormatCallback, lspIsReady } from './views/lsp/lsp-bridge';
 import { createHoverPopup, showHoverPopup, hideHoverPopup, isHoverVisible } from './views/lsp/hover-popup';
 import { createSignaturePopup, showSignaturePopup, hideSignaturePopup, isSignatureVisible } from './views/lsp/signature-popup';
 
@@ -131,8 +136,11 @@ import { createSignaturePopup, showSignaturePopup, hideSignaturePopup, isSignatu
 // 0 = macOS, 1 = iOS, 2 = Android, 3 = Windows, 4 = Linux, 5 = Web
 declare const __platform__: number;
 
-// FFI function from @honeide/editor — returns raw NSView* for an EditorView
+// FFI functions from @honeide/editor
 declare function hone_editor_nsview(handle: number): number;
+declare function hone_editor_set_find_highlights(handle: number, json: number): void;
+declare function hone_editor_clear_find_highlights(handle: number): void;
+declare function hone_editor_scroll(handle: number, offsetY: number): void;
 
 
 // Dynamic file tree — loaded from opened folder
@@ -173,6 +181,9 @@ let currentEditorFilePath = '';
 
 // Untitled file counter
 let untitledCounter: number = 0;
+
+// Find bar widget ref (for applying background from render.ts)
+let findBarWidget: unknown = null;
 
 // Sidebar toggling (full/split layouts)
 let sidebarWidget: unknown = null;
@@ -332,6 +343,7 @@ export function toggleTerminalAction(): void {
 function onFolderOpened(folderPath: string): void {
   workspaceRoot = folderPath;
   setSidebarWorkspaceRoot(folderPath);
+  setContextMenuWorkspaceRoot(folderPath);
   setSearchWorkspaceRoot(folderPath);
   setGitWorkspaceRoot(folderPath);
   setTerminalCwd(folderPath);
@@ -442,6 +454,18 @@ export function findAction(): void {
 
 function findDeferred(): void {
   showFindBar();
+  applyFindBarBg();
+}
+
+function applyFindBarBg(): void {
+  if (!findBarWidget) return;
+  if (isCurrentThemeDark() > 0) {
+    // Dark: elevated surface #333333
+    widgetSetBackgroundColor(findBarWidget, 0.2, 0.2, 0.2, 1.0);
+  } else {
+    // Light: distinct from white editor bg #e8e8e8
+    widgetSetBackgroundColor(findBarWidget, 0.91, 0.91, 0.91, 1.0);
+  }
 }
 
 export function saveFileAction(): void {
@@ -452,7 +476,7 @@ export function saveFileAction(): void {
     saveFileAsAction();
     return;
   }
-  const content = editorInstance.getContent();
+  let content = editorInstance.getContent();
   // In remote mode, send save to host via relay instead of writing locally
   if (isRemoteExplorerMode() > 0) {
     let msg = 'FILE_SAVE|';
@@ -464,6 +488,18 @@ export function saveFileAction(): void {
     savingMsg += currentEditorFilePath;
     setSyncStatusText(savingMsg);
     return;
+  }
+  const fmtSettings = getWorkbenchSettings();
+  // Format on save (built-in only — sync, no LSP race)
+  if (fmtSettings.editorFormatOnSave) {
+    content = applyBuiltinFormatToString(content, fmtSettings);
+    editorInstance.setContent(content);
+    editorInstance.render();
+  } else if (fmtSettings.filesTrimTrailingWhitespace) {
+    // Trim trailing whitespace on save (independent of format-on-save)
+    content = inlineTrimTrailingWhitespace(content);
+    editorInstance.setContent(content);
+    editorInstance.render();
   }
   writeFileSync(currentEditorFilePath, content);
   triggerDiagnostics();
@@ -514,6 +550,7 @@ export function replaceAction(): void {
 
 function replaceDeferred(): void {
   showFindBarWithReplace();
+  applyFindBarBg();
 }
 
 // ---------------------------------------------------------------------------
@@ -532,12 +569,9 @@ function findBarSetContent(content: string): void {
 
 function findBarScrollToLine(line: number): void {
   if (editorReady < 1) return;
+  // Center the match line in the viewport with padding
   const vm = editorInstance.viewModel;
-  const cursors = vm.cursors;
-  if (cursors.length > 0) {
-    cursors[0].line = line;
-    cursors[0].column = 0;
-  }
+  vm.viewport.scroll.revealLine(line, 'center');
   editorInstance.render();
 }
 
@@ -547,10 +581,97 @@ function findBarRenderEditor(): void {
 }
 
 
-function findBarPushDecorations(json: string): void {
+/** Called from find-bar.ts with packed match data: "CUR:N|LINE,COL,LEN|..." */
+function findBarPushDecorations(data: string): void {
   if (editorReady < 1) return;
-  // Use dedicated find highlights API — persists across begin_frame clears
-  editorInstance.setFindHighlights(json);
+  if (data.length < 1) return;
+
+  // Handle clear
+  if (data.charCodeAt(0) === 67 && data.length === 5) {
+    // "CLEAR"
+    editorInstance.clearLineBackgrounds();
+    editorInstance.clearFindHighlights();
+    lastFindHighlightCount = 0;
+    return;
+  }
+
+  // Parse "CUR:N|LINE,COL,LEN|LINE,COL,LEN|..."
+  let curMatch = 0;
+  let parsePos = 4; // skip "CUR:"
+  while (parsePos < data.length && data.charCodeAt(parsePos) !== 124) {
+    const ch = data.charCodeAt(parsePos);
+    if (ch >= 48 && ch <= 57) curMatch = curMatch * 10 + (ch - 48);
+    parsePos = parsePos + 1;
+  }
+
+  // Parse match entries
+  const matchLines: number[] = [];
+  const matchCols: number[] = [];
+  const matchLens: number[] = [];
+  let matchCount = 0;
+
+  while (parsePos < data.length) {
+    parsePos = parsePos + 1; // skip '|'
+    let mLine = 0;
+    let mCol = 0;
+    let mLen = 0;
+    while (parsePos < data.length && data.charCodeAt(parsePos) !== 44) {
+      const ch = data.charCodeAt(parsePos);
+      if (ch >= 48 && ch <= 57) mLine = mLine * 10 + (ch - 48);
+      parsePos = parsePos + 1;
+    }
+    parsePos = parsePos + 1;
+    while (parsePos < data.length && data.charCodeAt(parsePos) !== 44) {
+      const ch = data.charCodeAt(parsePos);
+      if (ch >= 48 && ch <= 57) mCol = mCol * 10 + (ch - 48);
+      parsePos = parsePos + 1;
+    }
+    parsePos = parsePos + 1;
+    while (parsePos < data.length && data.charCodeAt(parsePos) !== 124) {
+      const ch = data.charCodeAt(parsePos);
+      if (ch >= 48 && ch <= 57) mLen = mLen * 10 + (ch - 48);
+      parsePos = parsePos + 1;
+    }
+    matchLines.push(mLine);
+    matchCols.push(mCol);
+    matchLens.push(mLen);
+    matchCount = matchCount + 1;
+  }
+
+  // Always clear all line backgrounds first, then set new ones
+  // This is a single synchronous operation — no blink between frames
+  editorInstance.clearLineBackgrounds();
+
+  let currentLine = -1;
+  if (curMatch >= 0 && curMatch < matchCount) {
+    currentLine = matchLines[curMatch];
+  }
+
+  let prevLine = -1;
+  for (let i = 0; i < matchCount; i++) {
+    const line = matchLines[i];
+    if (line === prevLine) continue;
+    prevLine = line;
+    const lineNum = line + 1;
+    if (line === currentLine) {
+      editorInstance.setLineBackground(lineNum, 0.91, 0.67, 0.33, 0.28);
+    } else {
+      editorInstance.setLineBackground(lineNum, 0.89, 0.76, 0.33, 0.15);
+    }
+  }
+  lastFindHighlightCount = matchCount;
+
+  // Character-precise highlight for current match
+  if (curMatch >= 0 && curMatch < matchCount) {
+    let json = '[{"line":';
+    json += String(matchLines[curMatch]);
+    json += ',"col":';
+    json += String(matchCols[curMatch]);
+    json += ',"len":';
+    json += String(matchLens[curMatch]);
+    json += ',"current":1}]';
+    editorInstance.setFindHighlights(json);
+  }
 }
 
 function findBarGetCharWidth(): number {
@@ -1084,6 +1205,20 @@ function onSidebarFileClick(path: string, name: string): void {
   updateSidebarSelection();
 }
 
+/** Called by context menu to refresh the sidebar after file operations. */
+function onContextMenuRefresh(): void {
+  refreshSidebarContent();
+}
+
+/** Called by context menu to open a terminal at a specific directory. */
+function onContextMenuTerminalOpen(dir: string): void {
+  setTerminalCwd(dir);
+  // Show terminal panel if hidden
+  if (terminalVisible < 1) {
+    toggleTerminalAction();
+  }
+}
+
 /** Called by search panel when a file is opened from results. */
 function openFileFromSearchPanel(path: string, name: string): void {
   openFileInEditor(path, name);
@@ -1196,15 +1331,190 @@ export function goToNextErrorAction(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Format Document — sends textDocument/formatting to LSP
+// Format Document — 3-tier formatting pipeline
 // ---------------------------------------------------------------------------
 
-/** Format the current document via LSP. */
+/** Format the current document (menu/shortcut entry point). */
 export function formatDocumentAction(): void {
-  if (currentEditorFilePath.length < 1) return;
-  if (editorReady < 1) return;
-  lspFormatDocument(currentEditorFilePath, 2, 1); // tabSize=2, insertSpaces=true
+  formatCurrentDocument();
 }
+
+/** Core formatting pipeline: LSP first (async), then built-in (sync). */
+export function formatCurrentDocument(): void {
+  if (currentEditorFilePath.length < 1 || editorReady < 1) return;
+  const s = getWorkbenchSettings();
+
+  // Try LSP first (async — result arrives via onLspFormatResult callback)
+  if (lspIsReady() > 0) {
+    lspFormatDocument(currentEditorFilePath, s.editorTabSize, s.editorInsertSpaces ? 1 : 0);
+    return;
+  }
+
+  // Fall back to built-in formatter (sync)
+  applyBuiltinFormat();
+}
+
+/**
+ * Apply built-in formatting rules to the current editor content.
+ * Perry-safe inline implementation — same algorithm as hone-core/formatting-rules.ts.
+ */
+function applyBuiltinFormat(): void {
+  const content = editorInstance.getContent();
+  if (content.length < 1) return;
+  const s = getWorkbenchSettings();
+  const result = applyBuiltinFormatToString(content, s);
+  if (result !== content) {
+    editorInstance.setContent(result);
+    editorInstance.render();
+  }
+}
+
+/**
+ * Format a string using built-in rules. Returns the formatted string.
+ * Perry-safe: uses charCodeAt loops, no regex.
+ */
+function applyBuiltinFormatToString(content: string, s: any): string {
+  // Split by \n
+  const lines: string[] = [];
+  let lineStart = 0;
+  for (let i = 0; i <= content.length; i++) {
+    if (i === content.length || content.charCodeAt(i) === 10) {
+      lines.push(content.slice(lineStart, i));
+      lineStart = i + 1;
+    }
+  }
+
+  // Process each line
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+
+    // Trim trailing whitespace
+    if (s.filesTrimTrailingWhitespace || s.editorFormatOnSave) {
+      let end = line.length;
+      while (end > 0) {
+        const ch = line.charCodeAt(end - 1);
+        if (ch === 32 || ch === 9) { end = end - 1; } else { break; }
+      }
+      if (end < line.length) line = line.slice(0, end);
+    }
+
+    // Normalize indentation
+    if (s.editorFormatNormalizeIndent) {
+      let spaces = 0;
+      let idx = 0;
+      while (idx < line.length) {
+        const ch = line.charCodeAt(idx);
+        if (ch === 32) { spaces = spaces + 1; idx = idx + 1; }
+        else if (ch === 9) { spaces = spaces + s.editorTabSize; idx = idx + 1; }
+        else { break; }
+      }
+      if (idx > 0) {
+        const rest = line.slice(idx);
+        let indent = '';
+        if (s.editorInsertSpaces) {
+          for (let j = 0; j < spaces; j++) { indent += ' '; }
+        } else {
+          const tabs = (spaces / s.editorTabSize) | 0;
+          const rem = spaces - tabs * s.editorTabSize;
+          for (let j = 0; j < tabs; j++) { indent += '\t'; }
+          for (let j = 0; j < rem; j++) { indent += ' '; }
+        }
+        line = indent + rest;
+      }
+    }
+
+    lines[i] = line;
+  }
+
+  // Trim final blank lines
+  if (s.editorTrimFinalNewlines) {
+    while (lines.length > 1 && lines[lines.length - 1].length === 0) {
+      lines.pop();
+    }
+  }
+
+  // Rejoin
+  let formatted = '';
+  for (let i = 0; i < lines.length; i++) {
+    if (i > 0) formatted += '\n';
+    formatted += lines[i];
+  }
+
+  // Insert final newline
+  if (s.editorInsertFinalNewline) {
+    if (formatted.length === 0 || formatted.charCodeAt(formatted.length - 1) !== 10) {
+      formatted += '\n';
+    }
+  }
+
+  return formatted;
+}
+
+/**
+ * Trim trailing whitespace from each line (no other formatting).
+ * Used when trim-on-save is enabled but format-on-save is not.
+ */
+function inlineTrimTrailingWhitespace(content: string): string {
+  const lines: string[] = [];
+  let lineStart = 0;
+  for (let i = 0; i <= content.length; i++) {
+    if (i === content.length || content.charCodeAt(i) === 10) {
+      let line = content.slice(lineStart, i);
+      let end = line.length;
+      while (end > 0) {
+        const ch = line.charCodeAt(end - 1);
+        if (ch === 32 || ch === 9) { end = end - 1; } else { break; }
+      }
+      if (end < line.length) line = line.slice(0, end);
+      lines.push(line);
+      lineStart = i + 1;
+    }
+  }
+  let result = '';
+  for (let i = 0; i < lines.length; i++) {
+    if (i > 0) result += '\n';
+    result += lines[i];
+  }
+  return result;
+}
+
+/** Handle LSP formatting response — apply TextEdits to editor. */
+function onLspFormatResult(editsJson: string): void {
+  if (editorReady < 1) return;
+
+  // The editsJson is the "result" portion of the JSON-RPC response.
+  // Format: "result":[{"range":{"start":{"line":0,"character":0},"end":{"line":N,"character":M}},"newText":"..."}]
+  // For simplicity, if we got a result array, apply full-document replacement.
+  // Most formatters return a single edit covering the whole document.
+  const newTextIdx = editsJson.indexOf('"newText":"');
+  if (newTextIdx < 0) return;
+
+  // Extract newText value (unescape basic sequences)
+  let text = '';
+  let i = newTextIdx + 11; // skip '"newText":"'
+  while (i < editsJson.length) {
+    const ch = editsJson.charCodeAt(i);
+    if (ch === 34) break; // closing quote
+    if (ch === 92 && i + 1 < editsJson.length) {
+      const next = editsJson.charCodeAt(i + 1);
+      if (next === 110) { text += '\n'; i = i + 2; continue; } // \n
+      if (next === 116) { text += '\t'; i = i + 2; continue; } // \t
+      if (next === 34) { text += '"'; i = i + 2; continue; }   // \"
+      if (next === 92) { text += '\\'; i = i + 2; continue; }  // \\
+    }
+    text += editsJson.charAt(i);
+    i = i + 1;
+  }
+
+  if (text.length > 0) {
+    editorInstance.setContent(text);
+    editorInstance.render();
+  }
+}
+
+// Deferred context menu actions (Perry callback safety)
+function formatDocumentDeferred(): void { setTimeout(() => { formatCurrentDocument(); }, 0); }
+function goToDefinitionDeferred(): void { setTimeout(() => { goToDefinitionAction(); }, 0); }
 
 /** Update status bar indent indicator. */
 function updateStatusBarIndent(_tabSize: number, _useTabs: boolean): void {
@@ -1212,12 +1522,111 @@ function updateStatusBarIndent(_tabSize: number, _useTabs: boolean): void {
   // takes precedence. Future: apply detected indent to editor.
 }
 
-/** Sync all editor decorations — bracket matching + diagnostics + hover. Perry-safe. */
+/** Sync all editor decorations — diagnostics + hover. Perry-safe. */
 function syncEditorDecorations(): void {
   syncDiagnosticDecorations();
   syncHoverRequest();
-  // Find highlights use setPersistentDecorations (survives begin_frame clear)
-  pushFindHighlights();
+  // Find highlights are NOT polled — updated on-demand via findBarPushDecorations callback
+}
+
+/** Push find match line highlights. Same-module to avoid Perry cross-module call issues. */
+let lastFindHighlightCount: number = 0;
+let lastFindHighlightHash: number = 0;
+// Track previously highlighted lines so we can un-highlight them without clearing all
+let prevHighlightedLines: number[] = [];
+let prevHighlightedCount: number = 0;
+
+function syncFindHighlights(): void {
+  if (editorReady < 1) return;
+
+  if (isFindBarVisible() < 1) {
+    if (lastFindHighlightCount > 0) {
+      // Remove old highlights by setting them to fully transparent
+      for (let i = 0; i < prevHighlightedCount; i++) {
+        editorInstance.setLineBackground(prevHighlightedLines[i], 0.0, 0.0, 0.0, 0.0);
+      }
+      editorInstance.clearFindHighlights();
+      lastFindHighlightCount = 0;
+      lastFindHighlightHash = 0;
+      prevHighlightedCount = 0;
+    }
+    return;
+  }
+
+  const matchCount = getFindMatchCount();
+  if (matchCount < 1) {
+    if (lastFindHighlightCount > 0) {
+      for (let i = 0; i < prevHighlightedCount; i++) {
+        editorInstance.setLineBackground(prevHighlightedLines[i], 0.0, 0.0, 0.0, 0.0);
+      }
+      editorInstance.clearFindHighlights();
+      lastFindHighlightCount = 0;
+      lastFindHighlightHash = 0;
+      prevHighlightedCount = 0;
+    }
+    return;
+  }
+
+  // Quick hash to skip redundant updates
+  const curIdx = getFindCurrentMatch();
+  const hash = matchCount * 10000 + curIdx;
+  if (hash === lastFindHighlightHash) return;
+  lastFindHighlightHash = hash;
+
+  // Get current match line
+  let currentLine = -1;
+  if (curIdx >= 0 && curIdx < matchCount) {
+    currentLine = getFindMatchLine(curIdx);
+  }
+
+  // Build new highlighted lines list and set colors (overwrites existing entries)
+  const newLines: number[] = [];
+  let newCount = 0;
+  let prevLine = -1;
+  const limit = matchCount < 200 ? matchCount : 200;
+  for (let i = 0; i < limit; i++) {
+    const line = getFindMatchLine(i);
+    if (line === prevLine) continue;
+    if (line < 0) continue;
+    prevLine = line;
+    const lineNum = line + 1;
+    if (line === currentLine) {
+      editorInstance.setLineBackground(lineNum, 0.91, 0.67, 0.33, 0.28);
+    } else {
+      editorInstance.setLineBackground(lineNum, 0.89, 0.76, 0.33, 0.15);
+    }
+    newLines.push(lineNum);
+    newCount = newCount + 1;
+  }
+
+  // Clear lines that were highlighted before but aren't anymore
+  for (let i = 0; i < prevHighlightedCount; i++) {
+    const oldLine = prevHighlightedLines[i];
+    let stillHighlighted = 0;
+    for (let j = 0; j < newCount; j++) {
+      if (newLines[j] === oldLine) { stillHighlighted = 1; break; }
+    }
+    if (stillHighlighted < 1) {
+      editorInstance.setLineBackground(oldLine, 0.0, 0.0, 0.0, 0.0);
+    }
+  }
+
+  prevHighlightedLines = newLines;
+  prevHighlightedCount = newCount;
+
+  // Character-precise highlight for current match only
+  if (curIdx >= 0 && curIdx < matchCount) {
+    let json = '[{"line":';
+    json += String(getFindMatchLine(curIdx));
+    json += ',"col":';
+    json += String(getFindMatchCol(curIdx));
+    json += ',"len":';
+    json += String(getFindMatchLen(curIdx));
+    json += ',"current":1}]';
+    editorInstance.setFindHighlights(json);
+  }
+
+  lastFindHighlightCount = limit;
 }
 
 // ---------------------------------------------------------------------------
@@ -1949,15 +2358,16 @@ function renderEditorArea(): unknown {
   const hoverPopup = createHoverPopup(colors);
   const signaturePopup = createSignaturePopup(colors);
 
-  // Create find bar (hidden by default, inserted between breadcrumb and editor)
+  // Create find bar (starts hidden via widgetSetHidden)
   const findBar = createFindBar();
+  findBarWidget = findBar;
   widgetSetHidden(findBar, 1);
   setFindEditorCallbacks(findBarGetContent, findBarSetContent, findBarScrollToLine, findBarRenderEditor, findBarPushDecorations, findBarGetCharWidth, findBarGetViewportStart, findBarSetLineBg, findBarClearLineBgs);
 
 
   const editorPane = VStack(0, [tbc, breadcrumbContainer, findBar, hoverPopup, signaturePopup, editorWidget]);
+  stackSetDetachesHidden(editorPane, 1);
   setBg(editorPane, getEditorBackground());
-  stackSetDetachesHidden(editorPane, 1); // hidden children (find bar) don't take space
   widgetSetHugging(editorPane, 1); // editor pane stretches in mainRow
   // Embedded NSView has no intrinsic width — pin it to fill the VStack's width
   widgetMatchParentWidth(editorWidget);
@@ -1967,7 +2377,15 @@ function renderEditorArea(): unknown {
   setHoverCallback(onLspHoverResult);
   setDefinitionCallback(onLspDefinitionResult);
   setSignatureCallback(onLspSignatureResult);
+  setFormatCallback(onLspFormatResult);
 
+  // Editor right-click context menu
+  const editorMenu = menuCreate();
+  menuAddItem(editorMenu, 'Format Document', () => { formatDocumentDeferred(); });
+  menuAddSeparator(editorMenu);
+  menuAddItem(editorMenu, 'Go to Definition', () => { goToDefinitionDeferred(); });
+  menuAddSeparator(editorMenu);
+  widgetSetContextMenu(editorWidget, editorMenu);
 
   return editorPane;
 }
@@ -4528,6 +4946,10 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   setSidebarOpenFolderCallback(openFolderAction);
   setSidebarNewFileCallback(newFileAction);
   setSidebarCurrentEditorPath(currentEditorFilePath);
+  setContextMenuWorkspaceRoot(workspaceRoot);
+  setContextMenuRefreshCallback(onContextMenuRefresh);
+  setContextMenuFileOpener(onSidebarFileClick);
+  setContextMenuTerminalOpener(onContextMenuTerminalOpen);
   setTabDisplayCallback(onTabDisplay);
   setStatusBarCursorGetter(getCursorPosition);
   setSearchWorkspaceRoot(workspaceRoot);
