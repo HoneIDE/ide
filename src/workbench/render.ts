@@ -54,7 +54,6 @@ import { join } from 'path';
 import { spawnBackground } from 'child_process';
 import { execSync } from 'child_process';
 import { getTempDir, getCwd, getHomeDir, getAppDataDir } from './paths';
-import { initBufferStore, saveBuffer, loadBuffer, deleteBuffer, hasBuffer } from './buffer-store';
 import { getPlatformContext, isWebPlatform } from '../platform';
 
 import { registerBuiltinCommands, registerCommand } from '../commands';
@@ -88,7 +87,7 @@ import {
   setContextMenuFileOpener, setContextMenuTerminalOpener,
 } from './views/explorer/context-menu';
 import {
-  initTabBar, setTabDisplayCallback, setTabCloseCallback, setTabThemeColors,
+  initTabBar, setTabDisplayCallback, setTabThemeColors,
   openTab, getActiveTabPath, getActiveTabIdx, getTabCount,
   getOpenTabCount, getOpenTabPath, setActiveTabByIndex,
   markTabSaved, updateTabDirtyIcon, applyAllTabColors, closeActiveTab, renameActiveTab,
@@ -198,12 +197,6 @@ let compactExplorerPane: unknown = null;
 let compactChatPane: unknown = null;
 let compactShowingExplorer: number = 0;
 let compactShowingChat: number = 0;
-
-// Buffer persistence + file watcher state
-let lastSavedLen: number = -1;
-let watchDiskContent = '';
-let watchDiskLen: number = -1;
-let watchPath = '';
 // Track which compact panel is active: 0=editor, 1=files, 2=search, 3=sync, 4=settings, 5=chat
 let compactActivePanel: number = 0;
 let compactChatRendered: number = 0;
@@ -510,10 +503,6 @@ export function saveFileAction(): void {
   triggerDiagnostics();
   lspDidSave(currentEditorFilePath);
   markTabSaved(content.length);
-  deleteBuffer(currentEditorFilePath);
-  lastSavedLen = content.length;
-  watchDiskContent = content;
-  watchDiskLen = content.length;
   // Dispatch onDocumentSave hook to plugins
   if (isPluginSystemEnabled() > 0) {
     let eventJson = '{"filePath":"';
@@ -1109,70 +1098,6 @@ function hideUpdateInEditorPane(): void {
   if (editorWidget) widgetSetHidden(editorWidget, 0);
 }
 
-function persistCurrentBufferIfDirty(): void {
-  if (currentEditorFilePath.length < 1) return;
-  if (editorReady < 1) return;
-  // Skip virtual paths (start with '_')
-  if (currentEditorFilePath.charCodeAt(0) === 95) return;
-  const content = editorInstance.getContent();
-  if (content.length !== lastSavedLen) {
-    saveBuffer(currentEditorFilePath, content);
-  } else {
-    deleteBuffer(currentEditorFilePath);
-  }
-}
-
-function onTabClosed(closedPath: string): void {
-  deleteBuffer(closedPath);
-}
-
-function pollFileChanges(): void {
-  if (currentEditorFilePath.length < 1) return;
-  if (editorReady < 1) return;
-  // Skip virtual paths
-  if (currentEditorFilePath.charCodeAt(0) === 95) return;
-  // Check if watched path matches current editor path
-  let pathMatch = 1;
-  if (watchPath.length !== currentEditorFilePath.length) {
-    pathMatch = 0;
-  } else {
-    for (let i = 0; i < watchPath.length; i++) {
-      if (watchPath.charCodeAt(i) !== currentEditorFilePath.charCodeAt(i)) {
-        pathMatch = 0;
-        break;
-      }
-    }
-  }
-  if (pathMatch < 1) {
-    // Path changed — reset baseline
-    const disk = safeReadFile(currentEditorFilePath);
-    watchPath = currentEditorFilePath;
-    watchDiskContent = disk;
-    watchDiskLen = disk.length;
-    return;
-  }
-  // Read current disk content
-  const freshDisk = safeReadFile(currentEditorFilePath);
-  if (freshDisk.length === watchDiskLen) return;
-  // Disk changed
-  const editorContent = editorInstance.getContent();
-  if (editorContent.length === watchDiskLen) {
-    // Tab is clean (matches old disk) — update editor with new disk content
-    editorInstance.setContent(freshDisk);
-    const newLen = editorInstance.getContent().length;
-    markTabSaved(newLen);
-    editorInstance.render();
-    deleteBuffer(currentEditorFilePath);
-    lastSavedLen = newLen;
-    watchDiskContent = freshDisk;
-    watchDiskLen = freshDisk.length;
-  } else {
-    // Tab is dirty — only update baseline, don't touch editor
-    watchDiskContent = freshDisk;
-    watchDiskLen = freshDisk.length;
-  }
-}
-
 function displayFileContent(filePath: string): void {
   const t0 = Date.now();
   // Virtual paths (__settings__, __update__, __welcome__) — don't read file
@@ -1201,47 +1126,27 @@ function displayFileContent(filePath: string): void {
   const lang = detectLanguage(filePath);
   editorInstance.setLanguage(lang);
   const t5 = Date.now();
-  const diskContent = safeReadFile(filePath);
+  const content = safeReadFile(filePath);
   const t6 = Date.now();
-  // Check for persisted buffer (unsaved changes from previous tab switch)
-  let displaySource = diskContent;
-  let loadedFromBuffer = 0;
-  if (hasBuffer(filePath) > 0) {
-    const buf = loadBuffer(filePath);
-    if (buf.length > 0) {
-      displaySource = buf;
-      loadedFromBuffer = 1;
-    }
-  }
   // Large files (>100KB): load first 5000 lines for instant display
-  let displayContent = displaySource;
-  if (displaySource.length > 100000) {
+  let displayContent = content;
+  if (content.length > 100000) {
     let nlCount = 0;
-    let cutoff = displaySource.length;
-    for (let ci = 0; ci < displaySource.length; ci++) {
-      if (displaySource.charCodeAt(ci) === 10) {
+    let cutoff = content.length;
+    for (let ci = 0; ci < content.length; ci++) {
+      if (content.charCodeAt(ci) === 10) {
         nlCount = nlCount + 1;
         if (nlCount >= 5000) { cutoff = ci; break; }
       }
     }
-    if (cutoff < displaySource.length) {
-      displayContent = displaySource.slice(0, cutoff);
+    if (cutoff < content.length) {
+      displayContent = content.slice(0, cutoff);
     }
   }
   editorInstance.setContent(displayContent);
+  // Mark saved immediately so pollDirtyState doesn't flag it as dirty
   const editorLen = editorInstance.getContent().length;
-  if (loadedFromBuffer > 0) {
-    // Mark saved with disk length — pollDirtyState will detect mismatch and show dirty
-    markTabSaved(diskContent.length);
-    lastSavedLen = diskContent.length;
-  } else {
-    markTabSaved(editorLen);
-    lastSavedLen = editorLen;
-  }
-  // Update watcher baseline
-  watchPath = filePath;
-  watchDiskContent = diskContent;
-  watchDiskLen = diskContent.length;
+  markTabSaved(editorLen);
   const t7 = Date.now();
   editorInstance.render();
   const t8 = Date.now();
@@ -1332,7 +1237,6 @@ function getCursorPosition(): { line: number; column: number } | null {
 
 /** Called by tab bar when the active tab changes. */
 function onTabDisplay(path: string): void {
-  persistCurrentBufferIfDirty();
   if (path.length < 1) {
     currentEditorFilePath = '';
     setSidebarCurrentEditorPath('');
@@ -2488,7 +2392,6 @@ function renderEditorArea(): unknown {
   // Poll cursor position for status bar + sync decorations + blame
   setInterval(() => { pollCursorPositionImpl(); syncEditorDecorations(); syncInlineBlame(); }, 250);
   setInterval(() => { pollDirtyState(); }, 500);
-  setInterval(() => { pollFileChanges(); }, 2000);
 
   // Breadcrumb bar — fully opaque background to cover editor behind
   breadcrumbContainer = HStackWithInsets(4, 4, 8, 4, 8);
@@ -5090,9 +4993,6 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   // Initialize recent items store
   initRecentItems();
 
-  // Initialize buffer persistence
-  initBufferStore();
-
   // Wire up extracted panel callbacks
   setSidebarWorkspaceRoot(workspaceRoot);
   setSidebarFileClickCallback(onSidebarFileClick);
@@ -5104,7 +5004,6 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   setContextMenuFileOpener(onSidebarFileClick);
   setContextMenuTerminalOpener(onContextMenuTerminalOpen);
   setTabDisplayCallback(onTabDisplay);
-  setTabCloseCallback(onTabClosed);
   setStatusBarCursorGetter(getCursorPosition);
   setSearchWorkspaceRoot(workspaceRoot);
   setSearchFileOpener(openFileFromSearchPanel);

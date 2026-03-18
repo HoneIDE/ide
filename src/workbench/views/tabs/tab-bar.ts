@@ -45,7 +45,6 @@ let pendingCloseOthersIdx: number = -1;
 
 // External callbacks
 let _displayCallback: (path: string) => void = _noopDisplay;
-let _tabCloseCallback: (path: string) => void = _noopDisplay;
 
 function _noopDisplay(_p: string): void {}
 
@@ -55,10 +54,6 @@ function _noopDisplay(_p: string): void {}
 
 export function setTabDisplayCallback(cb: (path: string) => void): void {
   _displayCallback = cb;
-}
-
-export function setTabCloseCallback(cb: (path: string) => void): void {
-  _tabCloseCallback = cb;
 }
 
 export function setTabThemeColors(colors: ResolvedUIColors): void {
@@ -357,7 +352,6 @@ function onTabCloseDeferred(): void {
   if (idx < 0) return;
   pendingTabCloseIdx = -1;
   if (openTabCount < 2) return;
-  _tabCloseCallback(openTabs[idx]);
   const newTabs: string[] = [];
   const newNames: string[] = [];
   for (let i = 0; i < openTabCount; i++) {
@@ -389,9 +383,6 @@ function closeAllTabs(): void {
 }
 
 function closeAllTabsDeferred(): void {
-  for (let i = 0; i < openTabCount; i++) {
-    _tabCloseCallback(openTabs[i]);
-  }
   openTabs = [];
   openTabNames = [];
   openTabCount = 0;
@@ -412,11 +403,6 @@ function closeOtherTabsDeferred(): void {
   if (keepIdx < 0) return;
   pendingCloseOthersIdx = -1;
   if (keepIdx >= openTabCount) return;
-  for (let i = 0; i < openTabCount; i++) {
-    if (i !== keepIdx) {
-      _tabCloseCallback(openTabs[i]);
-    }
-  }
   const keptPath = openTabs[keepIdx];
   const keptName = openTabNames[keepIdx];
   openTabs = [keptPath];
