@@ -10,8 +10,9 @@
  */
 
 import { streamStart } from 'node-fetch';
+import { existsSync, readFileSync, unlinkSync } from 'fs';
 import { getWorkbenchSettings } from './settings';
-import { getOrCreateDeviceId } from './paths';
+import { getOrCreateDeviceId, getAppDataDir } from './paths';
 import { getPlatformContext } from '../platform';
 import { HONE_VERSION } from './version';
 
@@ -78,11 +79,82 @@ export function initTelemetry(): void {
   else if (dc.charCodeAt(0) === 112) _deviceClass = 'phone';
   else _deviceClass = 'desktop';
 
+  // Check for crash log from previous session and report it
+  checkAndReportCrash();
+
   // Queue session_start event
   queueEvent('session_start', buildDims4(_platform, _version, _layoutMode, _deviceClass));
 
   // Set up 5-minute flush interval
   _flushInterval = setInterval(flushTelemetryTick, 300000);
+}
+
+// ---------------------------------------------------------------------------
+// Crash report — reads ~/.hone/crash.log written by Rust panic/signal hooks
+// ---------------------------------------------------------------------------
+
+function checkAndReportCrash(): void {
+  let crashPath = getAppDataDir();
+  crashPath += '/crash.log';
+
+  try {
+    if (!existsSync(crashPath)) return;
+
+    const raw = readFileSync(crashPath);
+    if (raw.length < 3) {
+      // Empty or malformed — just clean up
+      try { unlinkSync(crashPath); } catch (e2: any) { /* ignore */ }
+      return;
+    }
+
+    // Format is "type:message\n" — extract type and a sanitized summary
+    // type is "panic" or "signal"
+    const colonIdx = raw.indexOf(':');
+    let crashType = 'unknown';
+    let crashDetail = 'unknown';
+
+    if (colonIdx > 0) {
+      crashType = raw.slice(0, colonIdx);
+
+      // Extract detail — trim newlines, cap length to avoid PII leakage
+      let detail = raw.slice(colonIdx + 1);
+      // Trim trailing whitespace
+      let end = detail.length;
+      while (end > 0) {
+        const ch = detail.charCodeAt(end - 1);
+        if (ch === 10 || ch === 13 || ch === 32) {
+          end = end - 1;
+        } else {
+          break;
+        }
+      }
+      if (end > 0) {
+        detail = detail.slice(0, end);
+      }
+      // Cap at 80 chars and strip file paths (keep only filename:line)
+      if (detail.length > 80) {
+        detail = detail.slice(0, 80);
+      }
+      crashDetail = detail;
+    }
+
+    // Build the crash type string: "panic:message" or "signal:SIGSEGV"
+    let typeStr = '';
+    typeStr += crashType;
+    typeStr += ':';
+    typeStr += crashDetail;
+
+    // Queue as a crash event (separate from regular errors)
+    queueEvent('crash', buildDims3(_platform, _version, typeStr));
+
+    // Flush immediately — don't wait 5 minutes for crash reports
+    flushTelemetry();
+
+    // Delete the crash log
+    try { unlinkSync(crashPath); } catch (e2: any) { /* ignore */ }
+  } catch (e: any) {
+    // Can't read crash log — ignore silently
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -208,6 +280,7 @@ function getDimKeys(eventName: string): string[] {
   if (eventName.charCodeAt(0) === 97 && eventName.charCodeAt(3) === 99) return DIM_KEYS_AI; // ai_chat
   if (eventName.charCodeAt(0) === 97 && eventName.charCodeAt(3) === 105) return DIM_KEYS_AI; // ai_inline
   if (eventName.charCodeAt(0) === 97 && eventName.charCodeAt(3) === 97) return DIM_KEYS_AI; // ai_agent
+  if (eventName.charCodeAt(0) === 99 && eventName.length === 5) return DIM_KEYS_ERR; // crash
   if (eventName.charCodeAt(0) === 101) return DIM_KEYS_ERR; // error
   if (eventName.charCodeAt(0) === 112) return DIM_KEYS_ERR; // perf_startup (same shape: platform, version, bucket→type)
   if (eventName.charCodeAt(0) === 116 && eventName.length === 12) return DIM_KEYS_THEME; // theme_change
