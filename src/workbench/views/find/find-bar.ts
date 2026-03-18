@@ -371,13 +371,14 @@ export function isFindBarVisible(): number {
  * Only pushes matches near the visible viewport to keep JSON small.
  */
 /**
- * Push find match highlights using setLineBackground (persists across frames).
- * Called from render.ts syncEditorDecorations poll (250ms).
+ * Build and push find highlights via the dedicated setFindHighlights FFI.
+ * These persist across begin_frame clears — no polling needed.
+ * Called from render.ts syncEditorDecorations (250ms) to update when matches change.
  */
 export function pushFindHighlights(): void {
   if (findBarVisible < 1) {
-    // Clear any stale highlights
     if (lastHighlightedLineCount > 0) {
+      _pushDecorations('');
       _clearLineBackgrounds();
       lastHighlightedLineCount = 0;
     }
@@ -385,35 +386,57 @@ export function pushFindHighlights(): void {
   }
   if (findMatchCount < 1) {
     if (lastHighlightedLineCount > 0) {
+      _pushDecorations('');
       _clearLineBackgrounds();
       lastHighlightedLineCount = 0;
     }
     return;
   }
 
-  // Clear previous highlights first
-  _clearLineBackgrounds();
+  const charWidth = _getCharWidth();
+  if (charWidth < 1) return;
+  const lineHeight = 21;
+  const gutterWidth = 48;
 
-  // Highlight lines with matches using setLineBackground (1-based line numbers)
-  // Track unique lines to avoid setting same line twice
-  let prevLine = -1;
-  let count = 0;
-  for (let i = 0; i < findMatchCount; i++) {
+  let json = '[';
+  let first = 1;
+
+  // Cap at 200 decorations to keep JSON manageable
+  const limit = findMatchCount < 200 ? findMatchCount : 200;
+
+  for (let i = 0; i < limit; i++) {
     const line = findMatchLines[i];
-    if (line === prevLine) continue; // same line, skip
-    prevLine = line;
-    if (count > 200) break;
+    const col = findMatchCols[i];
+    const matchLen = findMatchLengths[i];
 
+    // Current match: solid orange, others: semi-transparent yellow
+    // Use 8-char hex (#RRGGBBAA) — the Rust renderer parses alpha from it
+    let color = '#e2c17044'; // yellow 27% alpha
     if (i === findCurrentMatch) {
-      // Current match: stronger orange highlight
-      _setLineBackground(line + 1, 0.91, 0.67, 0.33, 0.30);
-    } else {
-      // Other matches: subtle yellow highlight
-      _setLineBackground(line + 1, 0.88, 0.76, 0.33, 0.15);
+      color = '#e8ab53aa';   // orange 67% alpha
     }
-    count = count + 1;
+
+    if (first > 0) {
+      first = 0;
+    } else {
+      json += ',';
+    }
+    json += '{"x":';
+    json += String(gutterWidth + col * charWidth);
+    json += ',"y":';
+    json += String(line * lineHeight);
+    json += ',"w":';
+    json += String(matchLen * charWidth);
+    json += ',"h":';
+    json += String(lineHeight);
+    json += ',"color":"';
+    json += color;
+    json += '","type":"background"}';
   }
-  lastHighlightedLineCount = count;
+  json += ']';
+
+  _pushDecorations(json);
+  lastHighlightedLineCount = limit;
 }
 
 // ---------------------------------------------------------------------------

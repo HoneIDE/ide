@@ -26,7 +26,7 @@ import {
   textfieldFocus,
   frameSplitCreate, frameSplitAddChild,
 } from 'perry/ui';
-import { Editor, editorSetBgColor, editorSetFgColor, editorSetGutterFgColor, editorSetSelectionColor, editorSetCursorColor, setPersistentDecorations } from '@honeide/editor/perry';
+import { Editor, editorSetBgColor, editorSetFgColor, editorSetGutterFgColor, editorSetSelectionColor, editorSetCursorColor } from '@honeide/editor/perry';
 import { getActiveTheme, setActiveTheme } from './theme/theme-loader';
 import {
   getEditorBackground, getEditorForeground,
@@ -549,8 +549,8 @@ function findBarRenderEditor(): void {
 
 function findBarPushDecorations(json: string): void {
   if (editorReady < 1) return;
-  // Use persistent decorations so they survive begin_frame clear (8ms timer)
-  setPersistentDecorations(json);
+  // Use dedicated find highlights API — persists across begin_frame clears
+  editorInstance.setFindHighlights(json);
 }
 
 function findBarGetCharWidth(): number {
@@ -571,6 +571,7 @@ function findBarSetLineBg(line: number, r: number, g: number, b: number, a: numb
 function findBarClearLineBgs(): void {
   if (editorReady < 1) return;
   editorInstance.clearLineBackgrounds();
+  editorInstance.clearFindHighlights();
 }
 
 export function openRecentItem(idx: number): void {
