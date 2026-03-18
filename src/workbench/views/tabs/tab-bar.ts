@@ -5,11 +5,12 @@
  * All state is module-level (Perry closures capture by value).
  */
 import {
-  VStack, HStack, Button,
+  VStack, HStack, Button, Spacer,
   HStackWithInsets,
-  textSetFontSize,
+  textSetFontSize, textSetFontWeight,
   buttonSetBordered, buttonSetImage, buttonSetImagePosition,
-  widgetAddChild, widgetClearChildren, widgetSetHeight, widgetSetHugging,
+  widgetAddChild, widgetClearChildren, widgetSetWidth, widgetSetHeight, widgetSetHugging,
+  widgetSetBackgroundColor,
   widgetSetContextMenu, menuCreate, menuAddItem,
 } from 'perry/ui';
 import { readFileSync } from 'fs';
@@ -159,6 +160,7 @@ export function markTabSaved(contentLength: number): void {
     tabSavedLengths[activeTabIdx] = contentLength;
     if (activeTabIdx < tabCloseButtons.length) {
       buttonSetImage(tabCloseButtons[activeTabIdx], 'xmark');
+      textSetFontSize(tabCloseButtons[activeTabIdx], 9);
     }
   }
 }
@@ -167,12 +169,18 @@ export function markTabSaved(contentLength: number): void {
 export function updateTabDirtyIcon(contentLength: number): void {
   if (activeTabIdx < 0 || activeTabIdx >= tabDirty.length) return;
   const savedLen = tabSavedLengths[activeTabIdx];
+  // First check after tab open — initialize saved length, don't mark dirty
+  if (savedLen < 0) {
+    tabSavedLengths[activeTabIdx] = contentLength;
+    return;
+  }
   const wasDirty = tabDirty[activeTabIdx];
   if (contentLength !== savedLen) {
     if (wasDirty < 1) {
       tabDirty[activeTabIdx] = 1;
       if (activeTabIdx < tabCloseButtons.length) {
         buttonSetImage(tabCloseButtons[activeTabIdx], 'circle.fill');
+        textSetFontSize(tabCloseButtons[activeTabIdx], 6);
       }
     }
   } else {
@@ -180,6 +188,7 @@ export function updateTabDirtyIcon(contentLength: number): void {
       tabDirty[activeTabIdx] = 0;
       if (activeTabIdx < tabCloseButtons.length) {
         buttonSetImage(tabCloseButtons[activeTabIdx], 'xmark');
+        textSetFontSize(tabCloseButtons[activeTabIdx], 9);
       }
     }
   }
@@ -202,8 +211,8 @@ function rebuildTabBarDirect(count: number, names: string[], paths: string[], co
     const idx = i;
     const path = paths[i];
     const name = names[i];
-    // VS Code-like tab padding: spacing=5, top=8, right=8, bottom=8, left=10
-    const tabGroup = HStackWithInsets(5, 8, 8, 8, 10);
+    // VS Code-like tab padding: spacing=5, top=10, right=10, bottom=10, left=12
+    const tabGroup = HStackWithInsets(5, 10, 10, 10, 12);
     // File type icon
     const tabIcon = Button('', () => { onTabClickDirect(idx, path); });
     buttonSetBordered(tabIcon, 0);
@@ -218,67 +227,79 @@ function rebuildTabBarDirect(count: number, names: string[], paths: string[], co
     buttonSetBordered(closeBtn, 0);
     buttonSetImage(closeBtn, 'xmark');
     buttonSetImagePosition(closeBtn, 1);
-    textSetFontSize(closeBtn, 10);
+    textSetFontSize(closeBtn, 9);
+    widgetSetWidth(closeBtn, 16);
+    widgetSetHeight(closeBtn, 16);
     widgetAddChild(tabGroup, tabIcon);
     widgetAddChild(tabGroup, tabBtn);
     widgetAddChild(tabGroup, closeBtn);
 
-    // 2px accent bar at top of active tab
+    // 2px accent bar at bottom of active tab (VS Code style)
     const accent = HStack(0, []);
     widgetSetHeight(accent, 2);
     widgetSetHugging(accent, 750);
 
-    if (panelColors) {
+    // Apply colors using widgetSetBackgroundColor directly (setBg doesn't work on NSStackView)
+    if (i === activeTabIdx) {
+      setBtnFg(tabBtn, getTabActiveForeground());
+      // Active: white bg (light) / editor bg (dark)
+      widgetSetBackgroundColor(tabGroup, 1.0, 1.0, 1.0, 1.0);
+      // Blue accent bar
+      widgetSetBackgroundColor(accent, 0.0, 0.48, 0.80, 1.0);
+      setBtnFg(closeBtn, getTabActiveForeground());
+    } else {
+      setBtnFg(tabBtn, getTabInactiveForeground());
+      // Inactive: gray bg
+      widgetSetBackgroundColor(tabGroup, 0.925, 0.925, 0.925, 1.0);
+      // No accent bar
+      widgetSetBackgroundColor(accent, 0.0, 0.0, 0.0, 0.0);
+      setBtnFg(closeBtn, getTabInactiveForeground());
+    }
+    // Color the file icon
+    const tColor = getFileIconColor(name);
+    if (tColor.length > 0) {
+      setBtnTint(tabIcon, tColor);
+    } else {
       if (i === activeTabIdx) {
-        setBtnFg(tabBtn, getTabActiveForeground());
-        setBg(tabGroup, getTabActiveBackground());
-        setBg(accent, getFocusBorder());
-        setBtnFg(closeBtn, getTabActiveForeground());
+        setBtnTint(tabIcon, getTabActiveForeground());
       } else {
-        setBtnFg(tabBtn, getTabInactiveForeground());
-        setBg(tabGroup, getTabInactiveBackground());
-        setBg(accent, getTabInactiveBackground());
-        setBtnFg(closeBtn, getTabInactiveForeground());
-      }
-      // Color the file icon
-      const tColor = getFileIconColor(name);
-      if (tColor.length > 0) {
-        setBtnTint(tabIcon, tColor);
-      } else {
-        if (i === activeTabIdx) {
-          setBtnTint(tabIcon, getTabActiveForeground());
-        } else {
-          setBtnTint(tabIcon, getTabInactiveForeground());
-        }
+        setBtnTint(tabIcon, getTabInactiveForeground());
       }
     }
 
-    // Wrap tab in VStack with accent bar on top
-    const tabWrapper = VStack(0, [accent, tabGroup]);
+    // Wrap tab in VStack with accent bar at bottom (VS Code style)
+    const tabWrapper = VStack(0, [tabGroup, accent]);
     const tabMenu = menuCreate();
     menuAddItem(tabMenu, 'Close', () => { onTabClose(idx); });
     menuAddItem(tabMenu, 'Close Others', () => { closeOtherTabs(idx); });
     menuAddItem(tabMenu, 'Close All', () => { closeAllTabs(); });
     widgetSetContextMenu(tabWrapper, tabMenu);
     widgetAddChild(container, tabWrapper);
+    // 1px vertical separator between tabs
+    if (i < count - 1) {
+      const sep = VStack(0, []);
+      widgetSetWidth(sep, 1);
+      setBg(sep, getTabBorder());
+      widgetAddChild(container, sep);
+    }
     tabBarButtons.push(tabGroup);
     tabAccentBars.push(accent);
     tabCloseButtons.push(closeBtn);
     tabLabelButtons.push(tabBtn);
     tabIconButtons.push(tabIcon);
     tabDirty.push(0);
-    // Perry: readFileSync crashes on Windows (segfault instead of throwing).
-    // Defer saved length initialization to first dirty check.
-    tabSavedLengths.push(0);
+    // -1 = not yet initialized; first pollDirtyState will set it to actual content length
+    tabSavedLengths.push(-1);
   }
+  // Push tabs to the left — spacer fills remaining width
+  widgetAddChild(container, Spacer());
 }
 
 function applyTabColors(count: number): void {
-  if (!panelColors) return;
   for (let i = 0; i < count; i++) {
     if (i === activeTabIdx) {
-      setBg(tabBarButtons[i], getTabActiveBackground());
-      if (i < tabAccentBars.length) setBg(tabAccentBars[i], getFocusBorder());
+      widgetSetBackgroundColor(tabBarButtons[i], 1.0, 1.0, 1.0, 1.0);
+      if (i < tabAccentBars.length) widgetSetBackgroundColor(tabAccentBars[i], 0.0, 0.48, 0.80, 1.0);
       if (i < tabLabelButtons.length) setBtnFg(tabLabelButtons[i], getTabActiveForeground());
       if (i < tabCloseButtons.length) setBtnFg(tabCloseButtons[i], getTabActiveForeground());
       if (i < tabIconButtons.length) {
@@ -289,8 +310,8 @@ function applyTabColors(count: number): void {
         }
       }
     } else {
-      setBg(tabBarButtons[i], getTabInactiveBackground());
-      if (i < tabAccentBars.length) setBg(tabAccentBars[i], getTabInactiveBackground());
+      widgetSetBackgroundColor(tabBarButtons[i], 0.925, 0.925, 0.925, 1.0);
+      if (i < tabAccentBars.length) widgetSetBackgroundColor(tabAccentBars[i], 0.0, 0.0, 0.0, 0.0);
       if (i < tabLabelButtons.length) setBtnFg(tabLabelButtons[i], getTabInactiveForeground());
       if (i < tabCloseButtons.length) setBtnFg(tabCloseButtons[i], getTabInactiveForeground());
       if (i < tabIconButtons.length) {

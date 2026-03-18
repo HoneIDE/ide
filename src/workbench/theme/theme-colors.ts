@@ -92,9 +92,9 @@ export function applyDarkColors(): void {
   _titleFg = '#cdd6f4';
   _tabActBg = '#1e1e2e';
   _tabActFg = '#cdd6f4';
-  _tabInBg = '#181825';
+  _tabInBg = '#11111b';
   _tabInFg = '#6c7086';
-  _tabBorder = '#181825';
+  _tabBorder = '#11111b';
   _stBg = '#181825';
   _stFg = '#cdd6f4';
   _panBg = '#181825';
@@ -135,9 +135,9 @@ export function applyLightColors(): void {
   _titleFg = '#333333';
   _tabActBg = '#ffffff';
   _tabActFg = '#333333';
-  _tabInBg = '#d9d9d9';
-  _tabInFg = '#000000';
-  _tabBorder = '#c8c8c8';
+  _tabInBg = '#ececec';
+  _tabInFg = '#888888';
+  _tabBorder = '#e0e0e0';
   _stBg = '#007acc';
   _stFg = '#ffffff';
   _panBg = '#ffffff';

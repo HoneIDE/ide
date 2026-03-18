@@ -1099,13 +1099,12 @@ function hideUpdateInEditorPane(): void {
 }
 
 function displayFileContent(filePath: string): void {
+  const t0 = Date.now();
   // Virtual paths (__settings__, __update__, __welcome__) — don't read file
   if (filePath.length > 2 && filePath.charCodeAt(0) === 95 && filePath.charCodeAt(1) === 95) {
-    // __settings__ (length 12)
     if (filePath.length === 12 && filePath.charCodeAt(2) === 115) {
       showSettingsInEditorPane();
     }
-    // __update__ (length 10, charCodeAt(2) === 117 'u')
     if (filePath.length === 10 && filePath.charCodeAt(2) === 117) {
       showUpdateInEditorPane();
     }
@@ -1116,30 +1115,82 @@ function displayFileContent(filePath: string): void {
   if (activeUpdateWidget) hideUpdateInEditorPane();
   currentEditorFilePath = filePath;
   setSidebarCurrentEditorPath(filePath);
+  const t1 = Date.now();
   updateBreadcrumb();
+  const t2 = Date.now();
   updateStatusBarLanguageImpl(filePath);
+  const t3 = Date.now();
   updateSidebarSelection();
+  const t4 = Date.now();
   if (editorReady < 1) return;
   const lang = detectLanguage(filePath);
   editorInstance.setLanguage(lang);
+  const t5 = Date.now();
   const content = safeReadFile(filePath);
-  editorInstance.setContent(content);
+  const t6 = Date.now();
+  // Large files (>100KB): load first 5000 lines for instant display
+  let displayContent = content;
+  if (content.length > 100000) {
+    let nlCount = 0;
+    let cutoff = content.length;
+    for (let ci = 0; ci < content.length; ci++) {
+      if (content.charCodeAt(ci) === 10) {
+        nlCount = nlCount + 1;
+        if (nlCount >= 5000) { cutoff = ci; break; }
+      }
+    }
+    if (cutoff < content.length) {
+      displayContent = content.slice(0, cutoff);
+    }
+  }
+  editorInstance.setContent(displayContent);
+  // Mark saved immediately so pollDirtyState doesn't flag it as dirty
+  const editorLen = editorInstance.getContent().length;
+  markTabSaved(editorLen);
+  const t7 = Date.now();
   editorInstance.render();
-  // Detect indentation from file content and apply to editor
+  const t8 = Date.now();
   applyDetectedIndentation(content);
-  // Notify LSP server of file open
+  const t9 = Date.now();
   lspDidOpen(filePath, lang, content);
+  const t10 = Date.now();
+  // Write timing log
+  let log = 'TIMING displayFileContent:\n';
+  log += '  setSidebarPath: '; log += String(t1 - t0); log += 'ms\n';
+  log += '  updateBreadcrumb: '; log += String(t2 - t1); log += 'ms\n';
+  log += '  updateStatusBar: '; log += String(t3 - t2); log += 'ms\n';
+  log += '  updateSidebarSel: '; log += String(t4 - t3); log += 'ms\n';
+  log += '  detectLanguage: '; log += String(t5 - t4); log += 'ms\n';
+  log += '  readFile: '; log += String(t6 - t5); log += 'ms\n';
+  log += '  setContent: '; log += String(t7 - t6); log += 'ms\n';
+  log += '  render: '; log += String(t8 - t7); log += 'ms\n';
+  log += '  detectIndent: '; log += String(t9 - t8); log += 'ms\n';
+  log += '  lspDidOpen: '; log += String(t10 - t9); log += 'ms\n';
+  log += '  TOTAL: '; log += String(t10 - t0); log += 'ms\n';
+  try { writeFileSync('/tmp/hone-timing.log', log); } catch (e: any) {}
 }
 
 function openFileInEditor(filePath: string, fileName: string): void {
+  const ot0 = Date.now();
   // Close diff view BEFORE modifying the tab bar — the tab rebuild triggers
   // a layout pass that crashes if diff editor NSViews are still in the hierarchy.
   if (isDiffActive() > 0) {
     hideDiffView();
   }
+  const ot1 = Date.now();
   openTab(filePath, fileName);
+  const ot2 = Date.now();
   displayFileContent(filePath);
+  const ot3 = Date.now();
   telemetryTrackFileOpen();
+  const ot4 = Date.now();
+  let olog = 'TIMING openFileInEditor:\n';
+  olog += '  diffCheck: '; olog += String(ot1 - ot0); olog += 'ms\n';
+  olog += '  openTab: '; olog += String(ot2 - ot1); olog += 'ms\n';
+  olog += '  displayFileContent: '; olog += String(ot3 - ot2); olog += 'ms\n';
+  olog += '  telemetry: '; olog += String(ot4 - ot3); olog += 'ms\n';
+  olog += '  TOTAL: '; olog += String(ot4 - ot0); olog += 'ms\n';
+  try { writeFileSync('/tmp/hone-timing-open.log', olog); } catch (e: any) {}
   // Track in recent items — skip virtual paths (__*) and untitled files
   if (filePath.length > 2 && filePath.charCodeAt(0) !== 95) {
     if (isUntitledFile() < 1) {
@@ -2311,7 +2362,6 @@ function renderEditorArea(): unknown {
   const defaultName = 'app.ts';
 
   const tbc = HStack(1, []);
-  widgetSetHugging(tbc, 750);
   initTabBar(tbc, null as any, defaultFile, defaultName);
 
   const ed = new Editor(800, 600);
