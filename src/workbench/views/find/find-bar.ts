@@ -14,6 +14,7 @@ import {
   widgetAddChild, widgetSetWidth, widgetSetHeight, widgetSetHidden, widgetSetHugging,
   widgetAddOverlay, widgetSetOverlayFrame,
   textfieldSetString, textfieldFocus, textfieldSetOnSubmit,
+  textfieldSetBorderless, textfieldSetBackgroundColor, textfieldSetFontSize, textfieldSetTextColor,
 } from 'perry/ui';
 import { setBg, setFg, setBtnFg, setBtnTint, toLowerCode } from '../../ui-helpers';
 import {
@@ -65,11 +66,24 @@ let _getContent: () => string = _noopContent;
 let _setContent: (c: string) => void = _noopSetContent;
 let _scrollToLine: (line: number) => void = _noopScroll;
 let _renderEditor: () => void = _noopRender;
+let _pushDecorations: (json: string) => void = _noopPush;
+let _getCharWidth: () => number = _noopCharWidth;
+let _getViewportStart: () => number = _noopViewportStart;
+let _setLineBackground: (line: number, r: number, g: number, b: number, a: number) => void = _noopLineBg;
+let _clearLineBackgrounds: () => void = _noopClearLineBg;
+
+// Track how many lines were highlighted last time so we can clear them
+let lastHighlightedLineCount: number = 0;
 
 function _noopContent(): string { return ''; }
 function _noopSetContent(c: string): void {}
 function _noopScroll(line: number): void {}
 function _noopRender(): void {}
+function _noopPush(j: string): void {}
+function _noopCharWidth(): number { return 8; }
+function _noopViewportStart(): number { return 0; }
+function _noopLineBg(l: number, r: number, g: number, b: number, a: number): void {}
+function _noopClearLineBg(): void {}
 
 // ---------------------------------------------------------------------------
 // Setters for editor callbacks
@@ -80,11 +94,21 @@ export function setFindEditorCallbacks(
   setContent: (c: string) => void,
   scrollToLine: (line: number) => void,
   renderEditor: () => void,
+  pushDecorations: (json: string) => void,
+  getCharWidth: () => number,
+  getViewportStart: () => number,
+  setLineBg: (line: number, r: number, g: number, b: number, a: number) => void,
+  clearLineBgs: () => void,
 ): void {
   _getContent = getContent;
   _setContent = setContent;
   _scrollToLine = scrollToLine;
   _renderEditor = renderEditor;
+  _pushDecorations = pushDecorations;
+  _getCharWidth = getCharWidth;
+  _getViewportStart = getViewportStart;
+  _setLineBackground = setLineBg;
+  _clearLineBackgrounds = clearLineBgs;
 }
 
 export function setFindBarPosition(x: number): void {
@@ -330,10 +354,66 @@ export function hideFindBar(): void {
   if (findBarReady < 1) return;
   findBarVisible = 0;
   widgetSetHidden(findBarContainer, 1);
+  // Clear line highlights when find bar closes
+  _clearLineBackgrounds();
+  lastHighlightedLineCount = 0;
+  _pushDecorations('');
 }
 
 export function isFindBarVisible(): number {
   return findBarVisible;
+}
+
+/**
+ * Push find match highlight decorations to the editor.
+ * Called from render.ts syncEditorDecorations poll (250ms).
+ * Decorations are cleared each draw cycle so must be pushed repeatedly.
+ * Only pushes matches near the visible viewport to keep JSON small.
+ */
+/**
+ * Push find match highlights using setLineBackground (persists across frames).
+ * Called from render.ts syncEditorDecorations poll (250ms).
+ */
+export function pushFindHighlights(): void {
+  if (findBarVisible < 1) {
+    // Clear any stale highlights
+    if (lastHighlightedLineCount > 0) {
+      _clearLineBackgrounds();
+      lastHighlightedLineCount = 0;
+    }
+    return;
+  }
+  if (findMatchCount < 1) {
+    if (lastHighlightedLineCount > 0) {
+      _clearLineBackgrounds();
+      lastHighlightedLineCount = 0;
+    }
+    return;
+  }
+
+  // Clear previous highlights first
+  _clearLineBackgrounds();
+
+  // Highlight lines with matches using setLineBackground (1-based line numbers)
+  // Track unique lines to avoid setting same line twice
+  let prevLine = -1;
+  let count = 0;
+  for (let i = 0; i < findMatchCount; i++) {
+    const line = findMatchLines[i];
+    if (line === prevLine) continue; // same line, skip
+    prevLine = line;
+    if (count > 200) break;
+
+    if (i === findCurrentMatch) {
+      // Current match: stronger orange highlight
+      _setLineBackground(line + 1, 0.91, 0.67, 0.33, 0.30);
+    } else {
+      // Other matches: subtle yellow highlight
+      _setLineBackground(line + 1, 0.88, 0.76, 0.33, 0.15);
+    }
+    count = count + 1;
+  }
+  lastHighlightedLineCount = count;
 }
 
 // ---------------------------------------------------------------------------
@@ -390,24 +470,30 @@ function onReplaceAllClick(): void {
 // ---------------------------------------------------------------------------
 
 export function createFindBar(): unknown {
-  // Find row
+  // Find row — compact VS Code-like layout
   chevronBtn = Button('', () => { onChevronClick(); });
   buttonSetBordered(chevronBtn, 0);
   buttonSetImage(chevronBtn, 'chevron.right');
   buttonSetImagePosition(chevronBtn, 1);
-  textSetFontSize(chevronBtn, 11);
+  textSetFontSize(chevronBtn, 10);
+  widgetSetWidth(chevronBtn, 20);
 
   findTextField = TextField('Find', (text: string) => { onFindTextChanged(text); });
-  widgetSetWidth(findTextField, 180);
+  widgetSetWidth(findTextField, 160);
+  widgetSetHeight(findTextField, 24);
+  textfieldSetBorderless(findTextField, 1);
+  textfieldSetFontSize(findTextField, 12);
   textfieldSetOnSubmit(findTextField, () => { onFindSubmit(); });
 
   caseSensitiveBtn = Button('Aa', () => { onCaseClick(); });
   buttonSetBordered(caseSensitiveBtn, 0);
   textSetFontSize(caseSensitiveBtn, 11);
+  widgetSetWidth(caseSensitiveBtn, 28);
 
   wholeWordBtn = Button('ab', () => { onWordClick(); });
   buttonSetBordered(wholeWordBtn, 0);
   textSetFontSize(wholeWordBtn, 11);
+  widgetSetWidth(wholeWordBtn, 28);
 
   matchCountLabel = Text('No results');
   textSetFontSize(matchCountLabel, 11);
@@ -416,21 +502,26 @@ export function createFindBar(): unknown {
   buttonSetBordered(prevBtn, 0);
   buttonSetImage(prevBtn, 'chevron.up');
   buttonSetImagePosition(prevBtn, 1);
-  textSetFontSize(prevBtn, 11);
+  textSetFontSize(prevBtn, 10);
+  widgetSetWidth(prevBtn, 24);
 
   const nextBtn = Button('', () => { onNextClick(); });
   buttonSetBordered(nextBtn, 0);
   buttonSetImage(nextBtn, 'chevron.down');
   buttonSetImagePosition(nextBtn, 1);
-  textSetFontSize(nextBtn, 11);
+  textSetFontSize(nextBtn, 10);
+  widgetSetWidth(nextBtn, 24);
 
   const closeBtn = Button('', () => { onCloseClick(); });
   buttonSetBordered(closeBtn, 0);
   buttonSetImage(closeBtn, 'xmark');
   buttonSetImagePosition(closeBtn, 1);
-  textSetFontSize(closeBtn, 11);
+  textSetFontSize(closeBtn, 10);
+  widgetSetWidth(closeBtn, 24);
 
-  const findRow = HStackWithInsets(4, 4, 6, 4, 4);
+  // spacing=3, top=3, right=6, bottom=3, left=4
+  const findRow = HStackWithInsets(3, 3, 6, 3, 4);
+  widgetSetHeight(findRow, 30);
   widgetAddChild(findRow, chevronBtn);
   widgetAddChild(findRow, findTextField);
   widgetAddChild(findRow, caseSensitiveBtn);
@@ -442,34 +533,41 @@ export function createFindBar(): unknown {
 
   // Replace row
   const replaceSpacer = HStack(0, []);
-  widgetSetWidth(replaceSpacer, 24);
+  widgetSetWidth(replaceSpacer, 20);
 
   replaceTextField = TextField('Replace', (text: string) => { onReplaceTextChanged(text); });
-  widgetSetWidth(replaceTextField, 180);
+  widgetSetWidth(replaceTextField, 160);
+  widgetSetHeight(replaceTextField, 24);
+  textfieldSetBorderless(replaceTextField, 1);
+  textfieldSetFontSize(replaceTextField, 12);
 
   const replaceOneBtn = Button('', () => { onReplaceOneClick(); });
   buttonSetBordered(replaceOneBtn, 0);
   buttonSetImage(replaceOneBtn, 'arrow.left.arrow.right');
   buttonSetImagePosition(replaceOneBtn, 1);
-  textSetFontSize(replaceOneBtn, 11);
+  textSetFontSize(replaceOneBtn, 10);
+  widgetSetWidth(replaceOneBtn, 24);
 
   const replaceAllBtn = Button('', () => { onReplaceAllClick(); });
   buttonSetBordered(replaceAllBtn, 0);
   buttonSetImage(replaceAllBtn, 'arrow.left.arrow.right.square');
   buttonSetImagePosition(replaceAllBtn, 1);
-  textSetFontSize(replaceAllBtn, 11);
+  textSetFontSize(replaceAllBtn, 10);
+  widgetSetWidth(replaceAllBtn, 24);
 
-  replaceRow = HStackWithInsets(4, 4, 6, 4, 4);
+  replaceRow = HStackWithInsets(3, 3, 6, 3, 24);
+  widgetSetHeight(replaceRow, 30);
   widgetAddChild(replaceRow, replaceSpacer);
   widgetAddChild(replaceRow, replaceTextField);
   widgetAddChild(replaceRow, replaceOneBtn);
   widgetAddChild(replaceRow, replaceAllBtn);
   widgetSetHidden(replaceRow, 1); // hidden by default
 
-  // Container
-  const container = VStackWithInsets(2, 2, 4, 2, 4);
+  // Container — elevated background for contrast
+  const container = VStackWithInsets(0, 1, 4, 1, 0);
   widgetAddChild(container, findRow);
   widgetAddChild(container, replaceRow);
+  widgetSetHugging(container, 750);
 
   // Apply theme colors
   setFg(matchCountLabel, getEditorForeground());
@@ -482,7 +580,7 @@ export function createFindBar(): unknown {
   setBtnFg(replaceOneBtn, getEditorForeground());
   setBtnFg(replaceAllBtn, getEditorForeground());
 
-  // Slightly different background from editor for contrast
+  // Container background — slightly elevated from editor
   setBg(container, getInputBackground());
 
   findBarContainer = container;

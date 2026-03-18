@@ -14,6 +14,7 @@ import {
   openFolderAction, openFileAction, toggleSidebarAction, closeEditorAction,
   checkForUpdatesAction, formatDocumentAction, goToDefinitionAction,
   newFileAction, findAction, replaceAction, openRecentItem,
+  saveFileAction, saveFileAsAction,
 } from './render';
 import {
   getRecentCount, getRecentPath, getRecentType, clearRecentItems,
@@ -55,6 +56,12 @@ function dispatchCommand(command: string): void {
   } else if (command.length === 12 && command.charCodeAt(0) === 101 && command.charCodeAt(5) === 114) {
     // edit.replace (length 12, 'e'dit.'r'eplace)
     replaceAction();
+  } else if (command.length === 9 && command.charCodeAt(0) === 102 && command.charCodeAt(5) === 115) {
+    // file.save (length 9, 'f'ile.'s'ave)
+    saveFileAction();
+  } else if (command.length === 11 && command.charCodeAt(0) === 102 && command.charCodeAt(5) === 115) {
+    // file.saveAs (length 11, 'f'ile.'s'aveAs)
+    saveFileAsAction();
   }
 }
 

@@ -24,7 +24,7 @@ import { telemetryTrackAiChat, telemetryTrackAiAgent } from '../../telemetry';
 import { getAppDataDir, canRunShellCommands } from '../../paths';
 import { getWorkbenchSettings } from '../../settings';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
-import { getSideBarForeground, getSideBarBackground, getSecondaryTextColor, getActivityBarForeground, isCurrentThemeDark } from '../../theme/theme-colors';
+import { getSideBarForeground, getSideBarBackground, getSecondaryTextColor, getActivityBarForeground, isCurrentThemeDark, getInputBackground, getPanelBackground, getEditorBackground } from '../../theme/theme-colors';
 
 // Session persistence
 import {
@@ -73,6 +73,64 @@ import {
   getProviderApiUrl, getModelCount, getPickerLabel,
 } from './provider-config';
 import { buildProviderBody } from './request-builders';
+
+// ---------------------------------------------------------------------------
+// Theme-aware background helpers (replaces hardcoded dark RGBA values)
+// ---------------------------------------------------------------------------
+
+/** Container background (messages, tool blocks, session list items). */
+function setChatBg(w: unknown): void {
+  if (isCurrentThemeDark() > 0) {
+    widgetSetBackgroundColor(w, 0.18, 0.18, 0.22, 1.0);
+  } else {
+    widgetSetBackgroundColor(w, 0.94, 0.94, 0.96, 1.0);
+  }
+}
+
+/** Slightly darker container (thinking blocks, header areas). */
+function setChatBgDeep(w: unknown): void {
+  if (isCurrentThemeDark() > 0) {
+    widgetSetBackgroundColor(w, 0.12, 0.12, 0.15, 1.0);
+  } else {
+    widgetSetBackgroundColor(w, 0.90, 0.90, 0.92, 1.0);
+  }
+}
+
+/** Tool/code block background. */
+function setChatBgCode(w: unknown): void {
+  if (isCurrentThemeDark() > 0) {
+    widgetSetBackgroundColor(w, 0.15, 0.15, 0.18, 1.0);
+  } else {
+    widgetSetBackgroundColor(w, 0.92, 0.92, 0.94, 1.0);
+  }
+}
+
+/** Context chip background. */
+function setChatBgChip(w: unknown): void {
+  if (isCurrentThemeDark() > 0) {
+    widgetSetBackgroundColor(w, 0.2, 0.2, 0.25, 1.0);
+  } else {
+    widgetSetBackgroundColor(w, 0.88, 0.88, 0.92, 1.0);
+  }
+}
+
+/** Divider line. */
+function setChatDivider(w: unknown): void {
+  if (isCurrentThemeDark() > 0) {
+    widgetSetBackgroundColor(w, 0.3, 0.3, 0.35, 1.0);
+  } else {
+    widgetSetBackgroundColor(w, 0.78, 0.78, 0.82, 1.0);
+  }
+}
+
+/** Active/selected session cell. */
+function setChatBgActive(w: unknown): void {
+  if (isCurrentThemeDark() > 0) {
+    widgetSetBackgroundColor(w, 0.22, 0.22, 0.28, 1.0);
+  } else {
+    widgetSetBackgroundColor(w, 0.85, 0.88, 0.95, 1.0);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -403,7 +461,7 @@ export function handleClaudeRelayEvent(operation: string, data: string): void {
 
     if (chatMessagesContainer) {
       const errBlock = VStackWithInsets(4, 8, 8, 8, 8);
-      widgetSetBackgroundColor(errBlock, 0.3, 0.12, 0.12, 1.0);
+      if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(errBlock, 0.3, 0.12, 0.12, 1.0); } else { widgetSetBackgroundColor(errBlock, 1.0, 0.9, 0.9, 1.0); };
       const errLabel = Text(errMsg);
       textSetFontSize(errLabel, 12);
       textSetWraps(errLabel, 300);
@@ -1308,7 +1366,7 @@ function onAgentToolStart(name: string, id: string): void {
   setFg(toolText, getSideBarForeground());
 
   toolDisplayContainer = VStackWithInsets(2, 4, 8, 4, 8);
-  widgetSetBackgroundColor(toolDisplayContainer, 0.15, 0.15, 0.18, 1.0);
+  setChatBgCode(toolDisplayContainer);
   widgetAddChild(toolDisplayContainer, toolText);
   widgetAddChild(chatMessagesContainer, toolDisplayContainer);
   lastAddedWidget = toolDisplayContainer;
@@ -1345,7 +1403,7 @@ function onAgentApprovalNeeded(name: string, args: string): void {
   }
 
   approvalContainer = VStackWithInsets(4, 8, 8, 8, 8);
-  widgetSetBackgroundColor(approvalContainer, 0.25, 0.18, 0.12, 1.0);
+  if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(approvalContainer, 0.25, 0.18, 0.12, 1.0); } else { widgetSetBackgroundColor(approvalContainer, 1.0, 0.95, 0.88, 1.0); };
 
   let warnText = '\u26A0 Tool "';
   warnText += name;
@@ -1455,7 +1513,7 @@ function onClaudeToolActivity(name: string, status: string, inputDetail: string)
     setFg(toolText, getSideBarForeground());
 
     claudeToolContainer = VStackWithInsets(2, 4, 8, 4, 8);
-    widgetSetBackgroundColor(claudeToolContainer, 0.15, 0.15, 0.18, 1.0);
+    setChatBgCode(claudeToolContainer);
     widgetAddChild(claudeToolContainer, toolText);
     widgetAddChild(chatMessagesContainer, claudeToolContainer);
     lastAddedWidget = claudeToolContainer;
@@ -1496,7 +1554,7 @@ function onClaudeToolResult(output: string, isError: number, filePath: string): 
     if (isError > 0) {
       // Error result — red tinted container
       let errContainer = VStackWithInsets(2, 4, 4, 4, 4);
-      widgetSetBackgroundColor(errContainer, 0.3, 0.12, 0.12, 1.0);
+      if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(errContainer, 0.3, 0.12, 0.12, 1.0); } else { widgetSetBackgroundColor(errContainer, 1.0, 0.9, 0.9, 1.0); };
       let errLabel = Text(displayOutput);
       textSetFontSize(errLabel, 10);
       textSetFontFamily(errLabel, 10, 'Menlo');
@@ -1929,7 +1987,7 @@ function refreshSessionList(): void {
     widgetAddChild(cell, metaRow);
 
     if (isActive > 0) {
-      widgetSetBackgroundColor(cell, 0.22, 0.22, 0.28, 1.0);
+      setChatBgActive(cell);
     }
 
     widgetAddChild(sessionListContainer, cell);
@@ -2177,7 +2235,7 @@ function handleClaudeLine(line: string): void {
       // Show rate limit banner
       if (chatMessagesContainer) {
         let rlBlock = VStackWithInsets(4, 8, 8, 8, 8);
-        widgetSetBackgroundColor(rlBlock, 0.35, 0.25, 0.05, 1.0);
+        if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(rlBlock, 0.35, 0.25, 0.05, 1.0); } else { widgetSetBackgroundColor(rlBlock, 1.0, 0.95, 0.85, 1.0); };
         claudeRateLimitLabel = Text('Rate limited. Waiting...');
         textSetFontSize(claudeRateLimitLabel, 12);
         textSetFontFamily(claudeRateLimitLabel, 12, 'Menlo');
@@ -2269,7 +2327,7 @@ function handleClaudeLine(line: string): void {
       if (errMsg.length < 1) errMsg = 'Claude Code returned an error.';
       if (chatMessagesContainer) {
         const errBlock = VStackWithInsets(4, 8, 8, 8, 8);
-        widgetSetBackgroundColor(errBlock, 0.3, 0.12, 0.12, 1.0);
+        if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(errBlock, 0.3, 0.12, 0.12, 1.0); } else { widgetSetBackgroundColor(errBlock, 1.0, 0.9, 0.9, 1.0); };
         const errLabel = Text(errMsg);
         textSetFontSize(errLabel, 12);
         textSetWraps(errLabel, 300);
@@ -2593,7 +2651,7 @@ function showPermissionDenials(line: string): void {
   if (toolNames.length < 1) return;
 
   let warnBlock = VStackWithInsets(4, 8, 8, 8, 8);
-  widgetSetBackgroundColor(warnBlock, 0.35, 0.25, 0.05, 1.0);
+  if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(warnBlock, 0.35, 0.25, 0.05, 1.0); } else { widgetSetBackgroundColor(warnBlock, 1.0, 0.95, 0.85, 1.0); };
   let warnStr = '\u26A0 Permission denied for: ';
   warnStr += toolNames;
   let warnLabel = Text(warnStr);
@@ -2612,7 +2670,7 @@ function showPermissionDenials(line: string): void {
 function showThinkingBlock(text: string): void {
   if (!chatMessagesContainer) return;
   let container = VStackWithInsets(2, 6, 6, 6, 6);
-  widgetSetBackgroundColor(container, 0.12, 0.12, 0.15, 1.0);
+  setChatBgDeep(container);
 
   // Header — click toggles content
   let headerBtn = Button('\u{1F4AD} Thinking...', () => { toggleThinkingExpand(); });
@@ -2670,7 +2728,7 @@ function onClaudeToolActivityWithDiff(toolName: string, filePath: string, block:
   setFg(toolText, getSideBarForeground());
 
   claudeToolContainer = VStackWithInsets(2, 4, 8, 4, 8);
-  widgetSetBackgroundColor(claudeToolContainer, 0.15, 0.15, 0.18, 1.0);
+  setChatBgCode(claudeToolContainer);
   widgetAddChild(claudeToolContainer, toolText);
 
   // Extract old_string and new_string for diff display
@@ -2681,7 +2739,7 @@ function onClaudeToolActivityWithDiff(toolName: string, filePath: string, block:
     let oldTrunc = oldStr;
     if (oldTrunc.length > 200) oldTrunc = oldStr.slice(0, 200) + '...';
     let oldBlock = VStackWithInsets(2, 4, 4, 4, 4);
-    widgetSetBackgroundColor(oldBlock, 0.25, 0.10, 0.10, 1.0);
+    if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(oldBlock, 0.25, 0.10, 0.10, 1.0); } else { widgetSetBackgroundColor(oldBlock, 1.0, 0.92, 0.92, 1.0); };
     let oldLabel = Text('- ' + oldTrunc);
     textSetFontSize(oldLabel, 10);
     textSetFontFamily(oldLabel, 10, 'Menlo');
@@ -2694,7 +2752,7 @@ function onClaudeToolActivityWithDiff(toolName: string, filePath: string, block:
     let newTrunc = newStr;
     if (newTrunc.length > 200) newTrunc = newStr.slice(0, 200) + '...';
     let newBlock = VStackWithInsets(2, 4, 4, 4, 4);
-    widgetSetBackgroundColor(newBlock, 0.10, 0.25, 0.10, 1.0);
+    if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(newBlock, 0.10, 0.25, 0.10, 1.0); } else { widgetSetBackgroundColor(newBlock, 0.92, 1.0, 0.92, 1.0); };
     let newLabel = Text('+ ' + newTrunc);
     textSetFontSize(newLabel, 10);
     textSetFontFamily(newLabel, 10, 'Menlo');
@@ -3255,7 +3313,7 @@ function updateMessages(): void {
         if (isTool > 0) {
           // Tool result message — show compact
           const toolBlock = VStackWithInsets(2, 4, 8, 4, 8);
-          widgetSetBackgroundColor(toolBlock, 0.15, 0.15, 0.18, 1.0);
+          setChatBgCode(toolBlock);
           const toolLabel = Text('\u2699 Tool result');
           textSetFontSize(toolLabel, 10);
           textSetFontFamily(toolLabel, 10, 'Menlo');
@@ -3294,7 +3352,7 @@ function updateMessages(): void {
           renderMarkdownBlock(content, msgBlock, panelColors, 320);
 
           if (isUser > 0 && panelColors) {
-            widgetSetBackgroundColor(msgBlock, 0.18, 0.18, 0.22, 1.0);
+            setChatBg(msgBlock);
           }
 
           widgetAddChild(chatMessagesContainer, msgBlock);
@@ -3392,7 +3450,7 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
 
   // --- History dropdown (overlay, hidden by default) ---
   sessionListContainer = VStack(1, []);
-  widgetSetBackgroundColor(sessionListContainer, 0.18, 0.18, 0.22, 1.0);
+  setChatBg(sessionListContainer);
   historyDropdown = ScrollView();
   scrollViewSetChild(historyDropdown, sessionListContainer);
   // Add as floating overlay on the container, positioned below header
@@ -3435,7 +3493,7 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
   // 1px divider
   const divider = Text('');
   widgetSetHeight(divider, 1);
-  widgetSetBackgroundColor(divider, 0.3, 0.3, 0.35, 1.0);
+  setChatDivider(divider);
   widgetAddChild(container, divider);
 
   updateModeTabStyles();
@@ -3455,7 +3513,7 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
     const claudeBin = findClaudeBinary();
     if (claudeBin.length < 3) {
       const hintBlock = VStackWithInsets(4, 8, 8, 8, 8);
-      widgetSetBackgroundColor(hintBlock, 0.15, 0.18, 0.25, 1.0);
+      if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(hintBlock, 0.15, 0.18, 0.25, 1.0); } else { widgetSetBackgroundColor(hintBlock, 0.90, 0.93, 0.98, 1.0); };
 
       const hintTitle = Text('Claude Code Required');
       textSetFontSize(hintTitle, 12);
@@ -3473,7 +3531,7 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
       const authOk = checkClaudeAuth();
       if (authOk < 1) {
         const hintBlock = VStackWithInsets(4, 8, 8, 8, 8);
-        widgetSetBackgroundColor(hintBlock, 0.15, 0.18, 0.25, 1.0);
+        if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(hintBlock, 0.15, 0.18, 0.25, 1.0); } else { widgetSetBackgroundColor(hintBlock, 0.90, 0.93, 0.98, 1.0); };
 
         const hintTitle = Text('Sign In Required');
         textSetFontSize(hintTitle, 12);
@@ -3497,7 +3555,7 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
     const initKey = loadProviderApiKey(initProviderIdx);
     if (initKey.length < 2 && initProviderIdx !== 5) {
       const hintBlock = VStackWithInsets(4, 8, 8, 8, 8);
-      widgetSetBackgroundColor(hintBlock, 0.15, 0.18, 0.25, 1.0);
+      if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(hintBlock, 0.15, 0.18, 0.25, 1.0); } else { widgetSetBackgroundColor(hintBlock, 0.90, 0.93, 0.98, 1.0); };
 
       const hintTitle = Text('API Key Required');
       textSetFontSize(hintTitle, 12);
@@ -3522,7 +3580,7 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
 
   // --- Model selector dropdown (hidden, shown above bottom bar) ---
   modelListContainer = VStackWithInsets(1, 4, 4, 4, 4);
-  widgetSetBackgroundColor(modelListContainer, 0.18, 0.18, 0.22, 1.0);
+  setChatBg(modelListContainer);
   widgetSetHidden(modelListContainer, 1);
   modelListVisible = 0;
   widgetAddChild(container, modelListContainer);

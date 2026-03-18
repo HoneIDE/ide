@@ -11,7 +11,7 @@ import {
 import { setFg, setBtnFg } from '../../ui-helpers';
 import { jsonEscape } from './sse-parser';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
-import { getSideBarForeground } from '../../theme/theme-colors';
+import { getSideBarForeground, isCurrentThemeDark } from '../../theme/theme-colors';
 
 // Module-level state — 8 context slots (avoid arrays-of-strings in Perry)
 let ctx0Path = ''; let ctx0Content = '';
@@ -191,7 +191,11 @@ export function renderChips(container: unknown, colors: ResolvedUIColors): void 
     setBtnFg(xBtn, getSideBarForeground());
 
     const chip = HStack(4, [chipLabel, xBtn]);
-    widgetSetBackgroundColor(chip, 0.2, 0.2, 0.25, 1.0);
+    if (isCurrentThemeDark() > 0) {
+      widgetSetBackgroundColor(chip, 0.2, 0.2, 0.25, 1.0);
+    } else {
+      widgetSetBackgroundColor(chip, 0.88, 0.88, 0.92, 1.0);
+    }
     widgetAddChild(container, chip);
   }
 

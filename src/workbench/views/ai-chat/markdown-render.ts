@@ -9,7 +9,7 @@ import {
 } from 'perry/ui';
 import { setFg } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
-import { getSideBarForeground } from '../../theme/theme-colors';
+import { getSideBarForeground, isCurrentThemeDark } from '../../theme/theme-colors';
 
 /** Check if line starts with ``` (code fence). */
 function isCodeFence(line: string): number {
@@ -137,7 +137,11 @@ export function renderMarkdownBlock(content: string, container: unknown, colors:
           }
           // Create code block container
           codeLines = VStackWithInsets(2, 8, 8, 8, 8);
-          widgetSetBackgroundColor(codeLines, 0.12, 0.12, 0.14, 1.0);
+          if (isCurrentThemeDark() > 0) {
+            widgetSetBackgroundColor(codeLines, 0.12, 0.12, 0.14, 1.0);
+          } else {
+            widgetSetBackgroundColor(codeLines, 0.92, 0.92, 0.94, 1.0);
+          }
           if (codeLang.length > 0) {
             const langLabel = Text(codeLang);
             textSetFontSize(langLabel, 9);

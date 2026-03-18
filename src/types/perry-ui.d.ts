@@ -83,6 +83,10 @@ declare module 'perry/ui' {
   export function textfieldGetString(field: unknown): string;
   export function textfieldSetOnSubmit(field: unknown, onSubmit: (text: string) => void): void;
   export function textfieldSetOnFocus(field: unknown, onFocus: () => void): void;
+  export function textfieldSetBorderless(field: unknown, borderless: number): void;
+  export function textfieldSetBackgroundColor(field: unknown, r: number, g: number, b: number, a: number): void;
+  export function textfieldSetFontSize(field: unknown, size: number): void;
+  export function textfieldSetTextColor(field: unknown, r: number, g: number, b: number, a: number): void;
 
   // Native view embedding
   export function embedNSView(view: unknown): unknown;

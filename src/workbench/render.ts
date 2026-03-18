@@ -26,7 +26,7 @@ import {
   textfieldFocus,
   frameSplitCreate, frameSplitAddChild,
 } from 'perry/ui';
-import { Editor, editorSetBgColor, editorSetFgColor, editorSetGutterFgColor, editorSetSelectionColor, editorSetCursorColor } from '@honeide/editor/perry';
+import { Editor, editorSetBgColor, editorSetFgColor, editorSetGutterFgColor, editorSetSelectionColor, editorSetCursorColor, setPersistentDecorations } from '@honeide/editor/perry';
 import { getActiveTheme, setActiveTheme } from './theme/theme-loader';
 import {
   getEditorBackground, getEditorForeground,
@@ -105,7 +105,7 @@ import { renderSettingsTab } from './views/settings-ui/settings-panel';
 import { setWelcomeActions, setWelcomeRecentCallback, createWelcomeContent } from './views/welcome/welcome-tab';
 import { initNotifications, showNotification } from './views/notifications/notifications';
 import { initRecentItems, addRecentFile, addRecentFolder, getRecentPath, getRecentType } from './views/recent/recent-store';
-import { createFindBar, setFindEditorCallbacks, showFindBar, showFindBarWithReplace, hideFindBar, isFindBarVisible } from './views/find/find-bar';
+import { createFindBar, setFindEditorCallbacks, showFindBar, showFindBarWithReplace, hideFindBar, isFindBarVisible, pushFindHighlights } from './views/find/find-bar';
 import { setLspWorkspaceRoot, initLspBridge, triggerDiagnostics, getCompletions, setDiagnosticsStatusUpdater } from './views/lsp/lsp-bridge';
 import { setDiagnosticsFileOpener } from './views/lsp/diagnostics-panel';
 import { createAutocompletePopup, setAutocompleteAcceptHandler } from './views/lsp/autocomplete-popup';
@@ -487,7 +487,8 @@ let pendingSaveAsPath = '';
 function saveFileAsDeferred(): void {
   if (editorReady < 1) return;
   const defaultName = currentEditorFilePath.length > 0 ? getFileName(currentEditorFilePath) : 'untitled.txt';
-  saveFileDialog((path: string) => { onSaveAsCb(path); }, defaultName, '');
+  // Open Save As dialog in the workspace root folder (explorer's current folder)
+  saveFileDialog((path: string) => { onSaveAsCb(path); }, defaultName, workspaceRoot);
 }
 
 function onSaveAsCb(path: string): void {
@@ -543,6 +544,33 @@ function findBarScrollToLine(line: number): void {
 function findBarRenderEditor(): void {
   if (editorReady < 1) return;
   editorInstance.render();
+}
+
+
+function findBarPushDecorations(json: string): void {
+  if (editorReady < 1) return;
+  // Use persistent decorations so they survive begin_frame clear (8ms timer)
+  setPersistentDecorations(json);
+}
+
+function findBarGetCharWidth(): number {
+  if (editorReady < 1) return 8;
+  return editorInstance.getCharWidth();
+}
+
+function findBarGetViewportStart(): number {
+  if (editorReady < 1) return 0;
+  return editorInstance.viewModel.viewport.visibleRange.startLine;
+}
+
+function findBarSetLineBg(line: number, r: number, g: number, b: number, a: number): void {
+  if (editorReady < 1) return;
+  editorInstance.setLineBackground(line, r, g, b, a);
+}
+
+function findBarClearLineBgs(): void {
+  if (editorReady < 1) return;
+  editorInstance.clearLineBackgrounds();
 }
 
 export function openRecentItem(idx: number): void {
@@ -1185,9 +1213,10 @@ function updateStatusBarIndent(_tabSize: number, _useTabs: boolean): void {
 
 /** Sync all editor decorations — bracket matching + diagnostics + hover. Perry-safe. */
 function syncEditorDecorations(): void {
-  syncBracketMatchDecoration();
   syncDiagnosticDecorations();
   syncHoverRequest();
+  // Find highlights use setPersistentDecorations (survives begin_frame clear)
+  pushFindHighlights();
 }
 
 // ---------------------------------------------------------------------------
@@ -1922,7 +1951,8 @@ function renderEditorArea(): unknown {
   // Create find bar (hidden by default, inserted between breadcrumb and editor)
   const findBar = createFindBar();
   widgetSetHidden(findBar, 1);
-  setFindEditorCallbacks(findBarGetContent, findBarSetContent, findBarScrollToLine, findBarRenderEditor);
+  setFindEditorCallbacks(findBarGetContent, findBarSetContent, findBarScrollToLine, findBarRenderEditor, findBarPushDecorations, findBarGetCharWidth, findBarGetViewportStart, findBarSetLineBg, findBarClearLineBgs);
+
 
   const editorPane = VStack(0, [tbc, breadcrumbContainer, findBar, hoverPopup, signaturePopup, editorWidget]);
   setBg(editorPane, getEditorBackground());
