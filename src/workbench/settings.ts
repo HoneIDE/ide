@@ -59,6 +59,12 @@ export interface WorkbenchSettings {
   filesAutoSaveDelay: number;
   /** Files: trim trailing whitespace on save */
   filesTrimTrailingWhitespace: boolean;
+  /** Editor: insert final newline on save */
+  editorInsertFinalNewline: boolean;
+  /** Editor: trim final blank lines on save */
+  editorTrimFinalNewlines: boolean;
+  /** Editor: normalize indentation on format */
+  editorFormatNormalizeIndent: boolean;
   /** Terminal: font size */
   terminalFontSize: number;
   /** Terminal: cursor style */
@@ -150,6 +156,9 @@ let _settings_editorCursorStyle: string = 'line';
 let _settings_filesAutoSave: string = 'off';
 let _settings_filesAutoSaveDelay: number = 1000;
 let _settings_filesTrimTrailingWhitespace: number = 0;
+let _settings_editorInsertFinalNewline: number = 1;
+let _settings_editorTrimFinalNewlines: number = 1;
+let _settings_editorFormatNormalizeIndent: number = 0;
 let _settings_terminalFontSize: number = 13;
 let _settings_terminalCursorStyle: string = 'block';
 let _settings_aiInlineCompletionDelay: number = 300;
@@ -240,6 +249,9 @@ export function initSettings(): void {
     if (key === 'filesAutoSave') _settings_filesAutoSave = val;
     if (key === 'filesAutoSaveDelay') { const n = parseInt(val); if (n >= 0) _settings_filesAutoSaveDelay = n; }
     if (key === 'filesTrimTrailingWhitespace') _settings_filesTrimTrailingWhitespace = val === '1' ? 1 : 0;
+    if (key === 'editorInsertFinalNewline') _settings_editorInsertFinalNewline = val === '1' ? 1 : 0;
+    if (key === 'editorTrimFinalNewlines') _settings_editorTrimFinalNewlines = val === '1' ? 1 : 0;
+    if (key === 'editorFormatNormalizeIndent') _settings_editorFormatNormalizeIndent = val === '1' ? 1 : 0;
     if (key === 'terminalFontSize') { const n = parseInt(val); if (n > 0) _settings_terminalFontSize = n; }
     if (key === 'terminalCursorStyle') _settings_terminalCursorStyle = val;
     if (key === 'aiInlineCompletionDelay') { const n = parseInt(val); if (n >= 0) _settings_aiInlineCompletionDelay = n; }
@@ -296,6 +308,9 @@ function buildSnapshot(): WorkbenchSettings {
     filesAutoSave: _settings_filesAutoSave,
     filesAutoSaveDelay: _settings_filesAutoSaveDelay,
     filesTrimTrailingWhitespace: _settings_filesTrimTrailingWhitespace > 0,
+    editorInsertFinalNewline: _settings_editorInsertFinalNewline > 0,
+    editorTrimFinalNewlines: _settings_editorTrimFinalNewlines > 0,
+    editorFormatNormalizeIndent: _settings_editorFormatNormalizeIndent > 0,
     terminalFontSize: _settings_terminalFontSize,
     terminalCursorStyle: _settings_terminalCursorStyle,
     aiInlineCompletionDelay: _settings_aiInlineCompletionDelay,
@@ -418,6 +433,15 @@ function serializeFromVars(): string {
   out += '\n';
   out += 'filesTrimTrailingWhitespace=';
   out += _settings_filesTrimTrailingWhitespace > 0 ? '1' : '0';
+  out += '\n';
+  out += 'editorInsertFinalNewline=';
+  out += _settings_editorInsertFinalNewline > 0 ? '1' : '0';
+  out += '\n';
+  out += 'editorTrimFinalNewlines=';
+  out += _settings_editorTrimFinalNewlines > 0 ? '1' : '0';
+  out += '\n';
+  out += 'editorFormatNormalizeIndent=';
+  out += _settings_editorFormatNormalizeIndent > 0 ? '1' : '0';
   out += '\n';
   out += 'terminalFontSize=';
   out += intToStr(_settings_terminalFontSize);
@@ -557,6 +581,9 @@ export function setBoolSetting(key: string, value: number): void {
   if (key === 'editorMinimapEnabled') _settings_editorMinimapEnabled = value;
   if (key === 'editorFormatOnSave') _settings_editorFormatOnSave = value;
   if (key === 'filesTrimTrailingWhitespace') _settings_filesTrimTrailingWhitespace = value;
+  if (key === 'editorInsertFinalNewline') _settings_editorInsertFinalNewline = value;
+  if (key === 'editorTrimFinalNewlines') _settings_editorTrimFinalNewlines = value;
+  if (key === 'editorFormatNormalizeIndent') _settings_editorFormatNormalizeIndent = value;
   if (key === 'searchUseIgnoreFiles') _settings_searchUseIgnoreFiles = value;
   if (key === 'searchFollowSymlinks') _settings_searchFollowSymlinks = value;
   if (key === 'syncEnabled') _settings_syncEnabled = value;
@@ -595,6 +622,9 @@ export function updateSettings(patch: Partial<WorkbenchSettings>): void {
     if (k === 'filesAutoSave') _settings_filesAutoSave = (patch as any).filesAutoSave;
     if (k === 'filesAutoSaveDelay') _settings_filesAutoSaveDelay = (patch as any).filesAutoSaveDelay;
     if (k === 'filesTrimTrailingWhitespace') _settings_filesTrimTrailingWhitespace = (patch as any).filesTrimTrailingWhitespace ? 1 : 0;
+    if (k === 'editorInsertFinalNewline') _settings_editorInsertFinalNewline = (patch as any).editorInsertFinalNewline ? 1 : 0;
+    if (k === 'editorTrimFinalNewlines') _settings_editorTrimFinalNewlines = (patch as any).editorTrimFinalNewlines ? 1 : 0;
+    if (k === 'editorFormatNormalizeIndent') _settings_editorFormatNormalizeIndent = (patch as any).editorFormatNormalizeIndent ? 1 : 0;
     if (k === 'terminalFontSize') _settings_terminalFontSize = (patch as any).terminalFontSize;
     if (k === 'terminalCursorStyle') _settings_terminalCursorStyle = (patch as any).terminalCursorStyle;
     if (k === 'aiInlineCompletionDelay') _settings_aiInlineCompletionDelay = (patch as any).aiInlineCompletionDelay;

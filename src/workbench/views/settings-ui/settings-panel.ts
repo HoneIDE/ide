@@ -38,6 +38,9 @@ let _hEdLineNumBtn: unknown = null;
 let _hEdCursorStyleBtn: unknown = null;
 let _hEdMinimapBtn: unknown = null;
 let _hEdFormatOnSaveBtn: unknown = null;
+let _hEdInsertFinalNewlineBtn: unknown = null;
+let _hEdTrimFinalNewlinesBtn: unknown = null;
+let _hEdFormatNormalizeIndentBtn: unknown = null;
 
 // Widget handles — Workbench
 let _hThemeBtn: unknown = null;
@@ -104,6 +107,9 @@ function onAiInlineDelayDown(): void { _pendingAction = 24; setTimeout(() => { d
 function onSearchIgnoreToggle(): void { _pendingAction = 25; setTimeout(() => { deferredAction(); }, 0); }
 function onSearchSymlinksToggle(): void { _pendingAction = 26; setTimeout(() => { deferredAction(); }, 0); }
 function onTelemetryToggle(): void { _pendingAction = 27; setTimeout(() => { deferredAction(); }, 0); }
+function onInsertFinalNewlineToggle(): void { _pendingAction = 28; setTimeout(() => { deferredAction(); }, 0); }
+function onTrimFinalNewlinesToggle(): void { _pendingAction = 29; setTimeout(() => { deferredAction(); }, 0); }
+function onFormatNormalizeIndentToggle(): void { _pendingAction = 30; setTimeout(() => { deferredAction(); }, 0); }
 
 // ---------------------------------------------------------------------------
 // Cycle helpers
@@ -318,6 +324,21 @@ function deferredAction(): void {
     const next = s.telemetryEnabled ? 0 : 1;
     setBoolSetting('telemetryEnabled', next);
     if (_hTelemetryBtn) buttonSetTitle(_hTelemetryBtn, next > 0 ? 'On' : 'Off');
+  }
+  if (action === 28) {
+    const next = s.editorInsertFinalNewline ? 0 : 1;
+    setBoolSetting('editorInsertFinalNewline', next);
+    if (_hEdInsertFinalNewlineBtn) buttonSetTitle(_hEdInsertFinalNewlineBtn, next > 0 ? 'On' : 'Off');
+  }
+  if (action === 29) {
+    const next = s.editorTrimFinalNewlines ? 0 : 1;
+    setBoolSetting('editorTrimFinalNewlines', next);
+    if (_hEdTrimFinalNewlinesBtn) buttonSetTitle(_hEdTrimFinalNewlinesBtn, next > 0 ? 'On' : 'Off');
+  }
+  if (action === 30) {
+    const next = s.editorFormatNormalizeIndent ? 0 : 1;
+    setBoolSetting('editorFormatNormalizeIndent', next);
+    if (_hEdFormatNormalizeIndentBtn) buttonSetTitle(_hEdFormatNormalizeIndentBtn, next > 0 ? 'On' : 'Off');
   }
 }
 
@@ -592,6 +613,9 @@ function resetHandles(): void {
   _hEdCursorStyleBtn = null;
   _hEdMinimapBtn = null;
   _hEdFormatOnSaveBtn = null;
+  _hEdInsertFinalNewlineBtn = null;
+  _hEdTrimFinalNewlinesBtn = null;
+  _hEdFormatNormalizeIndentBtn = null;
   _hThemeBtn = null;
   _hSidebarLocBtn = null;
   _hStatusBarBtn = null;
@@ -634,6 +658,9 @@ function buildContent(ctr: unknown, colors: ResolvedUIColors): void {
   if (matchesSearch('Cursor Style', 'Controls the cursor style in the editor') > 0) hasEditor = 1;
   if (matchesSearch('Minimap', 'Controls whether the minimap is shown') > 0) hasEditor = 1;
   if (matchesSearch('Format on Save', 'Format the file on save') > 0) hasEditor = 1;
+  if (matchesSearch('Insert Final Newline', 'Insert a final newline at end of file on save') > 0) hasEditor = 1;
+  if (matchesSearch('Trim Final Newlines', 'Trim trailing blank lines on save') > 0) hasEditor = 1;
+  if (matchesSearch('Normalize Indentation', 'Normalize indentation on format') > 0) hasEditor = 1;
 
   if (hasEditor > 0) {
     makeSection(ctr, colors, 'Editor');
@@ -655,6 +682,12 @@ function buildContent(ctr: unknown, colors: ResolvedUIColors): void {
       _hEdMinimapBtn = makeToggleRow(ctr, colors, 'Minimap', 'Controls whether the minimap is shown', s.editorMinimapEnabled ? 1 : 0, () => { onMinimapToggle(); });
     if (matchesSearch('Format on Save', 'Format the file on save') > 0)
       _hEdFormatOnSaveBtn = makeToggleRow(ctr, colors, 'Format on Save', 'Format the file on save', s.editorFormatOnSave ? 1 : 0, () => { onFormatOnSaveToggle(); });
+    if (matchesSearch('Insert Final Newline', 'Insert a final newline at end of file on save') > 0)
+      _hEdInsertFinalNewlineBtn = makeToggleRow(ctr, colors, 'Insert Final Newline', 'Insert a final newline at end of file on save', s.editorInsertFinalNewline ? 1 : 0, () => { onInsertFinalNewlineToggle(); });
+    if (matchesSearch('Trim Final Newlines', 'Trim trailing blank lines on save') > 0)
+      _hEdTrimFinalNewlinesBtn = makeToggleRow(ctr, colors, 'Trim Final Newlines', 'Trim trailing blank lines on save', s.editorTrimFinalNewlines ? 1 : 0, () => { onTrimFinalNewlinesToggle(); });
+    if (matchesSearch('Normalize Indentation', 'Normalize indentation on format') > 0)
+      _hEdFormatNormalizeIndentBtn = makeToggleRow(ctr, colors, 'Normalize Indentation', 'Normalize indentation (tabs/spaces) when formatting', s.editorFormatNormalizeIndent ? 1 : 0, () => { onFormatNormalizeIndentToggle(); });
   }
 
   // ---- Workbench ----

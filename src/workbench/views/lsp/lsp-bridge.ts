@@ -53,6 +53,7 @@ let _statusUpdater: (errorCount: number, warningCount: number) => void = () => {
 let _completionCallback: ((items: string[]) => void) | null = null;
 let _hoverCallback: ((text: string) => void) | null = null;
 let _definitionCallback: ((file: string, line: number) => void) | null = null;
+let _formatCallback: ((editsJson: string) => void) | null = null;
 
 // Fallback diagnostics (tsc-based, for when no LSP server)
 let useFallbackDiag: number = 0;
@@ -231,6 +232,17 @@ let _signatureCallback: ((label: string, activeParam: number, doc: string) => vo
 /** Set callback for signature help results. */
 export function setSignatureCallback(fn: (label: string, activeParam: number, doc: string) => void): void {
   _signatureCallback = fn;
+}
+
+/** Set callback for formatting results. */
+export function setFormatCallback(fn: (editsJson: string) => void): void {
+  _formatCallback = fn;
+}
+
+/** Check if LSP server is ready and initialized. */
+export function lspIsReady(): number {
+  if (lspServerHandle >= 0 && lspInitialized > 0) return 1;
+  return 0;
 }
 
 /** Request signature help. */
@@ -491,6 +503,12 @@ function handleLspMessage(json: string): void {
     handleSignatureResponse(json);
     return;
   }
+
+  // 'textDocument/formatting' — contains 'formatting'
+  if (method.indexOf('formatting') > 0) {
+    handleFormattingResponse(json);
+    return;
+  }
 }
 
 function handleHoverResponse(json: string): void {
@@ -571,6 +589,20 @@ function handleSignatureResponse(json: string): void {
   const doc = extractJsonString(resultStr, '"documentation":"');
 
   _signatureCallback(label, activeParam >= 0 ? activeParam : 0, doc);
+}
+
+function handleFormattingResponse(json: string): void {
+  if (_formatCallback === null) return;
+
+  const resultIdx = json.indexOf('"result"');
+  if (resultIdx < 0) return;
+  const resultStr = json.slice(resultIdx);
+
+  // Check for null result (no edits)
+  if (resultStr.indexOf('"result":null') >= 0) return;
+
+  // Pass the raw result JSON to the callback — render.ts will parse the TextEdit array
+  _formatCallback(resultStr);
 }
 
 function handleDiagnosticsNotification(json: string): void {

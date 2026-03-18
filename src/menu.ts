@@ -92,6 +92,8 @@ export function buildDesktopMenuBar(platform: Platform): MenuBar {
           item('menu.edit.replace', 'Replace', 'edit.replace', `${mod}+H`),
           separator(),
           item('menu.edit.selectAll', 'Select All', 'edit.selectAll', `${mod}+A`),
+          separator(),
+          item('menu.edit.format', 'Format Document', 'edit.formatDocument', `Shift+Alt+F`),
         ],
       },
       {

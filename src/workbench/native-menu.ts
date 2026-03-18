@@ -41,8 +41,8 @@ function dispatchCommand(command: string): void {
   } else if (command.length === 32 && command.charCodeAt(10) === 97 && command.charCodeAt(17) === 99) {
     // workbench.action.checkForUpdates (length 32, charCodeAt(10)='a', charCodeAt(17)='c')
     checkForUpdatesAction();
-  } else if (command.length === 15 && command.charCodeAt(0) === 101 && command.charCodeAt(5) === 102) {
-    // edit.formatDocument (length 15, 'e'dit.'f'ormatDocument)
+  } else if (command.length === 19 && command.charCodeAt(0) === 101 && command.charCodeAt(5) === 102) {
+    // edit.formatDocument (length 19, 'e'dit.'f'ormatDocument)
     formatDocumentAction();
   } else if (command.length === 20 && command.charCodeAt(0) === 103 && command.charCodeAt(5) === 100) {
     // go.toDefinition (length 20, 'g'o.to'D'efinition — approximate)
