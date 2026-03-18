@@ -11,6 +11,7 @@ import {
   textSetFontSize, textSetFontWeight, textSetFontFamily,
   buttonSetBordered, buttonSetImage, buttonSetImagePosition,
   widgetAddChild, widgetClearChildren, widgetSetWidth, widgetSetHeight,
+  widgetSetContextMenu,
 } from 'perry/ui';
 import { readdirSync, isDirectory } from 'fs';
 import { join } from 'path';
@@ -18,6 +19,7 @@ import { setBg, setFg, setBtnFg, setBtnTint, pathId, getFileName, getFileIcon, g
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getSideBarBackground, getSideBarForeground, getListActiveSelectionBackground, getStatusAddedColor, getStatusModifiedColor, getStatusDeletedColor } from '../../theme/theme-colors';
 import { getGitFileStatus, getGitDirStatus } from '../git/git-panel';
+import { buildFileContextMenu, buildDirContextMenu, buildEmptySpaceContextMenu } from './context-menu';
 
 // ---------------------------------------------------------------------------
 // Module-level state (must be declared BEFORE any function — Perry no-hoist)
@@ -373,7 +375,13 @@ function refreshSidebar(): void {
   // widgetAddChild(timelineRow, timelineLabel);
   // widgetAddChild(sidebarContainer, timelineRow);
 
-  widgetAddChild(sidebarContainer, Spacer());
+  // Empty space at bottom — context menu for new file/folder in root
+  const spacer = Spacer();
+  if (sidebarWorkspaceRoot.length > 0) {
+    const emptyMenu = buildEmptySpaceContextMenu();
+    widgetSetContextMenu(spacer, emptyMenu);
+  }
+  widgetAddChild(sidebarContainer, spacer);
 }
 
 function renderTreeLevel(dirPath: string, depth: number): void {
@@ -494,6 +502,13 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     widgetAddChild(row, btn);
 
     widgetAddChild(row, Spacer());
+
+    // Context menu for directory
+    if (isRemoteMode < 1) {
+      const dirMenu = buildDirContextMenu(full, name);
+      widgetSetContextMenu(row, dirMenu);
+    }
+
     widgetAddChild(sidebarContainer, row);
 
     if (expanded) {
@@ -534,6 +549,12 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     if (fileColor.length > 0) setBtnFg(nameBtn, fileColor);
     widgetAddChild(row, nameBtn);
     widgetAddChild(row, Spacer());
+
+    // Context menu for file
+    if (isRemoteMode < 1) {
+      const fileMenu = buildFileContextMenu(full, name);
+      widgetSetContextMenu(row, fileMenu);
+    }
 
     fileTreeButtons.push(nameBtn);
     fileRowWidgets.push(row);

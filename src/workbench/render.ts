@@ -460,11 +460,9 @@ function findDeferred(): void {
 function applyFindBarBg(): void {
   if (!findBarWidget) return;
   if (isCurrentThemeDark() > 0) {
-    // Dark: elevated surface #333333
-    widgetSetBackgroundColor(findBarWidget, 0.2, 0.2, 0.2, 1.0);
+    widgetSetBackgroundColor(findBarWidget, 0.16, 0.16, 0.18, 1.0);
   } else {
-    // Light: distinct from white editor bg #e8e8e8
-    widgetSetBackgroundColor(findBarWidget, 0.91, 0.91, 0.91, 1.0);
+    widgetSetBackgroundColor(findBarWidget, 0.84, 0.84, 0.85, 1.0);
   }
 }
 
