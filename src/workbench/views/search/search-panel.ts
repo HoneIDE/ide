@@ -46,9 +46,9 @@ let searchResultCountLabel: unknown = null;
 let searchResultsContainer: unknown = null;
 let searchPanelReady: number = 0;
 
-// Debounce: search pending flag + generation counter
-let searchPending: number = 0;
-let searchGeneration: number = 0;
+// Polling debounce — module-level vars only (no captured params)
+let searchDirty: number = 0;
+let searchPollActive: number = 0;
 
 // Stored colors for result rendering
 let panelColors: ResolvedUIColors = null as any;
