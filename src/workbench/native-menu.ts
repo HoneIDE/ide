@@ -13,7 +13,11 @@ import {
 import {
   openFolderAction, openFileAction, toggleSidebarAction, closeEditorAction,
   checkForUpdatesAction, formatDocumentAction, goToDefinitionAction,
+  newFileAction, findAction, replaceAction, openRecentItem,
 } from './render';
+import {
+  getRecentCount, getRecentPath, getRecentType, clearRecentItems,
+} from './views/recent/recent-store';
 
 // ---------------------------------------------------------------------------
 // Command dispatch
@@ -42,6 +46,15 @@ function dispatchCommand(command: string): void {
   } else if (command.length === 20 && command.charCodeAt(0) === 103 && command.charCodeAt(5) === 100) {
     // go.toDefinition (length 20, 'g'o.to'D'efinition — approximate)
     goToDefinitionAction();
+  } else if (command.length === 12 && command.charCodeAt(0) === 102 && command.charCodeAt(5) === 110) {
+    // file.newFile (length 12, 'f'ile.'n'ewFile)
+    newFileAction();
+  } else if (command.length === 9 && command.charCodeAt(0) === 101 && command.charCodeAt(5) === 102) {
+    // edit.find (length 9, 'e'dit.'f'ind)
+    findAction();
+  } else if (command.length === 12 && command.charCodeAt(0) === 101 && command.charCodeAt(5) === 114) {
+    // edit.replace (length 12, 'e'dit.'r'eplace)
+    replaceAction();
   }
 }
 
@@ -89,9 +102,16 @@ function buildNativeMenu(items: MenuItem[]): unknown {
     const mi = items[i];
     if (isSeparator(mi)) {
       menuAddSeparator(menu);
-    } else if (isSubmenu(mi) && mi.submenu) {
-      const sub = buildNativeMenu(mi.submenu);
-      menuAddSubmenu(menu, mi.label, sub);
+    } else if (isSubmenu(mi)) {
+      // Check if this is the "Open Recent" submenu (id = menu.file.openRecent, length 20)
+      if (mi.id.length === 20 && mi.id.charCodeAt(10) === 111 && mi.id.charCodeAt(14) === 82) {
+        // 'o'penRecent at 10, 'R'ecent at 14
+        const sub = buildRecentSubmenu();
+        menuAddSubmenu(menu, mi.label, sub);
+      } else if (mi.submenu) {
+        const sub = buildNativeMenu(mi.submenu);
+        menuAddSubmenu(menu, mi.label, sub);
+      }
     } else {
       const cmd = mi.command || '';
       let shortcut = mi.shortcut || '';
@@ -118,6 +138,57 @@ function buildNativeMenu(items: MenuItem[]): unknown {
     }
   }
   return menu;
+}
+
+// ---------------------------------------------------------------------------
+// Recent submenu
+// ---------------------------------------------------------------------------
+
+let pendingRecentIdx: number = -1;
+
+function onRecentClick(idx: number): void {
+  pendingRecentIdx = idx;
+  setTimeout(() => { onRecentClickDeferred(); }, 0);
+}
+
+function onRecentClickDeferred(): void {
+  const idx = pendingRecentIdx;
+  if (idx < 0) return;
+  pendingRecentIdx = -1;
+  openRecentItem(idx);
+}
+
+function onClearRecentClick(): void {
+  setTimeout(() => { clearRecentItems(); }, 0);
+}
+
+function buildRecentSubmenu(): unknown {
+  const sub = menuCreate();
+  const count = getRecentCount();
+  if (count < 1) {
+    menuAddItem(sub, '(No Recent Items)', () => {});
+    return sub;
+  }
+  for (let i = 0; i < count; i++) {
+    const idx = i;
+    const path = getRecentPath(i);
+    // Extract display name: last path segment
+    let lastSlash = -1;
+    for (let j = path.length - 1; j >= 0; j--) {
+      if (path.charCodeAt(j) === 47 || path.charCodeAt(j) === 92) {
+        lastSlash = j;
+        break;
+      }
+    }
+    let label = path;
+    if (lastSlash >= 0) {
+      label = path.slice(lastSlash + 1);
+    }
+    menuAddItem(sub, label, () => { onRecentClick(idx); });
+  }
+  menuAddSeparator(sub);
+  menuAddItem(sub, 'Clear Recent', () => { onClearRecentClick(); });
+  return sub;
 }
 
 // ---------------------------------------------------------------------------

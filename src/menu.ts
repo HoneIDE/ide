@@ -69,6 +69,7 @@ export function buildDesktopMenuBar(platform: Platform): MenuBar {
           item('menu.file.new', 'New File', 'file.newFile', `${mod}+N`),
           item('menu.file.open', 'Open File...', 'file.openFile', `${mod}+O`),
           item('menu.file.openFolder', 'Open Folder...', 'file.openFolder'),
+          submenu('menu.file.openRecent', 'Open Recent', []),
           separator(),
           item('menu.file.save', 'Save', 'file.save', `${mod}+S`),
           item('menu.file.saveAs', 'Save As...', 'file.saveAs', `${mod}+Shift+S`),
@@ -121,6 +122,8 @@ export function buildDesktopMenuBar(platform: Platform): MenuBar {
         items: [
           item('menu.help.welcome', 'Welcome', 'workbench.action.showWelcome'),
           item('menu.help.docs', 'Documentation', 'workbench.action.openDocs'),
+          separator(),
+          item('menu.help.checkUpdates', 'Check for Updates...', 'workbench.action.checkForUpdates'),
           separator(),
           item('menu.help.about', 'About Hone', 'workbench.action.showAbout'),
         ],

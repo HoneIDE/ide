@@ -1,5 +1,9 @@
 /**
  * Extensions panel — lists built-in extensions with enable/disable toggles.
+ *
+ * Built-in extensions are always visible. Plugin management UI is gated
+ * behind the __plugins__ compile-time flag (only present when compiled
+ * with `perry compile --features plugins`).
  */
 import {
   VStack, HStack, Text, Button, Spacer, TextField,
@@ -9,6 +13,8 @@ import {
 } from 'perry/ui';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
+
+declare const __plugins__: number;
 
 // Extension enable states — individual vars (Perry no-hoist, no Map in callbacks)
 let ext0on: number = 1;
@@ -118,6 +124,20 @@ export function renderExtensionsPanel(container: unknown, colors: ResolvedUIColo
     const infoCol = VStack(1, [nameLabel, descLabel]);
     const row = HStack(8, [infoCol, Spacer(), toggleBtn]);
     widgetAddChild(container, row);
+  }
+
+  // Plugin management section — only when compiled with --features plugins
+  if (__plugins__) {
+    const pluginHeader = Text('INSTALLED PLUGINS');
+    textSetFontSize(pluginHeader, 11);
+    textSetFontWeight(pluginHeader, 11, 0.7);
+    setFg(pluginHeader, colors.sideBarForeground);
+    widgetAddChild(container, pluginHeader);
+
+    const noPlugins = Text('No plugins installed');
+    textSetFontSize(noPlugins, 11);
+    setFg(noPlugins, colors.sideBarForeground);
+    widgetAddChild(container, noPlugins);
   }
 
   widgetAddChild(container, Spacer());

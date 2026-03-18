@@ -90,6 +90,17 @@ declare var __dirname: string;
 declare var __filename: string;
 
 // ---------------------------------------------------------------------------
+// Compile-time constants (injected by Perry compiler)
+// ---------------------------------------------------------------------------
+
+/** Compile-time platform ID: 0=macOS, 1=iOS, 2=Android, 3=Windows, 4=Linux, 5=Web */
+declare const __platform__: number;
+
+/** Compile-time plugin system toggle: 1 if --features plugins, 0 otherwise.
+ *  Auto-disabled on iOS/Android (App Store policies prohibit dlopen of third-party code). */
+declare const __plugins__: number;
+
+// ---------------------------------------------------------------------------
 // bun:test (for test files)
 // ---------------------------------------------------------------------------
 

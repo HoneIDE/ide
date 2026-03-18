@@ -13,6 +13,7 @@ import { streamStart } from 'node-fetch';
 import { getWorkbenchSettings } from './settings';
 import { getOrCreateDeviceId } from './paths';
 import { getPlatformContext } from '../platform';
+import { HONE_VERSION } from './version';
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -20,7 +21,6 @@ import { getPlatformContext } from '../platform';
 
 const CHIRP_URL = 'https://api.chirp247.com/api/v1/events';
 const CHIRP_KEY = 'hone_proj_01';
-const HONE_VERSION = '0.1.0';
 const MAX_QUEUE = 50;
 
 let _telemetryEnabled: number = 0;

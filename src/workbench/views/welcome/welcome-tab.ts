@@ -4,16 +4,20 @@
 import {
   VStack, VStackWithInsets, HStack, Text, Button, Spacer,
   textSetFontSize, textSetFontWeight,
-  buttonSetBordered,
+  buttonSetBordered, buttonSetImage, buttonSetImagePosition,
   widgetAddChild,
 } from 'perry/ui';
-import { setFg, setBtnFg, setBg } from '../../ui-helpers';
+import { setFg, setBtnFg, setBg, setBtnTint } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getEditorForeground, getEditorBackground } from '../../theme/theme-colors';
+import { getRecentCount, getRecentPath, getRecentType } from '../recent/recent-store';
 
 let _onOpenFolder: () => void = () => {};
 let _onOpenFile: () => void = () => {};
 let _onNewFile: () => void = () => {};
+let _onRecentItem: (idx: number) => void = _noopRecent;
+
+function _noopRecent(idx: number): void {}
 
 export function setWelcomeActions(
   onOpenFolder: () => void,
@@ -25,9 +29,41 @@ export function setWelcomeActions(
   _onNewFile = onNewFile;
 }
 
+export function setWelcomeRecentCallback(cb: (idx: number) => void): void {
+  _onRecentItem = cb;
+}
+
 function onOpenFolderClick(): void { _onOpenFolder(); }
 function onOpenFileClick(): void { _onOpenFile(); }
 function onNewFileClick(): void { _onNewFile(); }
+
+// Deferred recent item click (Perry closures capture by value)
+let pendingWelcomeRecentIdx: number = -1;
+
+function onWelcomeRecentClick(idx: number): void {
+  pendingWelcomeRecentIdx = idx;
+  setTimeout(() => { onWelcomeRecentDeferred(); }, 0);
+}
+
+function onWelcomeRecentDeferred(): void {
+  const idx = pendingWelcomeRecentIdx;
+  if (idx < 0) return;
+  pendingWelcomeRecentIdx = -1;
+  _onRecentItem(idx);
+}
+
+/** Extract display name from path (last segment). */
+function getDisplayName(path: string): string {
+  let lastSlash = -1;
+  for (let i = path.length - 1; i >= 0; i--) {
+    if (path.charCodeAt(i) === 47 || path.charCodeAt(i) === 92) {
+      lastSlash = i;
+      break;
+    }
+  }
+  if (lastSlash >= 0) return path.slice(lastSlash + 1);
+  return path;
+}
 
 export function createWelcomeContent(colors: ResolvedUIColors): unknown {
   const titleText = Text('Hone IDE');
@@ -87,6 +123,42 @@ export function createWelcomeContent(colors: ResolvedUIColors): unknown {
   widgetAddChild(content, openFolderBtn);
   widgetAddChild(content, openFileBtn);
   widgetAddChild(content, newFileBtn);
+
+  // Recent items section
+  const recentCount = getRecentCount();
+  if (recentCount > 0) {
+    const recentTitle = Text('Recent');
+    textSetFontSize(recentTitle, 14);
+    textSetFontWeight(recentTitle, 14, 0.6);
+    setFg(recentTitle, getEditorForeground());
+    widgetAddChild(content, recentTitle);
+
+    const maxShow = recentCount < 5 ? recentCount : 5;
+    for (let i = 0; i < maxShow; i++) {
+      const idx = i;
+      const path = getRecentPath(i);
+      const type = getRecentType(i);
+      const displayName = getDisplayName(path);
+
+      const recentBtn = Button(displayName, () => { onWelcomeRecentClick(idx); });
+      buttonSetBordered(recentBtn, 0);
+      textSetFontSize(recentBtn, 13);
+      setBtnFg(recentBtn, getEditorForeground());
+
+      // Icon: folder or file
+      if (type > 0) {
+        buttonSetImage(recentBtn, 'folder.fill');
+        buttonSetImagePosition(recentBtn, 0);
+        setBtnTint(recentBtn, '#E8AB53');
+      } else {
+        buttonSetImage(recentBtn, 'doc.text');
+        buttonSetImagePosition(recentBtn, 0);
+      }
+
+      widgetAddChild(content, recentBtn);
+    }
+  }
+
   widgetAddChild(content, tipsTitle);
   widgetAddChild(content, tip1);
   widgetAddChild(content, tip2);

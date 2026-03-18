@@ -135,9 +135,9 @@ export function applyLightColors(): void {
   _titleFg = '#333333';
   _tabActBg = '#ffffff';
   _tabActFg = '#333333';
-  _tabInBg = '#ececec';
-  _tabInFg = '#8e8e8e';
-  _tabBorder = '#f3f3f3';
+  _tabInBg = '#d9d9d9';
+  _tabInFg = '#000000';
+  _tabBorder = '#c8c8c8';
   _stBg = '#007acc';
   _stFg = '#ffffff';
   _panBg = '#ffffff';

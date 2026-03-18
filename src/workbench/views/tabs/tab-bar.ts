@@ -398,6 +398,16 @@ function closeOtherTabsDeferred(): void {
 // Public API
 // ---------------------------------------------------------------------------
 
+/** Rename the active tab's path and display name, then rebuild UI. */
+export function renameActiveTab(newPath: string, newName: string): void {
+  if (activeTabIdx < 0 || activeTabIdx >= openTabCount) return;
+  openTabs[activeTabIdx] = newPath;
+  openTabNames[activeTabIdx] = newName;
+  if (tabBarReady > 0) {
+    rebuildTabBarDirect(openTabCount, openTabNames, openTabs, tabBarContainer);
+  }
+}
+
 /** Close the active tab. */
 export function closeActiveTab(): void {
   if (openTabCount < 1) return;

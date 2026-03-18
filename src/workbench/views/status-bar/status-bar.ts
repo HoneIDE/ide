@@ -10,7 +10,7 @@ import {
   textSetFontSize,
   textSetString,
   buttonSetBordered, buttonSetImage, buttonSetImagePosition,
-  widgetAddChild, widgetSetHeight,
+  widgetAddChild, widgetSetHeight, widgetSetHidden,
 } from 'perry/ui';
 import { setBg, setFg, setBtnTint, detectLanguage } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
@@ -28,6 +28,9 @@ let statusBarCursorLabel: unknown = null;
 let statusBarEncodingLabel: unknown = null;
 let statusBarLangLabel: unknown = null;
 let statusBarWidget: unknown = null;
+let statusBarUpdateBtn: unknown = null;
+let _updateBtnVisible: number = 0;
+let _onUpdateBtnClick: (() => void) | null = null;
 
 let lastStatusCursorLine: number = -1;
 let lastStatusCursorCol: number = -1;
@@ -108,6 +111,27 @@ export function pollCursorPosition(): void {
   textSetString(statusBarCursorLabel, lnStr);
 }
 
+/** Show the update indicator button with the new version string. */
+export function showUpdateIndicator(version: string): void {
+  if (!statusBarUpdateBtn) return;
+  let label = 'Update v';
+  label += version;
+  textSetString(statusBarUpdateBtn, label);
+  widgetSetHidden(statusBarUpdateBtn, 0);
+  _updateBtnVisible = 1;
+}
+
+/** Set callback for when the update button is clicked. */
+export function setUpdateBtnClickHandler(fn: () => void): void {
+  _onUpdateBtnClick = fn;
+}
+
+function onUpdateBtnClicked(): void {
+  if (_onUpdateBtnClick !== null) {
+    _onUpdateBtnClick();
+  }
+}
+
 /** Recolor all status bar labels after a theme switch. */
 export function recolorStatusBar(c: ResolvedUIColors): void {
   panelColors = c;
@@ -117,6 +141,7 @@ export function recolorStatusBar(c: ResolvedUIColors): void {
   if (statusBarCursorLabel) setFg(statusBarCursorLabel, getStatusBarForeground());
   if (statusBarEncodingLabel) setFg(statusBarEncodingLabel, getStatusBarForeground());
   if (statusBarLangLabel) setFg(statusBarLangLabel, getStatusBarForeground());
+  if (statusBarUpdateBtn) setFg(statusBarUpdateBtn, getStatusBarForeground());
 }
 
 /** Get the status bar widget ref (for recoloring from render.ts). */
@@ -180,6 +205,14 @@ export function renderStatusBar(colors: ResolvedUIColors): unknown {
   setFg(lang, getStatusBarForeground());
   statusBarLangLabel = lang;
 
+  // Update indicator (hidden until update is available)
+  const updateBtn = Button('', () => { onUpdateBtnClicked(); });
+  buttonSetBordered(updateBtn, 0);
+  textSetFontSize(updateBtn, 11);
+  setBtnTint(updateBtn, '#4EC9B0');
+  widgetSetHidden(updateBtn, 1);
+  statusBarUpdateBtn = updateBtn;
+
   const bar = HStackWithInsets(12, 0, 8, 0, 8);
   widgetAddChild(bar, branchRow);
   widgetAddChild(bar, Spacer());
@@ -188,6 +221,7 @@ export function renderStatusBar(colors: ResolvedUIColors): unknown {
   widgetAddChild(bar, indentLabel);
   widgetAddChild(bar, eolLabel);
   widgetAddChild(bar, encodingLabel);
+  widgetAddChild(bar, updateBtn);
   widgetAddChild(bar, lang);
   setBg(bar, getStatusBarBackground());
   widgetSetHeight(bar, 25);

@@ -17,7 +17,7 @@ import {
   TextField,
   textSetFontSize, textSetFontWeight,
   buttonSetBordered, buttonSetImage, buttonSetImagePosition,
-  widgetAddChild, widgetClearChildren, widgetRemoveChild,
+  widgetAddChild, widgetClearChildren, widgetRemoveChild, widgetAddOverlay, widgetSetOverlayFrame,
   widgetSetWidth, widgetSetHeight, widgetSetHugging, widgetSetHidden, widgetSetBackgroundColor,
   stackSetDetachesHidden, stackSetDistribution,
   widgetMatchParentHeight, widgetMatchParentWidth,
@@ -85,7 +85,7 @@ import {
   initTabBar, setTabDisplayCallback, setTabThemeColors,
   openTab, getActiveTabPath, getActiveTabIdx, getTabCount,
   getOpenTabCount, getOpenTabPath, setActiveTabByIndex,
-  markTabSaved, updateTabDirtyIcon, applyAllTabColors, closeActiveTab,
+  markTabSaved, updateTabDirtyIcon, applyAllTabColors, closeActiveTab, renameActiveTab,
 } from './views/tabs/tab-bar';
 import {
   renderStatusBar as renderStatusBarImpl, setStatusBarCursorGetter,
@@ -102,8 +102,10 @@ import { renderUpdateTab, resetUpdateTab } from './views/update/update-tab';
 import { renderChatPanel, focusChatInput, getChatInputHandle, setChatWorkspaceRoot, setChatFilePathGetter, setChatFileContentGetter, setChatRemoteGuest, setChatRelaySendFn, setChatRelayForwardFn, startClaudeForRelay, handleClaudeRelayLine, handleClaudeRelayEvent } from './views/ai-chat/chat-panel';
 import { renderTerminalPanel, setTerminalCwd, destroyTerminalPanel, setTerminalCloseCallback, setTerminalProblemsFileOpener, applyTerminalThemeColors } from './views/terminal/terminal-panel';
 import { renderSettingsTab } from './views/settings-ui/settings-panel';
-import { setWelcomeActions, createWelcomeContent } from './views/welcome/welcome-tab';
+import { setWelcomeActions, setWelcomeRecentCallback, createWelcomeContent } from './views/welcome/welcome-tab';
 import { initNotifications, showNotification } from './views/notifications/notifications';
+import { initRecentItems, addRecentFile, addRecentFolder, getRecentPath, getRecentType } from './views/recent/recent-store';
+import { createFindBar, setFindEditorCallbacks, showFindBar, showFindBarWithReplace, hideFindBar, isFindBarVisible } from './views/find/find-bar';
 import { setLspWorkspaceRoot, initLspBridge, triggerDiagnostics, getCompletions, setDiagnosticsStatusUpdater } from './views/lsp/lsp-bridge';
 import { setDiagnosticsFileOpener } from './views/lsp/diagnostics-panel';
 import { createAutocompletePopup, setAutocompleteAcceptHandler } from './views/lsp/autocomplete-popup';
@@ -168,6 +170,9 @@ let editorReady: number = 0;
 let editorWidget: unknown = null;
 let editorNativeHandle: number = 0;
 let currentEditorFilePath = '';
+
+// Untitled file counter
+let untitledCounter: number = 0;
 
 // Sidebar toggling (full/split layouts)
 let sidebarWidget: unknown = null;
@@ -335,6 +340,7 @@ function onFolderOpened(folderPath: string): void {
   initLspBridge();
   refreshSidebarContent();
   updateSettings({ lastOpenFolder: folderPath });
+  addRecentFolder(folderPath);
 }
 
 export function openFolderAction(): void {
@@ -399,15 +405,34 @@ export function newFileAction(): void {
 }
 
 function newFileDeferred(): void {
+  untitledCounter = untitledCounter + 1;
+  let numStr = '';
+  numStr += String(untitledCounter);
+  let name = 'Untitled-';
+  name += numStr;
   let path = getTempDir();
-  path += '/Untitled';
-  const name = 'Untitled';
+  path += '/Untitled-';
+  path += numStr;
   try {
-    writeFileSync(path, '\n');
+    writeFileSync(path, '');
   } catch (e: any) {
     // ignore write errors
   }
   openFileInEditor(path, name);
+}
+
+function isUntitledFile(): number {
+  if (currentEditorFilePath.length < 1) return 0;
+  const tempDir = getTempDir();
+  // Check if path starts with tempDir + '/Untitled-'
+  let prefix = '';
+  prefix += tempDir;
+  prefix += '/Untitled-';
+  if (currentEditorFilePath.length < prefix.length) return 0;
+  for (let i = 0; i < prefix.length; i++) {
+    if (currentEditorFilePath.charCodeAt(i) !== prefix.charCodeAt(i)) return 0;
+  }
+  return 1;
 }
 
 export function findAction(): void {
@@ -416,17 +441,17 @@ export function findAction(): void {
 }
 
 function findDeferred(): void {
-  if (sidebarToggleReady > 0 && sidebarVisible < 1) {
-    sidebarVisible = 1;
-    widgetSetHidden(sidebarWidget, 0);
-    widgetSetHidden(sidebarBorderWidget, 0);
-  }
-  switchSidebarPanel(1);
+  showFindBar();
 }
 
 export function saveFileAction(): void {
   if (currentEditorFilePath.length < 1) return;
   if (editorReady < 1) return;
+  // Untitled files → redirect to Save As
+  if (isUntitledFile() > 0) {
+    saveFileAsAction();
+    return;
+  }
   const content = editorInstance.getContent();
   // In remote mode, send save to host via relay instead of writing locally
   if (isRemoteExplorerMode() > 0) {
@@ -474,9 +499,74 @@ function onSaveAsCb(path: string): void {
   setSidebarCurrentEditorPath(path);
   updateBreadcrumb();
   updateStatusBarLanguageImpl(path);
+  // Update tab bar entry with the new path/name
+  renameActiveTab(path, getFileName(path));
+  markTabSaved(content.length);
   let savedMsg = 'Saved to ';
   savedMsg += getFileName(path);
   showNotification(savedMsg, 'info');
+}
+
+export function replaceAction(): void {
+  setTimeout(() => { replaceDeferred(); }, 0);
+}
+
+function replaceDeferred(): void {
+  showFindBarWithReplace();
+}
+
+// ---------------------------------------------------------------------------
+// Find bar editor callbacks (module-level for Perry)
+// ---------------------------------------------------------------------------
+
+function findBarGetContent(): string {
+  if (editorReady < 1) return '';
+  return editorInstance.getContent();
+}
+
+function findBarSetContent(content: string): void {
+  if (editorReady < 1) return;
+  editorInstance.setContent(content);
+}
+
+function findBarScrollToLine(line: number): void {
+  if (editorReady < 1) return;
+  const vm = editorInstance.viewModel;
+  const cursors = vm.cursors;
+  if (cursors.length > 0) {
+    cursors[0].line = line;
+    cursors[0].column = 0;
+  }
+  editorInstance.render();
+}
+
+function findBarRenderEditor(): void {
+  if (editorReady < 1) return;
+  editorInstance.render();
+}
+
+export function openRecentItem(idx: number): void {
+  pendingRecentOpenIdx = idx;
+  setTimeout(() => { openRecentItemDeferred(); }, 0);
+}
+
+let pendingRecentOpenIdx: number = -1;
+
+function openRecentItemDeferred(): void {
+  const idx = pendingRecentOpenIdx;
+  if (idx < 0) return;
+  pendingRecentOpenIdx = -1;
+  const path = getRecentPath(idx);
+  const type = getRecentType(idx);
+  if (path.length < 1) return;
+  if (type > 0) {
+    // Folder
+    onFolderOpened(path);
+  } else {
+    // File
+    const name = getFileName(path);
+    openFileInEditor(path, name);
+  }
 }
 
 export function zoomInAction(): void {
@@ -902,6 +992,12 @@ function openFileInEditor(filePath: string, fileName: string): void {
   openTab(filePath, fileName);
   displayFileContent(filePath);
   telemetryTrackFileOpen();
+  // Track in recent items — skip virtual paths (__*) and untitled files
+  if (filePath.length > 2 && filePath.charCodeAt(0) !== 95) {
+    if (isUntitledFile() < 1) {
+      addRecentFile(filePath);
+    }
+  }
   // Dispatch onDocumentOpen hook to plugins
   if (isPluginSystemEnabled() > 0) {
     let eventJson = '{"filePath":"';
@@ -1823,8 +1919,14 @@ function renderEditorArea(): unknown {
   const hoverPopup = createHoverPopup(colors);
   const signaturePopup = createSignaturePopup(colors);
 
-  const editorPane = VStack(0, [tbc, breadcrumbContainer, hoverPopup, signaturePopup, editorWidget]);
+  // Create find bar (hidden by default, inserted between breadcrumb and editor)
+  const findBar = createFindBar();
+  widgetSetHidden(findBar, 1);
+  setFindEditorCallbacks(findBarGetContent, findBarSetContent, findBarScrollToLine, findBarRenderEditor);
+
+  const editorPane = VStack(0, [tbc, breadcrumbContainer, findBar, hoverPopup, signaturePopup, editorWidget]);
   setBg(editorPane, getEditorBackground());
+  stackSetDetachesHidden(editorPane, 1); // hidden children (find bar) don't take space
   widgetSetHugging(editorPane, 1); // editor pane stretches in mainRow
   // Embedded NSView has no intrinsic width — pin it to fill the VStack's width
   widgetMatchParentWidth(editorWidget);
@@ -1834,6 +1936,7 @@ function renderEditorArea(): unknown {
   setHoverCallback(onLspHoverResult);
   setDefinitionCallback(onLspDefinitionResult);
   setSignatureCallback(onLspSignatureResult);
+
 
   return editorPane;
 }
@@ -2270,18 +2373,41 @@ function fileCacheSet(relPath: string, content: string): void {
 // Use Map (not Array.push — broken cross-function) and Map.size (not scalar counter — invisible cross-function)
 let syncTreeEntries: Map<number, string> = new Map();
 
+// Bounded sync debug log — keeps only last 50 lines to prevent O(n^2) memory growth.
+// Previous approach read entire log + concatenated + wrote back on every call,
+// creating ever-larger strings that Perry's AOT runtime never freed.
+let syncLogLines: string[] = [];
+let syncLogCount: number = 0;
+let syncLogDirty: number = 0;
+
 function syncDebugLog(msg: string): void {
+  syncLogLines.push(msg);
+  syncLogCount = syncLogCount + 1;
+  syncLogDirty = 1;
+  // Keep only last 50 lines in memory
+  if (syncLogCount > 50) {
+    const trimmed: string[] = [];
+    for (let i = syncLogCount - 50; i < syncLogCount; i++) {
+      trimmed.push(syncLogLines[i]);
+    }
+    syncLogLines = trimmed;
+    syncLogCount = 50;
+  }
+}
+
+function flushSyncDebugLog(): void {
+  if (syncLogDirty < 1) return;
+  syncLogDirty = 0;
   try {
-    // Use platform-safe temp dir + device-specific log file
     let logFile = getTempDir();
     logFile += '/hone-sync-';
     logFile += syncDeviceId.substring(0, 8);
     logFile += '.log';
-    let prev = '';
-    try { prev = readFileSync(logFile); } catch (e: any) {}
-    let out = prev;
-    out += '\n';
-    out += msg;
+    let out = '';
+    for (let i = 0; i < syncLogCount; i++) {
+      out += syncLogLines[i];
+      out += '\n';
+    }
     writeFileSync(logFile, out);
   } catch (e: any) {}
 }
@@ -2352,7 +2478,11 @@ function tryRestoreSyncSession(): void {
         role = data.substring(nlIdx2 + 1, nlIdx3);
         const seqStr = data.substring(nlIdx3 + 1);
         if (seqStr.length > 0) {
-          syncLastSeq = Number(seqStr);
+          const parsedSeq = Number(seqStr);
+          // Guard against NaN — NaN lastSeq causes relay to send ALL historical deltas
+          if (parsedSeq > 0) {
+            syncLastSeq = parsedSeq;
+          }
         }
       } else {
         role = data.substring(nlIdx2 + 1);
@@ -2505,8 +2635,8 @@ function initSyncSystem(layoutMode: LayoutMode): void {
     }
   }
 
-  // Poll sync panel refresh every 5s
-  setInterval(() => { refreshSyncPanelDeferred(); }, 5000);
+  // Poll sync panel refresh every 5s + flush sync debug log
+  setInterval(() => { refreshSyncPanelDeferred(); flushSyncDebugLog(); }, 5000);
 
   // (debug ticker removed)
 }
@@ -4358,6 +4488,9 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
     workspaceRoot = _launchCwd;
   }
 
+  // Initialize recent items store
+  initRecentItems();
+
   // Wire up extracted panel callbacks
   setSidebarWorkspaceRoot(workspaceRoot);
   setSidebarFileClickCallback(onSidebarFileClick);
@@ -4378,6 +4511,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   setChatWorkspaceRoot(workspaceRoot);
   setChatFilePathGetter(() => { return getCurrentEditorPathForChat(); });
   setWelcomeActions(openFolderAction, openFileAction, openFileAction);
+  setWelcomeRecentCallback(openRecentItem);
 
   // Wire LSP bridge
   setLspWorkspaceRoot(workspaceRoot);
