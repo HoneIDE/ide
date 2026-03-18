@@ -553,17 +553,9 @@ function onReplaceAllClick(): void {
 /** Re-apply find bar background colors using direct RGBA calls. */
 function applyFindBarColors(): void {
   if (isCurrentThemeDark() > 0) {
-    // Dark theme: #252526 container, #3c3c3c rows, #454545 border
-    widgetSetBackgroundColor(findBarContainer, 0.145, 0.145, 0.149, 1.0);
-    widgetSetBackgroundColor(findRowWidget, 0.235, 0.235, 0.235, 1.0);
-    if (replaceRowWidget) widgetSetBackgroundColor(replaceRowWidget, 0.235, 0.235, 0.235, 1.0);
-    if (bottomBorderWidget) widgetSetBackgroundColor(bottomBorderWidget, 0.271, 0.271, 0.271, 1.0);
+    widgetSetBackgroundColor(findBarContainer, 0.16, 0.16, 0.18, 1.0);
   } else {
-    // Light theme: #f3f3f3 container, #ffffff rows, #c8c8c8 border
-    widgetSetBackgroundColor(findBarContainer, 0.953, 0.953, 0.953, 1.0);
-    widgetSetBackgroundColor(findRowWidget, 1.0, 1.0, 1.0, 1.0);
-    if (replaceRowWidget) widgetSetBackgroundColor(replaceRowWidget, 1.0, 1.0, 1.0, 1.0);
-    if (bottomBorderWidget) widgetSetBackgroundColor(bottomBorderWidget, 0.784, 0.784, 0.784, 1.0);
+    widgetSetBackgroundColor(findBarContainer, 0.84, 0.84, 0.85, 1.0);
   }
 }
 

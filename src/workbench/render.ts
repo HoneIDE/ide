@@ -2311,6 +2311,7 @@ function renderEditorArea(): unknown {
   const defaultName = 'app.ts';
 
   const tbc = HStack(1, []);
+  widgetSetHugging(tbc, 750);
   initTabBar(tbc, null as any, defaultFile, defaultName);
 
   const ed = new Editor(800, 600);
@@ -2342,9 +2343,10 @@ function renderEditorArea(): unknown {
   setInterval(() => { pollCursorPositionImpl(); syncEditorDecorations(); syncInlineBlame(); }, 250);
   setInterval(() => { pollDirtyState(); }, 500);
 
-  // Breadcrumb bar
+  // Breadcrumb bar — fully opaque background to cover editor behind
   breadcrumbContainer = HStackWithInsets(4, 4, 8, 4, 8);
   setBg(breadcrumbContainer, getEditorBackground());
+  widgetSetHugging(breadcrumbContainer, 750);
   breadcrumbReady = 1;
   updateBreadcrumb();
 
@@ -2367,8 +2369,11 @@ function renderEditorArea(): unknown {
   stackSetDetachesHidden(editorPane, 1);
   setBg(editorPane, getEditorBackground());
   widgetSetHugging(editorPane, 1); // editor pane stretches in mainRow
-  // Embedded NSView has no intrinsic width — pin it to fill the VStack's width
+  // Pin children to fill VStack's width
   widgetMatchParentWidth(editorWidget);
+  widgetMatchParentWidth(tbc);
+  widgetMatchParentWidth(breadcrumbContainer);
+  widgetMatchParentWidth(findBar);
   editorPaneWidget = editorPane;
 
   // Wire LSP callbacks
