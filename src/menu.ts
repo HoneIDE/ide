@@ -68,7 +68,7 @@ export function buildDesktopMenuBar(platform: Platform): MenuBar {
         items: [
           item('menu.file.new', 'New File', 'file.newFile', `${mod}+N`),
           item('menu.file.open', 'Open File...', 'file.openFile', `${mod}+O`),
-          item('menu.file.openFolder', 'Open Folder...', 'file.openFolder'),
+          item('menu.file.openFolder', 'Open Folder...', 'file.openFolder', `${mod}+Shift+D`),
           submenu('menu.file.openRecent', 'Open Recent', []),
           separator(),
           item('menu.file.save', 'Save', 'file.save', `${mod}+S`),

@@ -382,6 +382,10 @@ function closeAllTabs(): void {
   setTimeout(() => { closeAllTabsDeferred(); }, 0);
 }
 
+export function closeAllOpenTabs(): void {
+  closeAllTabsDeferred();
+}
+
 function closeAllTabsDeferred(): void {
   openTabs = [];
   openTabNames = [];

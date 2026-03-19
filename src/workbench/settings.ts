@@ -559,6 +559,11 @@ export function isSetupComplete(): number {
   return _settings_setupComplete;
 }
 
+/** Get the last opened folder path. */
+export function getLastOpenFolder(): string {
+  return _settings_lastOpenFolder;
+}
+
 /** Update a number setting. */
 export function setNumberSetting(key: string, value: number): void {
   if (key === 'activePanelIndex') _settings_activePanelIndex = value;

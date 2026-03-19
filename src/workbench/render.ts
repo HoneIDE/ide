@@ -90,7 +90,7 @@ import {
   initTabBar, setTabDisplayCallback, setTabThemeColors,
   openTab, getActiveTabPath, getActiveTabIdx, getTabCount,
   getOpenTabCount, getOpenTabPath, setActiveTabByIndex,
-  markTabSaved, updateTabDirtyIcon, applyAllTabColors, closeActiveTab, renameActiveTab,
+  markTabSaved, updateTabDirtyIcon, applyAllTabColors, closeActiveTab, renameActiveTab, closeAllOpenTabs,
 } from './views/tabs/tab-bar';
 import {
   renderStatusBar as renderStatusBarImpl, setStatusBarCursorGetter,
@@ -341,6 +341,7 @@ export function toggleTerminalAction(): void {
 }
 
 function onFolderOpened(folderPath: string): void {
+  closeAllOpenTabs();
   workspaceRoot = folderPath;
   setSidebarWorkspaceRoot(folderPath);
   setContextMenuWorkspaceRoot(folderPath);
@@ -707,11 +708,14 @@ function openRecentItemDeferred(): void {
   const path = getRecentPath(idx);
   const type = getRecentType(idx);
   if (path.length < 1) return;
-  if (type > 0) {
-    // Folder
+  // Check actual filesystem — type in recent.ini may be wrong
+  let actuallyDir = type > 0 ? 1 : 0;
+  if (actuallyDir < 1) {
+    try { if (isDirectory(path)) actuallyDir = 1; } catch (e: any) {}
+  }
+  if (actuallyDir > 0) {
     onFolderOpened(path);
   } else {
-    // File
     const name = getFileName(path);
     openFileInEditor(path, name);
   }
@@ -992,6 +996,7 @@ function onFileOpenedCb2(filePath: string): void {
 function safeReadFile(filePath: string): string {
   let content = '';
   try {
+    if (isDirectory(filePath)) return '';
     content = readFileSync(filePath);
   } catch (e) {
     return '';
@@ -1125,7 +1130,6 @@ function displayFileContent(filePath: string): void {
   if (editorReady < 1) return;
   const lang = detectLanguage(filePath);
   editorInstance.setLanguage(lang);
-  const t5 = Date.now();
   const content = safeReadFile(filePath);
   const t6 = Date.now();
   // Large files (>100KB): load first 5000 lines for instant display
@@ -1240,6 +1244,10 @@ function onTabDisplay(path: string): void {
   if (path.length < 1) {
     currentEditorFilePath = '';
     setSidebarCurrentEditorPath('');
+    if (editorReady > 0) {
+      editorInstance.setContent('');
+      editorInstance.render();
+    }
     updateBreadcrumb();
     return;
   }
@@ -4990,7 +4998,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
     workspaceRoot = _launchCwd;
   }
 
-  // Initialize recent items store
+  // Initialize recent items store (also called in buildRecentSubmenu for menu bar)
   initRecentItems();
 
   // Wire up extracted panel callbacks

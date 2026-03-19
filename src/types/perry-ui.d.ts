@@ -101,6 +101,7 @@ declare module 'perry/ui' {
   export function menuCreate(title?: string): unknown;
   export function menuAddItem(menu: unknown, title: string, callback: () => void, shortcut?: string): void;
   export function menuAddStandardAction(menu: unknown, title: string, selector: string, shortcut: string): void;
+  export function menuClear(menu: unknown): void;
   export function menuAddSeparator(menu: unknown): void;
   export function menuAddSubmenu(menu: unknown, title: string, submenu: unknown): void;
   export function menuBarCreate(): unknown;

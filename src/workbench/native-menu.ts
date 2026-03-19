@@ -17,7 +17,7 @@ import {
   saveFileAction, saveFileAsAction,
 } from './render';
 import {
-  getRecentCount, getRecentPath, getRecentType, clearRecentItems,
+  getRecentCount, getRecentPath, getRecentType, clearRecentItems, initRecentItems,
 } from './views/recent/recent-store';
 
 // ---------------------------------------------------------------------------
@@ -92,9 +92,9 @@ function getStandardSelector(cmd: string): string {
 // Build native menus from menu data
 // ---------------------------------------------------------------------------
 
-/** Check if type field starts with 's' (separator) — charCode 115 */
+/** Check if type is 'separator' (length 9, starts with 's') */
 function isSeparator(mi: MenuItem): boolean {
-  return mi.type.charCodeAt(0) === 115;
+  return mi.type.length === 9 && mi.type.charCodeAt(0) === 115;
 }
 
 /** Check if type field starts with 'su' (submenu) — length 7 */
@@ -170,6 +170,7 @@ function onClearRecentClick(): void {
 }
 
 function buildRecentSubmenu(): unknown {
+  initRecentItems();
   const sub = menuCreate();
   const count = getRecentCount();
   if (count < 1) {
@@ -179,7 +180,7 @@ function buildRecentSubmenu(): unknown {
   for (let i = 0; i < count; i++) {
     const idx = i;
     const path = getRecentPath(i);
-    // Extract display name: last path segment
+    // "name — ~/parent/path" format
     let lastSlash = -1;
     for (let j = path.length - 1; j >= 0; j--) {
       if (path.charCodeAt(j) === 47 || path.charCodeAt(j) === 92) {
@@ -189,7 +190,26 @@ function buildRecentSubmenu(): unknown {
     }
     let label = path;
     if (lastSlash >= 0) {
-      label = path.slice(lastSlash + 1);
+      const name = path.slice(lastSlash + 1);
+      const parentDir = path.slice(0, lastSlash);
+      let displayDir = parentDir;
+      if (parentDir.length > 7 && parentDir.charCodeAt(0) === 47 && parentDir.charCodeAt(1) === 85) {
+        let slashCount = 0;
+        let thirdSlash = -1;
+        for (let s = 0; s < parentDir.length; s++) {
+          if (parentDir.charCodeAt(s) === 47) {
+            slashCount = slashCount + 1;
+            if (slashCount === 3) { thirdSlash = s; break; }
+          }
+        }
+        if (thirdSlash >= 0) {
+          displayDir = '~';
+          displayDir += parentDir.slice(thirdSlash);
+        }
+      }
+      label = name;
+      label += ' \u2014 ';
+      label += displayDir;
     }
     menuAddItem(sub, label, () => { onRecentClick(idx); });
   }
