@@ -76,7 +76,7 @@ import {
   getDiffHeaderWidget, getDiffEditorsWidget,
 } from './views/diff/diff-view';
 import {
-  renderExplorerPanel, refreshSidebarContent, updateSidebarSelection,
+  renderExplorerPanel, refreshSidebarContent, updateSidebarSelection, revealFileInExplorer, refreshSidebarSelection,
   setSidebarWorkspaceRoot, setSidebarFileClickCallback, setSidebarOpenFolderCallback,
   setSidebarNewFileCallback, setSidebarThemeColors, setSidebarCurrentEditorPath,
   setRemoteFileTree, setRemoteFileClickCallback, isRemoteExplorerMode,
@@ -146,6 +146,7 @@ declare function hone_editor_scroll(handle: number, offsetY: number): void;
 // Dynamic file tree — loaded from opened folder
 let workspaceRoot = '';
 let _renderStartMs: number = 0;
+let pendingSidebarRefresh: number = 0;
 
 // DEBUG info from app.ts
 let _debugInfo = '';
@@ -1120,12 +1121,12 @@ function displayFileContent(filePath: string): void {
   if (activeUpdateWidget) hideUpdateInEditorPane();
   currentEditorFilePath = filePath;
   setSidebarCurrentEditorPath(filePath);
+  revealFileInExplorer(filePath);
+  pendingSidebarRefresh = 1;
   const t1 = Date.now();
   updateBreadcrumb();
   const t2 = Date.now();
   updateStatusBarLanguageImpl(filePath);
-  const t3 = Date.now();
-  updateSidebarSelection();
   const t4 = Date.now();
   if (editorReady < 1) return;
   const lang = detectLanguage(filePath);
@@ -1252,14 +1253,11 @@ function onTabDisplay(path: string): void {
     return;
   }
   displayFileContent(path);
-  updateSidebarSelection();
 }
 
 /** Called by sidebar explorer when a file is clicked. */
 function onSidebarFileClick(path: string, name: string): void {
   openFileInEditor(path, name);
-  setSidebarCurrentEditorPath(currentEditorFilePath);
-  updateSidebarSelection();
 }
 
 /** Called by context menu to refresh the sidebar after file operations. */
@@ -2750,6 +2748,10 @@ let _lastSettingsVersion: number = 0;
 /** Poll-based settings change detection (fallback for platforms where
  *  array-of-closures listener pattern doesn't work in Perry codegen). */
 function pollSettingsVersion(): void {
+  if (pendingSidebarRefresh > 0) {
+    pendingSidebarRefresh = 0;
+    refreshSidebarSelection();
+  }
   const v = getSettingsVersion();
   if (v !== _lastSettingsVersion) {
     _lastSettingsVersion = v;

@@ -17,7 +17,7 @@ import { readdirSync, isDirectory } from 'fs';
 import { join } from 'path';
 import { setBg, setFg, setBtnFg, setBtnTint, pathId, getFileName, getFileIcon, getFileIconColor, truncateName } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
-import { getSideBarBackground, getSideBarForeground, getListActiveSelectionBackground, getStatusAddedColor, getStatusModifiedColor, getStatusDeletedColor } from '../../theme/theme-colors';
+import { getSideBarBackground, getSideBarForeground, getListActiveSelectionBackground, getListActiveSelectionForeground, getStatusAddedColor, getStatusModifiedColor, getStatusDeletedColor } from '../../theme/theme-colors';
 import { getGitFileStatus, getGitDirStatus } from '../git/git-panel';
 import { buildFileContextMenu, buildDirContextMenu, buildEmptySpaceContextMenu } from './context-menu';
 
@@ -106,6 +106,55 @@ function collapseAllDirs(): void {
   setTimeout(() => { refreshSidebar(); }, 0);
 }
 
+/**
+ * Reveal a file in the explorer by expanding all its parent directories.
+ * Rebuilds the sidebar so the file becomes visible and selectable.
+ */
+export function revealFileInExplorer(filePath: string): void {
+  if (sidebarReady < 1) return;
+  if (filePath.length < 1) return;
+  if (sidebarWorkspaceRoot.length < 1) return;
+
+  // Check that filePath starts with workspaceRoot
+  const rootLen = sidebarWorkspaceRoot.length;
+  if (filePath.length <= rootLen) return;
+  let rootMatch = 1;
+  for (let i = 0; i < rootLen; i++) {
+    if (filePath.charCodeAt(i) !== sidebarWorkspaceRoot.charCodeAt(i)) {
+      rootMatch = 0;
+      break;
+    }
+  }
+  if (rootMatch < 1) return;
+
+  // Expand each parent directory from root down to the file's parent
+  // e.g. /root/a/b/file.ts → expand /root/a, /root/a/b
+  let changed = 0;
+  for (let i = rootLen + 1; i < filePath.length; i++) {
+    if (filePath.charCodeAt(i) === 47) {
+      // Slash found — this is a directory boundary
+      const dirPath = filePath.slice(0, i);
+      const id = pathId(dirPath);
+      if (!expandedDirs.has(id)) {
+        expandedDirs.add(id);
+        changed = 1;
+      }
+    }
+  }
+
+  // Defer refresh — Perry widget system needs the current call stack to complete
+  // before tree rebuild takes visual effect
+  if (changed > 0) {
+    refreshSidebar();
+  }
+}
+
+/** Update sidebar to highlight the active file. Call after setSidebarCurrentEditorPath. */
+export function refreshSidebarSelection(): void {
+  if (sidebarReady < 1) return;
+  refreshSidebar();
+}
+
 // File click IDs use offset 9e15 (above any pathId hash, ~7e12 max).
 // Dir IDs are always < 1e13 from pathId hash.
 const FILE_ID_OFFSET = 9000000000000000;
@@ -153,7 +202,7 @@ function onFileClickDeferred(): void {
 // ---------------------------------------------------------------------------
 
 export function updateSidebarSelection(): void {
-  if (!panelColors) return;
+  if (sidebarReady < 1) return;
   // Clear old selection
   if (selectedFileIdx >= 0) {
     if (selectedFileIdx < fileRowWidgets.length) {
@@ -560,13 +609,14 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     fileRowWidgets.push(row);
 
     // Selection highlight
-    if (panelColors && sidebarCurrentEditorPath.length > 0 && full.length === sidebarCurrentEditorPath.length) {
+    if (sidebarReady > 0 && sidebarCurrentEditorPath.length > 0 && full.length === sidebarCurrentEditorPath.length) {
       let selMatch = 1;
       for (let si = 0; si < full.length; si++) {
         if (full.charCodeAt(si) !== sidebarCurrentEditorPath.charCodeAt(si)) { selMatch = 0; break; }
       }
       if (selMatch > 0) {
         setBg(row, getListActiveSelectionBackground());
+        setBtnFg(nameBtn, getListActiveSelectionForeground());
         selectedFileIdx = idx;
       }
     }
