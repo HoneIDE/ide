@@ -207,42 +207,80 @@ export function truncateName(name: string, maxLen: number): string {
   return result;
 }
 
-/** Check if a file name has a text extension we should search. */
+/** Check if a file name has a text extension we should search.
+ *  Perry-safe: uses charCodeAt for extension matching (no .endsWith). */
 export function isTextFile(name: string): boolean {
-  if (name.endsWith('.ts')) return true;
-  if (name.endsWith('.tsx')) return true;
-  if (name.endsWith('.js')) return true;
-  if (name.endsWith('.jsx')) return true;
-  if (name.endsWith('.mjs')) return true;
-  if (name.endsWith('.cjs')) return true;
-  if (name.endsWith('.json')) return true;
-  if (name.endsWith('.jsonc')) return true;
-  if (name.endsWith('.md')) return true;
-  if (name.endsWith('.css')) return true;
-  if (name.endsWith('.scss')) return true;
-  if (name.endsWith('.less')) return true;
-  if (name.endsWith('.html')) return true;
-  if (name.endsWith('.htm')) return true;
-  if (name.endsWith('.rs')) return true;
-  if (name.endsWith('.py')) return true;
-  if (name.endsWith('.c')) return true;
-  if (name.endsWith('.cpp')) return true;
-  if (name.endsWith('.hpp')) return true;
-  if (name.endsWith('.h')) return true;
-  if (name.endsWith('.toml')) return true;
-  if (name.endsWith('.yaml')) return true;
-  if (name.endsWith('.yml')) return true;
-  if (name.endsWith('.txt')) return true;
-  if (name.endsWith('.sh')) return true;
-  if (name.endsWith('.bash')) return true;
-  if (name.endsWith('.zsh')) return true;
-  if (name.endsWith('.swift')) return true;
-  if (name.endsWith('.go')) return true;
-  if (name.endsWith('.java')) return true;
-  if (name.endsWith('.rb')) return true;
-  if (name.endsWith('.php')) return true;
-  if (name.endsWith('.sql')) return true;
-  if (name.endsWith('.xml')) return true;
-  if (name.endsWith('.svg')) return true;
+  const len = name.length;
+  if (len < 2) return false;
+  // Find last dot
+  let dotPos = -1;
+  for (let i = len - 1; i >= 0; i--) {
+    if (name.charCodeAt(i) === 46) { dotPos = i; break; }
+  }
+  if (dotPos < 0) return false;
+  const extLen = len - dotPos - 1;
+  // Match by extension length + first char for speed
+  // 1-char: .c .h
+  if (extLen === 1) {
+    const c = name.charCodeAt(dotPos + 1);
+    if (c === 99 || c === 104) return true; // c, h
+    return false;
+  }
+  // 2-char: .ts .js .rs .py .go .rb .md .sh
+  if (extLen === 2) {
+    const c1 = name.charCodeAt(dotPos + 1);
+    const c2 = name.charCodeAt(dotPos + 2);
+    if (c1 === 116 && c2 === 115) return true; // ts
+    if (c1 === 106 && c2 === 115) return true; // js
+    if (c1 === 114 && c2 === 115) return true; // rs
+    if (c1 === 112 && c2 === 121) return true; // py
+    if (c1 === 103 && c2 === 111) return true; // go
+    if (c1 === 114 && c2 === 98) return true;  // rb
+    if (c1 === 109 && c2 === 100) return true;  // md
+    if (c1 === 115 && c2 === 104) return true;  // sh
+    return false;
+  }
+  // 3-char: .tsx .jsx .mjs .cjs .css .htm .cpp .hpp .txt .yml .xml .svg .sql .zsh .php
+  if (extLen === 3) {
+    const c1 = name.charCodeAt(dotPos + 1);
+    const c2 = name.charCodeAt(dotPos + 2);
+    const c3 = name.charCodeAt(dotPos + 3);
+    if (c1 === 116 && c2 === 115 && c3 === 120) return true; // tsx
+    if (c1 === 106 && c2 === 115 && c3 === 120) return true; // jsx
+    if (c1 === 109 && c2 === 106 && c3 === 115) return true; // mjs
+    if (c1 === 99 && c2 === 106 && c3 === 115) return true;  // cjs
+    if (c1 === 99 && c2 === 115 && c3 === 115) return true;  // css
+    if (c1 === 104 && c2 === 116 && c3 === 109) return true;  // htm
+    if (c1 === 99 && c2 === 112 && c3 === 112) return true;  // cpp
+    if (c1 === 104 && c2 === 112 && c3 === 112) return true;  // hpp
+    if (c1 === 116 && c2 === 120 && c3 === 116) return true;  // txt
+    if (c1 === 121 && c2 === 109 && c3 === 108) return true;  // yml
+    if (c1 === 120 && c2 === 109 && c3 === 108) return true;  // xml
+    if (c1 === 115 && c2 === 118 && c3 === 103) return true;  // svg
+    if (c1 === 115 && c2 === 113 && c3 === 108) return true;  // sql
+    if (c1 === 122 && c2 === 115 && c3 === 104) return true;  // zsh
+    if (c1 === 112 && c2 === 104 && c3 === 112) return true;  // php
+    return false;
+  }
+  // 4-char: .json .toml .yaml .html .scss .less .bash .java
+  if (extLen === 4) {
+    const c1 = name.charCodeAt(dotPos + 1);
+    const c2 = name.charCodeAt(dotPos + 2);
+    if (c1 === 106 && c2 === 115) return true;  // json
+    if (c1 === 116 && c2 === 111) return true;  // toml
+    if (c1 === 121 && c2 === 97) return true;   // yaml
+    if (c1 === 104 && c2 === 116) return true;   // html
+    if (c1 === 115 && c2 === 99) return true;   // scss
+    if (c1 === 108 && c2 === 101) return true;   // less
+    if (c1 === 98 && c2 === 97) return true;    // bash
+    if (c1 === 106 && c2 === 97) return true;   // java
+    return false;
+  }
+  // 5-char: .jsonc .swift
+  if (extLen === 5) {
+    const c1 = name.charCodeAt(dotPos + 1);
+    if (c1 === 106) return true;  // jsonc
+    if (c1 === 115) return true;  // swift
+  }
   return false;
 }

@@ -2158,7 +2158,7 @@ function onActivityClickDeferred(): void {
 }
 
 function switchSidebarPanel(idx: number): void {
-  if (!sidebarContainer) return;
+  if (sidebarToggleReady < 1) return;
   if (idx === 0) {
     resetSearchPanelReady();
     renderExplorerPanel(sidebarContainer, null as any);
@@ -2750,7 +2750,10 @@ let _lastSettingsVersion: number = 0;
 function pollSettingsVersion(): void {
   if (pendingSidebarRefresh > 0) {
     pendingSidebarRefresh = 0;
-    refreshSidebarSelection();
+    // Only refresh explorer tree when explorer panel is active (idx=0)
+    if (activeActivityIdx === 0) {
+      refreshSidebarSelection();
+    }
   }
   const v = getSettingsVersion();
   if (v !== _lastSettingsVersion) {

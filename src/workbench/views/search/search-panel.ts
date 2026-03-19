@@ -11,14 +11,14 @@ import {
   textSetString,
   buttonSetBordered, buttonSetTextColor,
   widgetAddChild, widgetClearChildren, widgetSetHidden,
-  textfieldSetString, textfieldFocus,
+  textfieldSetString, textfieldFocus, textfieldSetBorderless, textfieldSetBackgroundColor, textfieldSetFontSize,
 } from 'perry/ui';
 import { readFileSync, readdirSync, isDirectory, writeFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { join } from 'path';
 import { hexToRGBA, setBg, setFg, setBtnFg, pathId, getFileName, toLowerCode, isTextFile } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
-import { getSideBarForeground } from '../../theme/theme-colors';
+import { getSideBarForeground, getInputBackground } from '../../theme/theme-colors';
 import { telemetryTrackSearch } from '../../telemetry';
 
 // ---------------------------------------------------------------------------
@@ -203,14 +203,24 @@ function performSearch(): void {
     return;
   }
 
+  let _dbg = 'performSearch: q=';
+  _dbg += searchQuery;
+  _dbg += ' root=';
+  _dbg += searchWorkspaceRoot;
+  _dbg += '\n';
+
   // Try ripgrep first (fast, supports regex/globs)
-  if (tryRipgrepSearch() > 0) {
+  if (tryRipgrepSearch() > 0 && srCount > 0) {
     updateSearchResultsUI();
     telemetryTrackSearch();
     return;
   }
 
-  // Fallback to manual filesystem scan
+  // Fallback to manual filesystem scan (also if rg returned 0 results)
+  srFilePaths = [];
+  srLineNums = [];
+  srLineTexts = [];
+  srCount = 0;
   searchDir(searchWorkspaceRoot, 0);
   updateSearchResultsUI();
   telemetryTrackSearch();
@@ -546,6 +556,13 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
 
   // Search text field
   searchTextField = TextField('Search', (text: string) => { onSearchInput(text); });
+  textfieldSetBorderless(searchTextField, 1);
+  textfieldSetFontSize(searchTextField, 12);
+  const _iBg = getInputBackground();
+  if (_iBg.length > 0) {
+    const [_ir, _ig, _ib, _ia] = hexToRGBA(_iBg);
+    textfieldSetBackgroundColor(searchTextField, _ir, _ig, _ib, _ia);
+  }
   widgetAddChild(container, searchTextField);
   if (searchQuery.length > 0) {
     textfieldSetString(searchTextField, searchQuery);
@@ -571,6 +588,12 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   const replContainer = VStack(4, []);
   replaceFieldContainer = replContainer;
   replaceTextField = TextField('Replace', (text: string) => { onReplaceInput(text); });
+  textfieldSetBorderless(replaceTextField, 1);
+  textfieldSetFontSize(replaceTextField, 12);
+  if (_iBg.length > 0) {
+    const [_rr, _rg, _rb, _ra] = hexToRGBA(_iBg);
+    textfieldSetBackgroundColor(replaceTextField, _rr, _rg, _rb, _ra);
+  }
   widgetAddChild(replContainer, replaceTextField);
   if (replaceQuery.length > 0) {
     textfieldSetString(replaceTextField, replaceQuery);
