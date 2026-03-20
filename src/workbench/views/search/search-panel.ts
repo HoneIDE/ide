@@ -469,11 +469,11 @@ function toggleReplaceField(): void {
   if (searchShowReplace > 0) {
     searchShowReplace = 0;
     widgetSetHidden(replaceFieldContainer, 1);
-    buttonSetTitle(replToggleBtn, '\u25B8');
+    buttonSetTitle(replToggleBtn, '\u25B8 Replace');
   } else {
     searchShowReplace = 1;
     widgetSetHidden(replaceFieldContainer, 0);
-    buttonSetTitle(replToggleBtn, '\u25BE');
+    buttonSetTitle(replToggleBtn, '\u25BE Replace');
   }
 }
 
@@ -574,16 +574,7 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   textSetFontSize(gap1, 8);
   widgetAddChild(container, gap1);
 
-  // --- Search row: [chevron] [input] [Aa] [.*] ---
-  let chevronLabel = '\u25B8';
-  if (searchShowReplace > 0) {
-    chevronLabel = '\u25BE';
-  }
-  replToggleBtn = Button(chevronLabel, () => { toggleReplaceField(); });
-  buttonSetBordered(replToggleBtn, 0);
-  textSetFontSize(replToggleBtn, 12);
-  if (colors) setBtnFg(replToggleBtn, getSideBarForeground());
-
+  // --- Search input (full width) ---
   searchTextField = TextField('Search', (text: string) => { onSearchInput(text); });
   textfieldSetOnSubmit(searchTextField, (text: string) => { onSearchSubmit(text); });
   textfieldSetBorderless(searchTextField, 1);
@@ -596,7 +587,9 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   if (searchQuery.length > 0) {
     textfieldSetString(searchTextField, searchQuery);
   }
+  widgetAddChild(container, searchTextField);
 
+  // --- Options row: [Aa] [.*] [▸ Replace] ---
   const caseBtn = Button('Aa', () => { toggleCaseSensitive(); });
   buttonSetBordered(caseBtn, 0);
   textSetFontSize(caseBtn, 11);
@@ -607,12 +600,21 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   textSetFontSize(regexBtn, 11);
   if (colors) setBtnFg(regexBtn, '#999999');
 
-  const searchRow = HStack(4, [replToggleBtn, searchTextField, caseBtn, regexBtn]);
-  widgetAddChild(container, searchRow);
+  let chevronLabel = '\u25B8 Replace';
+  if (searchShowReplace > 0) {
+    chevronLabel = '\u25BE Replace';
+  }
+  replToggleBtn = Button(chevronLabel, () => { toggleReplaceField(); });
+  buttonSetBordered(replToggleBtn, 0);
+  textSetFontSize(replToggleBtn, 11);
+  if (colors) setBtnFg(replToggleBtn, getSideBarForeground());
 
-  // --- Replace row: [indent] [input] [Replace] [All] --- hidden by default
-  const replIndent = Text('');
-  textSetFontSize(replIndent, 12);
+  const optionsRow = HStack(8, [caseBtn, regexBtn, replToggleBtn]);
+  widgetAddChild(container, optionsRow);
+
+  // --- Replace section (hidden by default) ---
+  const replContainer = VStack(4, []);
+  replaceFieldContainer = replContainer;
 
   replaceTextField = TextField('Replace', (text: string) => { onReplaceInput(text); });
   textfieldSetBorderless(replaceTextField, 1);
@@ -624,22 +626,24 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   if (replaceQuery.length > 0) {
     textfieldSetString(replaceTextField, replaceQuery);
   }
+  widgetAddChild(replContainer, replaceTextField);
 
   const replOneBtn = Button('Replace', () => { onReplaceOne(); });
   buttonSetBordered(replOneBtn, 0);
-  textSetFontSize(replOneBtn, 10);
+  textSetFontSize(replOneBtn, 11);
   if (colors) setBtnFg(replOneBtn, getSideBarForeground());
 
-  const replAllBtn = Button('All', () => { onReplaceAll(); });
+  const replAllBtn = Button('Replace All', () => { onReplaceAll(); });
   buttonSetBordered(replAllBtn, 0);
-  textSetFontSize(replAllBtn, 10);
+  textSetFontSize(replAllBtn, 11);
   if (colors) setBtnFg(replAllBtn, getSideBarForeground());
 
-  const replaceRow = HStack(4, [replIndent, replaceTextField, replOneBtn, replAllBtn]);
-  replaceFieldContainer = replaceRow;
-  widgetAddChild(container, replaceRow);
+  const replBtnRow = HStack(8, [replOneBtn, replAllBtn]);
+  widgetAddChild(replContainer, replBtnRow);
+
+  widgetAddChild(container, replContainer);
   if (searchShowReplace < 1) {
-    widgetSetHidden(replaceRow, 1);
+    widgetSetHidden(replContainer, 1);
   }
 
   const gap2 = Text('');
