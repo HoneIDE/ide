@@ -469,11 +469,11 @@ function toggleReplaceField(): void {
   if (searchShowReplace > 0) {
     searchShowReplace = 0;
     widgetSetHidden(replaceFieldContainer, 1);
-    buttonSetTitle(replToggleBtn, '\u25B8 Replace');
+    buttonSetTitle(replToggleBtn, '\u25B8');
   } else {
     searchShowReplace = 1;
     widgetSetHidden(replaceFieldContainer, 0);
-    buttonSetTitle(replToggleBtn, '\u25BE Replace');
+    buttonSetTitle(replToggleBtn, '\u25BE');
   }
 }
 
@@ -574,12 +574,24 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   textSetFontSize(gap1, 8);
   widgetAddChild(container, gap1);
 
-  // --- Search input (full width) ---
+  // --- VS Code style: chevron left, inputs with inline buttons ---
+  const _iBg = getInputBackground();
+
+  // Chevron toggle (left of both rows)
+  let chevronLabel = '\u25B8';
+  if (searchShowReplace > 0) {
+    chevronLabel = '\u25BE';
+  }
+  replToggleBtn = Button(chevronLabel, () => { toggleReplaceField(); });
+  buttonSetBordered(replToggleBtn, 0);
+  textSetFontSize(replToggleBtn, 14);
+  if (colors) setBtnFg(replToggleBtn, getSideBarForeground());
+
+  // Search input
   searchTextField = TextField('Search', (text: string) => { onSearchInput(text); });
   textfieldSetOnSubmit(searchTextField, (text: string) => { onSearchSubmit(text); });
   textfieldSetBorderless(searchTextField, 1);
-  textfieldSetFontSize(searchTextField, 13);
-  const _iBg = getInputBackground();
+  textfieldSetFontSize(searchTextField, 14);
   if (_iBg.length > 0) {
     const [_ir, _ig, _ib, _ia] = hexToRGBA(_iBg);
     textfieldSetBackgroundColor(searchTextField, _ir, _ig, _ib, _ia);
@@ -587,38 +599,33 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   if (searchQuery.length > 0) {
     textfieldSetString(searchTextField, searchQuery);
   }
-  widgetAddChild(container, searchTextField);
 
-  // --- Options row: [Aa] [.*] [▸ Replace] ---
+  // Inline buttons: Aa, .*
   const caseBtn = Button('Aa', () => { toggleCaseSensitive(); });
   buttonSetBordered(caseBtn, 0);
   textSetFontSize(caseBtn, 11);
   if (colors) setBtnFg(caseBtn, '#999999');
-
   const regexBtn = Button('.*', () => { toggleRegex(); });
   buttonSetBordered(regexBtn, 0);
   textSetFontSize(regexBtn, 11);
   if (colors) setBtnFg(regexBtn, '#999999');
 
-  let chevronLabel = '\u25B8 Replace';
-  if (searchShowReplace > 0) {
-    chevronLabel = '\u25BE Replace';
-  }
-  replToggleBtn = Button(chevronLabel, () => { toggleReplaceField(); });
-  buttonSetBordered(replToggleBtn, 0);
-  textSetFontSize(replToggleBtn, 11);
-  if (colors) setBtnFg(replToggleBtn, getSideBarForeground());
+  // Search row: [▸] [input] [Aa] [.*]
+  const searchRow = HStack(4, [replToggleBtn, searchTextField, caseBtn, regexBtn]);
+  widgetAddChild(container, searchRow);
 
-  const optionsRow = HStack(8, [caseBtn, regexBtn, replToggleBtn]);
-  widgetAddChild(container, optionsRow);
-
-  // --- Replace section (hidden by default) ---
-  const replContainer = VStack(4, []);
+  // --- Replace row (hidden by default): [spacer] [input] [R] [RA] ---
+  const replContainer = VStack(2, []);
   replaceFieldContainer = replContainer;
+
+  // Invisible spacer matching chevron width — same char, same size, bg color
+  const replChevronSpacer = Text('\u25B8');
+  textSetFontSize(replChevronSpacer, 14);
+  setFg(replChevronSpacer, '#F5F5F500');
 
   replaceTextField = TextField('Replace', (text: string) => { onReplaceInput(text); });
   textfieldSetBorderless(replaceTextField, 1);
-  textfieldSetFontSize(replaceTextField, 13);
+  textfieldSetFontSize(replaceTextField, 14);
   if (_iBg.length > 0) {
     const [_rr, _rg, _rb, _ra] = hexToRGBA(_iBg);
     textfieldSetBackgroundColor(replaceTextField, _rr, _rg, _rb, _ra);
@@ -626,21 +633,19 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   if (replaceQuery.length > 0) {
     textfieldSetString(replaceTextField, replaceQuery);
   }
-  widgetAddChild(replContainer, replaceTextField);
 
+  // Replace buttons — same count and similar width as Aa/.*
   const replOneBtn = Button('Replace', () => { onReplaceOne(); });
   buttonSetBordered(replOneBtn, 0);
   textSetFontSize(replOneBtn, 11);
-  if (colors) setBtnFg(replOneBtn, getSideBarForeground());
-
-  const replAllBtn = Button('Replace All', () => { onReplaceAll(); });
+  if (colors) setBtnFg(replOneBtn, '#999999');
+  const replAllBtn = Button('All', () => { onReplaceAll(); });
   buttonSetBordered(replAllBtn, 0);
   textSetFontSize(replAllBtn, 11);
-  if (colors) setBtnFg(replAllBtn, getSideBarForeground());
+  if (colors) setBtnFg(replAllBtn, '#999999');
 
-  const replBtnRow = HStack(8, [replOneBtn, replAllBtn]);
-  widgetAddChild(replContainer, replBtnRow);
-
+  const replaceRow = HStack(4, [replChevronSpacer, replaceTextField, replOneBtn, replAllBtn]);
+  widgetAddChild(replContainer, replaceRow);
   widgetAddChild(container, replContainer);
   if (searchShowReplace < 1) {
     widgetSetHidden(replContainer, 1);
