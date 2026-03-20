@@ -2338,7 +2338,7 @@ function renderIPadTopBar(): unknown {
 // ---------------------------------------------------------------------------
 
 function renderSidebar(): unknown {
-  const inner = VStackWithInsets(0, 0, 0, 0, 0);
+  const inner = VStackWithInsets(0, 0, 8, 0, 8);
   setBg(inner, getSideBarBackground());
   sidebarContainer = inner;
 

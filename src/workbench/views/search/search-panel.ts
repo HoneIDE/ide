@@ -9,9 +9,9 @@ import {
   TextField,
   textSetColor, textSetFontSize, textSetFontWeight, textSetFontFamily,
   textSetString,
-  buttonSetBordered, buttonSetTextColor,
+  buttonSetBordered, buttonSetTextColor, buttonSetTitle,
   widgetAddChild, widgetClearChildren, widgetSetHidden,
-  textfieldSetString, textfieldFocus, textfieldSetBorderless, textfieldSetBackgroundColor, textfieldSetFontSize,
+  textfieldSetString, textfieldFocus, textfieldSetBorderless, textfieldSetBackgroundColor, textfieldSetFontSize, textfieldSetOnSubmit,
 } from 'perry/ui';
 import { readFileSync, readdirSync, isDirectory, writeFileSync } from 'fs';
 import { execSync } from 'child_process';
@@ -42,6 +42,7 @@ let srCount: number = 0;
 let searchTextField: unknown = null;
 let replaceTextField: unknown = null;
 let replaceFieldContainer: unknown = null;
+let replToggleBtn: unknown = null;
 let searchResultCountLabel: unknown = null;
 let searchResultsContainer: unknown = null;
 let searchPanelReady: number = 0;
@@ -203,24 +204,7 @@ function performSearch(): void {
     return;
   }
 
-  let _dbg = 'performSearch: q=';
-  _dbg += searchQuery;
-  _dbg += ' root=';
-  _dbg += searchWorkspaceRoot;
-  _dbg += '\n';
-
-  // Try ripgrep first (fast, supports regex/globs)
-  if (tryRipgrepSearch() > 0 && srCount > 0) {
-    updateSearchResultsUI();
-    telemetryTrackSearch();
-    return;
-  }
-
-  // Fallback to manual filesystem scan (also if rg returned 0 results)
-  srFilePaths = [];
-  srLineNums = [];
-  srLineTexts = [];
-  srCount = 0;
+  // Manual filesystem scan (ripgrep disabled — rg aliased to non-ripgrep binary)
   searchDir(searchWorkspaceRoot, 0);
   updateSearchResultsUI();
   telemetryTrackSearch();
@@ -383,42 +367,59 @@ function updateSearchResultsUI(): void {
   }
   textSetString(searchResultCountLabel, countText);
 
-  // Group by file — detect file change via pathId comparison
+  // Group by file — bold file headers, indented dimmer match lines
   let lastFileId = -1;
-  for (let i = 0; i < srCount; i++) {
+  let fileMatchShown = 0;
+  for (let i = 0; i < srCount; i = i + 1) {
     const fpath = srFilePaths[i];
     const fid = pathId(fpath);
     if (fid !== lastFileId) {
       lastFileId = fid;
+      fileMatchShown = 0;
+      // Spacing between file groups (not before first)
+      if (i > 0) {
+        const gap = Text('');
+        textSetFontSize(gap, 8);
+        widgetAddChild(searchResultsContainer, gap);
+      }
       const fname = getFileName(fpath);
-      const header = Text(fname);
-      textSetFontSize(header, 12);
-      textSetFontWeight(header, 12, 0.6);
+      const fileResultPath = fpath;
+      const header = Button(fname, () => { onSearchResultClick(fileResultPath); });
+      buttonSetBordered(header, 0);
+      textSetFontSize(header, 13);
+      textSetFontWeight(header, 13, 0.7);
       if (panelColors) {
-        setFg(header, getSideBarForeground());
+        setBtnFg(header, getSideBarForeground());
       }
       widgetAddChild(searchResultsContainer, header);
     }
-    let lineText = srLineTexts[i];
-    if (lineText.length > 60) {
-      lineText = lineText.slice(0, 60);
+    // Max 8 match lines per file
+    fileMatchShown = fileMatchShown + 1;
+    if (fileMatchShown <= 8) {
+      let lineText = srLineTexts[i];
+      if (lineText.length > 80) {
+        lineText = lineText.slice(0, 77);
+        lineText += '...';
+      }
+      let trimStart = 0;
+      while (trimStart < lineText.length && (lineText.charCodeAt(trimStart) === 32 || lineText.charCodeAt(trimStart) === 9)) {
+        trimStart = trimStart + 1;
+      }
+      if (trimStart > 0) {
+        lineText = lineText.slice(trimStart);
+      }
+      let display = '    ';
+      display += lineText;
+      const resultPath = fpath;
+      const btn = Button(display, () => { onSearchResultClick(resultPath); });
+      buttonSetBordered(btn, 0);
+      textSetFontSize(btn, 12);
+      textSetFontFamily(btn, 12, 'Menlo');
+      if (panelColors) {
+        setBtnFg(btn, '#888888');
+      }
+      widgetAddChild(searchResultsContainer, btn);
     }
-    let trimStart = 0;
-    while (trimStart < lineText.length && lineText.charCodeAt(trimStart) === 32) {
-      trimStart = trimStart + 1;
-    }
-    if (trimStart > 0) {
-      lineText = lineText.slice(trimStart);
-    }
-    const resultPath = fpath;
-    const btn = Button(lineText, () => { onSearchResultClick(resultPath); });
-    buttonSetBordered(btn, 0);
-    textSetFontSize(btn, 11);
-    textSetFontFamily(btn, 11, 'Menlo');
-    if (panelColors) {
-      setBtnFg(btn, getSideBarForeground());
-    }
-    widgetAddChild(searchResultsContainer, btn);
   }
 }
 
@@ -427,17 +428,25 @@ function onSearchResultClick(filePath: string): void {
   _fileOpener(filePath, name);
 }
 
+let _searchPollStarted: number = 0;
+
 function onSearchInput(text: string): void {
   searchQuery = text;
-  // Debounce: schedule search after 300ms of no input
-  searchGeneration = searchGeneration + 1;
-  const gen = searchGeneration;
-  searchPending = 1;
-  setTimeout(() => { debouncedSearch(gen); }, 300);
 }
 
-function debouncedSearch(gen: number): void {
-  if (gen !== searchGeneration) return; // newer input superseded this
+function onSearchSubmit(text: string): void {
+  searchQuery = text;
+  performSearch();
+}
+
+/** Poll for pending search — call from an external setInterval that can create widgets. */
+export function pollSearchInput(): void {
+  if (searchPending < 1) return;
+  searchPending = 0;
+  performSearch();
+}
+
+function pollSearchDebounce(): void {
   if (searchPending < 1) return;
   searchPending = 0;
   performSearch();
@@ -460,9 +469,11 @@ function toggleReplaceField(): void {
   if (searchShowReplace > 0) {
     searchShowReplace = 0;
     widgetSetHidden(replaceFieldContainer, 1);
+    buttonSetTitle(replToggleBtn, '\u25B8');
   } else {
     searchShowReplace = 1;
     widgetSetHidden(replaceFieldContainer, 0);
+    buttonSetTitle(replToggleBtn, '\u25BE');
   }
 }
 
@@ -548,70 +559,97 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   panelColors = colors;
   searchPanelReady = 0;
 
+  // Title row
+  const topPad = Text('');
+  textSetFontSize(topPad, 8);
+  widgetAddChild(container, topPad);
+
   const title = Text('SEARCH');
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.7);
   if (colors) setFg(title, getSideBarForeground());
   widgetAddChild(container, title);
 
-  // Search text field
+  const gap1 = Text('');
+  textSetFontSize(gap1, 8);
+  widgetAddChild(container, gap1);
+
+  // --- Search row: [chevron] [input] [Aa] [.*] ---
+  let chevronLabel = '\u25B8';
+  if (searchShowReplace > 0) {
+    chevronLabel = '\u25BE';
+  }
+  replToggleBtn = Button(chevronLabel, () => { toggleReplaceField(); });
+  buttonSetBordered(replToggleBtn, 0);
+  textSetFontSize(replToggleBtn, 12);
+  if (colors) setBtnFg(replToggleBtn, getSideBarForeground());
+
   searchTextField = TextField('Search', (text: string) => { onSearchInput(text); });
+  textfieldSetOnSubmit(searchTextField, (text: string) => { onSearchSubmit(text); });
   textfieldSetBorderless(searchTextField, 1);
-  textfieldSetFontSize(searchTextField, 12);
+  textfieldSetFontSize(searchTextField, 13);
   const _iBg = getInputBackground();
   if (_iBg.length > 0) {
     const [_ir, _ig, _ib, _ia] = hexToRGBA(_iBg);
     textfieldSetBackgroundColor(searchTextField, _ir, _ig, _ib, _ia);
   }
-  widgetAddChild(container, searchTextField);
   if (searchQuery.length > 0) {
     textfieldSetString(searchTextField, searchQuery);
   }
 
-  // Controls row: Aa (case) + .* (regex) + Replace toggle
   const caseBtn = Button('Aa', () => { toggleCaseSensitive(); });
   buttonSetBordered(caseBtn, 0);
   textSetFontSize(caseBtn, 11);
-  if (colors) setBtnFg(caseBtn, getSideBarForeground());
+  if (colors) setBtnFg(caseBtn, '#999999');
+
   const regexBtn = Button('.*', () => { toggleRegex(); });
   buttonSetBordered(regexBtn, 0);
   textSetFontSize(regexBtn, 11);
-  if (colors) setBtnFg(regexBtn, getSideBarForeground());
-  const replToggleBtn = Button('Replace', () => { toggleReplaceField(); });
-  buttonSetBordered(replToggleBtn, 0);
-  textSetFontSize(replToggleBtn, 11);
-  if (colors) setBtnFg(replToggleBtn, getSideBarForeground());
-  const controlsRow = HStack(4, [caseBtn, regexBtn, replToggleBtn]);
-  widgetAddChild(container, controlsRow);
+  if (colors) setBtnFg(regexBtn, '#999999');
 
-  // Replace container (hidden by default)
-  const replContainer = VStack(4, []);
-  replaceFieldContainer = replContainer;
+  const searchRow = HStack(4, [replToggleBtn, searchTextField, caseBtn, regexBtn]);
+  widgetAddChild(container, searchRow);
+
+  // --- Replace row: [indent] [input] [Replace] [All] --- hidden by default
+  const replIndent = Text('');
+  textSetFontSize(replIndent, 12);
+
   replaceTextField = TextField('Replace', (text: string) => { onReplaceInput(text); });
   textfieldSetBorderless(replaceTextField, 1);
-  textfieldSetFontSize(replaceTextField, 12);
+  textfieldSetFontSize(replaceTextField, 13);
   if (_iBg.length > 0) {
     const [_rr, _rg, _rb, _ra] = hexToRGBA(_iBg);
     textfieldSetBackgroundColor(replaceTextField, _rr, _rg, _rb, _ra);
   }
-  widgetAddChild(replContainer, replaceTextField);
   if (replaceQuery.length > 0) {
     textfieldSetString(replaceTextField, replaceQuery);
   }
+
   const replOneBtn = Button('Replace', () => { onReplaceOne(); });
   buttonSetBordered(replOneBtn, 0);
-  textSetFontSize(replOneBtn, 11);
+  textSetFontSize(replOneBtn, 10);
   if (colors) setBtnFg(replOneBtn, getSideBarForeground());
-  const replAllBtn = Button('Replace All', () => { onReplaceAll(); });
+
+  const replAllBtn = Button('All', () => { onReplaceAll(); });
   buttonSetBordered(replAllBtn, 0);
-  textSetFontSize(replAllBtn, 11);
+  textSetFontSize(replAllBtn, 10);
   if (colors) setBtnFg(replAllBtn, getSideBarForeground());
-  const replBtnRow = HStack(4, [replOneBtn, replAllBtn]);
-  widgetAddChild(replContainer, replBtnRow);
-  widgetAddChild(container, replContainer);
+
+  const replaceRow = HStack(4, [replIndent, replaceTextField, replOneBtn, replAllBtn]);
+  replaceFieldContainer = replaceRow;
+  widgetAddChild(container, replaceRow);
   if (searchShowReplace < 1) {
-    widgetSetHidden(replContainer, 1);
+    widgetSetHidden(replaceRow, 1);
   }
+
+  const gap2 = Text('');
+  textSetFontSize(gap2, 6);
+  widgetAddChild(container, gap2);
+
+  // Spacing before results
+  const resPad = Text('');
+  textSetFontSize(resPad, 8);
+  widgetAddChild(container, resPad);
 
   // Result count label
   searchResultCountLabel = Text('Type to search');
