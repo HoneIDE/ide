@@ -9,11 +9,11 @@ import {
   VStack, VStackWithInsets, HStack, HStackWithInsets, Text, Button, Spacer, TextField,
   ScrollView, scrollViewSetChild,
   textSetFontSize, textSetFontWeight, textSetString,
-  buttonSetBordered, buttonSetTitle,
+  buttonSetBordered, buttonSetTitle, buttonSetTextColor, buttonSetContentTintColor,
   widgetAddChild, widgetSetWidth, widgetSetHeight,
-  widgetClearChildren, widgetSetHugging,
+  widgetClearChildren, widgetSetHugging, widgetMatchParentWidth,
 } from 'perry/ui';
-import { setFg, setBtnFg, setBg } from '../../ui-helpers';
+import { setFg, setBtnFg, setBg, hexToRGBA } from '../../ui-helpers';
 import {
   getWorkbenchSettings, setStringSetting, setNumberSetting, setBoolSetting,
 } from '../../settings';
@@ -75,6 +75,15 @@ let _hAccountEmailLabel: unknown = null;
 
 // Deferred action
 let _pendingAction: number = -1;
+let _pendingThemeSwitch: number = -1;
+
+function deferredThemeSwitch(): void {
+  const isDark = _pendingThemeSwitch;
+  _pendingThemeSwitch = -1;
+  if (isDark < 0) return;
+  applyThemeSwitch(isDark);
+  rebuildContent();
+}
 
 // ---------------------------------------------------------------------------
 // Action callbacks (module-level functions for Perry)
@@ -163,6 +172,16 @@ function cycleTermCursor(c: string): string {
 // Deferred action handler
 // ---------------------------------------------------------------------------
 
+function updateBtn(btn: unknown, title: string): void {
+  buttonSetTitle(btn, title);
+  setBtnFg(btn, getButtonBackground());
+}
+
+function updateValBtn(btn: unknown, title: string): void {
+  buttonSetTitle(btn, title);
+  setBtnFg(btn, getEditorForeground());
+}
+
 function deferredAction(): void {
   const action = _pendingAction;
   _pendingAction = -1;
@@ -174,171 +193,173 @@ function deferredAction(): void {
     const isDark = s.colorTheme.charCodeAt(5) === 68 ? 0 : 1;
     const next = isDark > 0 ? 'Hone Dark' : 'Hone Light';
     setStringSetting('colorTheme', next);
-    if (_hThemeBtn) buttonSetTitle(_hThemeBtn, next);
-    applyThemeSwitch(isDark);
+    if (_hThemeBtn) updateBtn(_hThemeBtn, next);
+    // Theme change is detected by the settings version poll in render.ts.
+    // Rebuild settings content after a delay so new theme colors apply.
+    setTimeout(() => { rebuildContent(); }, 300);
   }
   if (action === 2) {
     const next = s.sidebarLocation.charCodeAt(0) === 108 ? 'right' : 'left';
     setStringSetting('sidebarLocation', next);
-    if (_hSidebarLocBtn) buttonSetTitle(_hSidebarLocBtn, next.charCodeAt(0) === 108 ? 'Left' : 'Right');
+    if (_hSidebarLocBtn) updateBtn(_hSidebarLocBtn, next.charCodeAt(0) === 108 ? 'Left' : 'Right');
   }
   if (action === 3) {
     const next = s.statusBarVisible ? 0 : 1;
     setBoolSetting('statusBarVisible', next);
-    if (_hStatusBarBtn) buttonSetTitle(_hStatusBarBtn, next > 0 ? 'Visible' : 'Hidden');
+    if (_hStatusBarBtn) updateBtn(_hStatusBarBtn, next > 0 ? 'Visible' : 'Hidden');
   }
   if (action === 4) {
     const next = cycleActivityBar(s.activityBarLocation);
     setStringSetting('activityBarLocation', next);
-    if (_hActivityBarBtn) buttonSetTitle(_hActivityBarBtn, next);
+    if (_hActivityBarBtn) updateBtn(_hActivityBarBtn, next);
   }
   if (action === 5) {
     const next = cycleLineNumbers(s.editorLineNumbers);
     setStringSetting('editorLineNumbers', next);
-    if (_hEdLineNumBtn) buttonSetTitle(_hEdLineNumBtn, next);
+    if (_hEdLineNumBtn) updateBtn(_hEdLineNumBtn, next);
   }
   if (action === 6) {
     const next = s.editorFontSize + 1;
     if (next <= 72) {
       setNumberSetting('editorFontSize', next);
-      if (_hEdFontSizeVal) textSetString(_hEdFontSizeVal, next.toString());
+      if (_hEdFontSizeVal) updateValBtn(_hEdFontSizeVal, next.toString());
     }
   }
   if (action === 7) {
     const next = s.editorFontSize - 1;
     if (next >= 8) {
       setNumberSetting('editorFontSize', next);
-      if (_hEdFontSizeVal) textSetString(_hEdFontSizeVal, next.toString());
+      if (_hEdFontSizeVal) updateValBtn(_hEdFontSizeVal, next.toString());
     }
   }
   if (action === 8) {
     const next = s.editorTabSize + 1;
     if (next <= 16) {
       setNumberSetting('editorTabSize', next);
-      if (_hEdTabSizeVal) textSetString(_hEdTabSizeVal, next.toString());
+      if (_hEdTabSizeVal) updateValBtn(_hEdTabSizeVal, next.toString());
     }
   }
   if (action === 9) {
     const next = s.editorTabSize - 1;
     if (next >= 1) {
       setNumberSetting('editorTabSize', next);
-      if (_hEdTabSizeVal) textSetString(_hEdTabSizeVal, next.toString());
+      if (_hEdTabSizeVal) updateValBtn(_hEdTabSizeVal, next.toString());
     }
   }
   if (action === 10) {
     const next = s.editorInsertSpaces ? 0 : 1;
     setBoolSetting('editorInsertSpaces', next);
-    if (_hEdInsertSpacesBtn) buttonSetTitle(_hEdInsertSpacesBtn, next > 0 ? 'On' : 'Off');
+    if (_hEdInsertSpacesBtn) updateBtn(_hEdInsertSpacesBtn, next > 0 ? 'On' : 'Off');
   }
   if (action === 11) {
     const next = cycleWordWrap(s.editorWordWrap);
     setStringSetting('editorWordWrap', next);
-    if (_hEdWordWrapBtn) buttonSetTitle(_hEdWordWrapBtn, next);
+    if (_hEdWordWrapBtn) updateBtn(_hEdWordWrapBtn, next);
   }
   if (action === 12) {
     const next = cycleCursorStyle(s.editorCursorStyle);
     setStringSetting('editorCursorStyle', next);
-    if (_hEdCursorStyleBtn) buttonSetTitle(_hEdCursorStyleBtn, next);
+    if (_hEdCursorStyleBtn) updateBtn(_hEdCursorStyleBtn, next);
   }
   if (action === 13) {
     const next = s.editorMinimapEnabled ? 0 : 1;
     setBoolSetting('editorMinimapEnabled', next);
-    if (_hEdMinimapBtn) buttonSetTitle(_hEdMinimapBtn, next > 0 ? 'On' : 'Off');
+    if (_hEdMinimapBtn) updateBtn(_hEdMinimapBtn, next > 0 ? 'On' : 'Off');
   }
   if (action === 14) {
     const next = s.editorFormatOnSave ? 0 : 1;
     setBoolSetting('editorFormatOnSave', next);
-    if (_hEdFormatOnSaveBtn) buttonSetTitle(_hEdFormatOnSaveBtn, next > 0 ? 'On' : 'Off');
+    if (_hEdFormatOnSaveBtn) updateBtn(_hEdFormatOnSaveBtn, next > 0 ? 'On' : 'Off');
   }
   if (action === 15) {
     const next = cycleAutoSave(s.filesAutoSave);
     setStringSetting('filesAutoSave', next);
-    if (_hAutoSaveBtn) buttonSetTitle(_hAutoSaveBtn, next);
+    if (_hAutoSaveBtn) updateBtn(_hAutoSaveBtn, next);
   }
   if (action === 16) {
     const next = s.filesAutoSaveDelay + 100;
     setNumberSetting('filesAutoSaveDelay', next);
-    if (_hAutoSaveDelayVal) textSetString(_hAutoSaveDelayVal, next.toString());
+    if (_hAutoSaveDelayVal) updateValBtn(_hAutoSaveDelayVal, next.toString());
   }
   if (action === 17) {
     const next = s.filesAutoSaveDelay - 100;
     if (next >= 0) {
       setNumberSetting('filesAutoSaveDelay', next);
-      if (_hAutoSaveDelayVal) textSetString(_hAutoSaveDelayVal, next.toString());
+      if (_hAutoSaveDelayVal) updateValBtn(_hAutoSaveDelayVal, next.toString());
     }
   }
   if (action === 18) {
     const next = s.filesTrimTrailingWhitespace ? 0 : 1;
     setBoolSetting('filesTrimTrailingWhitespace', next);
-    if (_hTrimWsBtn) buttonSetTitle(_hTrimWsBtn, next > 0 ? 'On' : 'Off');
+    if (_hTrimWsBtn) updateBtn(_hTrimWsBtn, next > 0 ? 'On' : 'Off');
   }
   if (action === 19) {
     const next = s.terminalFontSize + 1;
     if (next <= 72) {
       setNumberSetting('terminalFontSize', next);
-      if (_hTermFontSizeVal) textSetString(_hTermFontSizeVal, next.toString());
+      if (_hTermFontSizeVal) updateValBtn(_hTermFontSizeVal, next.toString());
     }
   }
   if (action === 20) {
     const next = s.terminalFontSize - 1;
     if (next >= 6) {
       setNumberSetting('terminalFontSize', next);
-      if (_hTermFontSizeVal) textSetString(_hTermFontSizeVal, next.toString());
+      if (_hTermFontSizeVal) updateValBtn(_hTermFontSizeVal, next.toString());
     }
   }
   if (action === 21) {
     const next = cycleTermCursor(s.terminalCursorStyle);
     setStringSetting('terminalCursorStyle', next);
-    if (_hTermCursorBtn) buttonSetTitle(_hTermCursorBtn, next);
+    if (_hTermCursorBtn) updateBtn(_hTermCursorBtn, next);
   }
   if (action === 22) {
     const next = s.aiInlineCompletionEnabled ? 0 : 1;
     setBoolSetting('aiInlineCompletionEnabled', next);
-    if (_hAiInlineBtn) buttonSetTitle(_hAiInlineBtn, next > 0 ? 'On' : 'Off');
+    if (_hAiInlineBtn) updateBtn(_hAiInlineBtn, next > 0 ? 'On' : 'Off');
   }
   if (action === 23) {
     const next = s.aiInlineCompletionDelay + 50;
     if (next <= 5000) {
       setNumberSetting('aiInlineCompletionDelay', next);
-      if (_hAiInlineDelayVal) textSetString(_hAiInlineDelayVal, next.toString());
+      if (_hAiInlineDelayVal) updateValBtn(_hAiInlineDelayVal, next.toString());
     }
   }
   if (action === 24) {
     const next = s.aiInlineCompletionDelay - 50;
     if (next >= 0) {
       setNumberSetting('aiInlineCompletionDelay', next);
-      if (_hAiInlineDelayVal) textSetString(_hAiInlineDelayVal, next.toString());
+      if (_hAiInlineDelayVal) updateValBtn(_hAiInlineDelayVal, next.toString());
     }
   }
   if (action === 25) {
     const next = s.searchUseIgnoreFiles ? 0 : 1;
     setBoolSetting('searchUseIgnoreFiles', next);
-    if (_hSearchIgnoreBtn) buttonSetTitle(_hSearchIgnoreBtn, next > 0 ? 'On' : 'Off');
+    if (_hSearchIgnoreBtn) updateBtn(_hSearchIgnoreBtn, next > 0 ? 'On' : 'Off');
   }
   if (action === 26) {
     const next = s.searchFollowSymlinks ? 0 : 1;
     setBoolSetting('searchFollowSymlinks', next);
-    if (_hSearchSymlinksBtn) buttonSetTitle(_hSearchSymlinksBtn, next > 0 ? 'On' : 'Off');
+    if (_hSearchSymlinksBtn) updateBtn(_hSearchSymlinksBtn, next > 0 ? 'On' : 'Off');
   }
   if (action === 27) {
     const next = s.telemetryEnabled ? 0 : 1;
     setBoolSetting('telemetryEnabled', next);
-    if (_hTelemetryBtn) buttonSetTitle(_hTelemetryBtn, next > 0 ? 'On' : 'Off');
+    if (_hTelemetryBtn) updateBtn(_hTelemetryBtn, next > 0 ? 'On' : 'Off');
   }
   if (action === 28) {
     const next = s.editorInsertFinalNewline ? 0 : 1;
     setBoolSetting('editorInsertFinalNewline', next);
-    if (_hEdInsertFinalNewlineBtn) buttonSetTitle(_hEdInsertFinalNewlineBtn, next > 0 ? 'On' : 'Off');
+    if (_hEdInsertFinalNewlineBtn) updateBtn(_hEdInsertFinalNewlineBtn, next > 0 ? 'On' : 'Off');
   }
   if (action === 29) {
     const next = s.editorTrimFinalNewlines ? 0 : 1;
     setBoolSetting('editorTrimFinalNewlines', next);
-    if (_hEdTrimFinalNewlinesBtn) buttonSetTitle(_hEdTrimFinalNewlinesBtn, next > 0 ? 'On' : 'Off');
+    if (_hEdTrimFinalNewlinesBtn) updateBtn(_hEdTrimFinalNewlinesBtn, next > 0 ? 'On' : 'Off');
   }
   if (action === 30) {
     const next = s.editorFormatNormalizeIndent ? 0 : 1;
     setBoolSetting('editorFormatNormalizeIndent', next);
-    if (_hEdFormatNormalizeIndentBtn) buttonSetTitle(_hEdFormatNormalizeIndentBtn, next > 0 ? 'On' : 'Off');
+    if (_hEdFormatNormalizeIndentBtn) updateBtn(_hEdFormatNormalizeIndentBtn, next > 0 ? 'On' : 'Off');
   }
 }
 
@@ -434,19 +455,36 @@ function onSearchChange(text: string): void {
 
 function makeSection(ctr: unknown, colors: ResolvedUIColors, title: string): void {
   const spacer = VStack(0, []);
-  widgetSetHeight(spacer, 8);
+  widgetSetHeight(spacer, 20);
   widgetAddChild(ctr, spacer);
 
-  const header = Text(title);
-  textSetFontSize(header, 13);
-  textSetFontWeight(header, 13, 0.7);
-  setFg(header, getEditorForeground());
+  const header = Button(title, () => { _labelClick(); });
+  buttonSetBordered(header, 0);
+  textSetFontSize(header, 14);
+  textSetFontWeight(header, 14, 0.7);
+  setBtnFg(header, getEditorForeground());
   widgetAddChild(ctr, header);
 
   const sep = VStack(0, []);
   widgetSetHeight(sep, 1);
   setBg(sep, getPanelBorder());
   widgetAddChild(ctr, sep);
+
+  const postSep = VStack(0, []);
+  widgetSetHeight(postSep, 6);
+  widgetAddChild(ctr, postSep);
+}
+
+let _labelClickCount = 0;
+function _labelClick(): void { _labelClickCount = _labelClickCount + 1; }
+
+function makeSettingLabel(label: string, desc: string): unknown {
+  const b = Button(label, () => { _labelClick(); });
+  buttonSetBordered(b, 0);
+  textSetFontSize(b, 13);
+  setBtnFg(b, getEditorForeground());
+  widgetSetHugging(b, 1);
+  return b;
 }
 
 function makeToggleRow(
@@ -454,26 +492,15 @@ function makeToggleRow(
   label: string, desc: string, currentOn: number,
   onClick: () => void,
 ): unknown {
-  const lbl = Text(label);
-  textSetFontSize(lbl, 13);
-  textSetFontWeight(lbl, 13, 0.5);
-  setFg(lbl, getEditorForeground());
-
   const btn = Button(currentOn > 0 ? 'On' : 'Off', onClick);
   buttonSetBordered(btn, 0);
   textSetFontSize(btn, 12);
   setBtnFg(btn, getButtonBackground());
-  widgetSetWidth(btn, 70);
-
-  const topRow = HStack(8, [lbl, Spacer(), btn]);
-
-  const descText = Text(desc);
-  textSetFontSize(descText, 11);
-  setFg(descText, getInputPlaceholderForeground());
-
-  const row = VStackWithInsets(2, 4, 0, 4, 0);
-  widgetAddChild(row, topRow);
-  widgetAddChild(row, descText);
+  widgetSetWidth(btn, 60);
+  const lbl = makeSettingLabel(label, desc);
+  widgetSetHugging(lbl, 1);
+  const row = HStack(12, [lbl, btn]);
+  widgetSetHeight(row, 26);
   widgetAddChild(ctr, row);
   return btn;
 }
@@ -483,26 +510,15 @@ function makeToggleRowAlt(
   label: string, desc: string, onLabel: string, offLabel: string, currentOn: number,
   onClick: () => void,
 ): unknown {
-  const lbl = Text(label);
-  textSetFontSize(lbl, 13);
-  textSetFontWeight(lbl, 13, 0.5);
-  setFg(lbl, getEditorForeground());
-
   const btn = Button(currentOn > 0 ? onLabel : offLabel, onClick);
   buttonSetBordered(btn, 0);
   textSetFontSize(btn, 12);
   setBtnFg(btn, getButtonBackground());
-  widgetSetWidth(btn, 70);
-
-  const topRow = HStack(8, [lbl, Spacer(), btn]);
-
-  const descText = Text(desc);
-  textSetFontSize(descText, 11);
-  setFg(descText, getInputPlaceholderForeground());
-
-  const row = VStackWithInsets(2, 4, 0, 4, 0);
-  widgetAddChild(row, topRow);
-  widgetAddChild(row, descText);
+  widgetSetWidth(btn, 80);
+  const lbl = makeSettingLabel(label, desc);
+  widgetSetHugging(lbl, 1);
+  const row = HStack(12, [lbl, btn]);
+  widgetSetHeight(row, 26);
   widgetAddChild(ctr, row);
   return btn;
 }
@@ -512,26 +528,15 @@ function makeCycleRow(
   label: string, desc: string, currentValue: string,
   onClick: () => void,
 ): unknown {
-  const lbl = Text(label);
-  textSetFontSize(lbl, 13);
-  textSetFontWeight(lbl, 13, 0.5);
-  setFg(lbl, getEditorForeground());
-
   const btn = Button(currentValue, onClick);
   buttonSetBordered(btn, 0);
   textSetFontSize(btn, 12);
   setBtnFg(btn, getButtonBackground());
-  widgetSetWidth(btn, 130);
-
-  const topRow = HStack(8, [lbl, Spacer(), btn]);
-
-  const descText = Text(desc);
-  textSetFontSize(descText, 11);
-  setFg(descText, getInputPlaceholderForeground());
-
-  const row = VStackWithInsets(2, 4, 0, 4, 0);
-  widgetAddChild(row, topRow);
-  widgetAddChild(row, descText);
+  widgetSetWidth(btn, 120);
+  const lbl = makeSettingLabel(label, desc);
+  widgetSetHugging(lbl, 1);
+  const row = HStack(12, [lbl, btn]);
+  widgetSetHeight(row, 26);
   widgetAddChild(ctr, row);
   return btn;
 }
@@ -541,36 +546,22 @@ function makeStepperRow(
   label: string, desc: string, currentValue: number,
   onDown: () => void, onUp: () => void,
 ): unknown {
-  const lbl = Text(label);
-  textSetFontSize(lbl, 13);
-  textSetFontWeight(lbl, 13, 0.5);
-  setFg(lbl, getEditorForeground());
-
-  const downBtn = Button('-', onDown);
+  const downBtn = Button(' - ', onDown);
   buttonSetBordered(downBtn, 0);
-  textSetFontSize(downBtn, 13);
-  setBtnFg(downBtn, getEditorForeground());
-
-  const valLabel = Text(currentValue.toString());
-  textSetFontSize(valLabel, 12);
-  setFg(valLabel, getEditorForeground());
+  textSetFontSize(downBtn, 12);
+  const valLabel = Button(currentValue.toString(), () => { _labelClick(); });
+  buttonSetBordered(valLabel, 0);
+  textSetFontSize(valLabel, 13);
+  setBtnFg(valLabel, getEditorForeground());
   widgetSetWidth(valLabel, 40);
-
-  const upBtn = Button('+', onUp);
+  const upBtn = Button(' + ', onUp);
   buttonSetBordered(upBtn, 0);
-  textSetFontSize(upBtn, 13);
-  setBtnFg(upBtn, getEditorForeground());
-
-  const controls = HStack(4, [downBtn, valLabel, upBtn]);
-  const topRow = HStack(8, [lbl, Spacer(), controls]);
-
-  const descText = Text(desc);
-  textSetFontSize(descText, 11);
-  setFg(descText, getInputPlaceholderForeground());
-
-  const row = VStackWithInsets(2, 4, 0, 4, 0);
-  widgetAddChild(row, topRow);
-  widgetAddChild(row, descText);
+  textSetFontSize(upBtn, 12);
+  const controls = HStack(2, [downBtn, valLabel, upBtn]);
+  const lbl = makeSettingLabel(label, desc);
+  widgetSetHugging(lbl, 1);
+  const row = HStack(12, [lbl, controls]);
+  widgetSetHeight(row, 26);
   widgetAddChild(ctr, row);
   return valLabel;
 }
@@ -580,23 +571,12 @@ function makeTextRow(
   label: string, desc: string, value: string,
   onChange: (text: string) => void,
 ): void {
-  const lbl = Text(label);
-  textSetFontSize(lbl, 13);
-  textSetFontWeight(lbl, 13, 0.5);
-  setFg(lbl, getEditorForeground());
-
   const field = TextField(value, onChange);
-  widgetSetWidth(field, 160);
-
-  const topRow = HStack(8, [lbl, Spacer(), field]);
-
-  const descText = Text(desc);
-  textSetFontSize(descText, 11);
-  setFg(descText, getInputPlaceholderForeground());
-
-  const row = VStackWithInsets(2, 4, 0, 4, 0);
-  widgetAddChild(row, topRow);
-  widgetAddChild(row, descText);
+  widgetSetWidth(field, 220);
+  const lbl = makeSettingLabel(label, desc);
+  widgetSetHugging(lbl, 1);
+  const row = HStack(12, [lbl, field]);
+  widgetSetHeight(row, 26);
   widgetAddChild(ctr, row);
 }
 
@@ -806,65 +786,38 @@ function buildContent(ctr: unknown, colors: ResolvedUIColors): void {
   if (hasAccount > 0) {
     makeSection(ctr, colors, 'Account');
 
-    // Plan badge
-    const planLabel = Text('Plan');
-    textSetFontSize(planLabel, 13);
-    textSetFontWeight(planLabel, 13, 0.5);
-    setFg(planLabel, getEditorForeground());
-
-    let tierStr = 'Free';
-    if (s.syncEnabled) {
-      tierStr = 'Free';
-    }
-    const planValue = Text(tierStr);
-    textSetFontSize(planValue, 13);
-    setFg(planValue, getInputPlaceholderForeground());
-    _hAccountTierLabel = planValue;
-
-    const planRow = HStack(8, [planLabel, Spacer(), planValue]);
-    const planDesc = Text('Upgrade to Pro at account.hone.codes for unlimited projects and devices.');
-    textSetFontSize(planDesc, 11);
-    setFg(planDesc, getInputPlaceholderForeground());
-    const planSection = VStackWithInsets(2, 4, 0, 4, 0);
-    widgetAddChild(planSection, planRow);
-    widgetAddChild(planSection, planDesc);
-    widgetAddChild(ctr, planSection);
+    // Plan
+    const planVal = Button('Free', () => { _labelClick(); });
+    buttonSetBordered(planVal, 0);
+    setBtnFg(planVal, getInputPlaceholderForeground());
+    textSetFontSize(planVal, 12);
+    const planLbl = makeSettingLabel('Plan', ''); widgetSetWidth(planLbl, 200);
+    const planRow = HStack(12, [planLbl, planVal]);
+    widgetSetHeight(planRow, 26);
+    widgetAddChild(ctr, planRow);
+    _hAccountTierLabel = planVal;
 
     // Synced projects
-    const projLabel = Text('Synced Projects');
-    textSetFontSize(projLabel, 13);
-    textSetFontWeight(projLabel, 13, 0.5);
-    setFg(projLabel, getEditorForeground());
-
-    const projValue = Text('0 of 1');
-    textSetFontSize(projValue, 13);
-    setFg(projValue, getInputPlaceholderForeground());
-    _hAccountProjectsLabel = projValue;
-
-    const projRow = HStack(8, [projLabel, Spacer(), projValue]);
-    const projSection = VStackWithInsets(2, 4, 0, 4, 0);
-    widgetAddChild(projSection, projRow);
-    widgetAddChild(ctr, projSection);
+    const projVal = Button('0 of 1', () => { _labelClick(); });
+    buttonSetBordered(projVal, 0);
+    setBtnFg(projVal, getInputPlaceholderForeground());
+    textSetFontSize(projVal, 12);
+    const projLbl = makeSettingLabel('Synced Projects', ''); widgetSetWidth(projLbl, 200);
+    const projRow = HStack(12, [projLbl, projVal]);
+    widgetSetHeight(projRow, 26);
+    widgetAddChild(ctr, projRow);
+    _hAccountProjectsLabel = projVal;
 
     // Email
-    const emailLabel = Text('Email');
-    textSetFontSize(emailLabel, 13);
-    textSetFontWeight(emailLabel, 13, 0.5);
-    setFg(emailLabel, getEditorForeground());
-
-    const emailValue = Text('Not linked');
-    textSetFontSize(emailValue, 13);
-    setFg(emailValue, getInputPlaceholderForeground());
-    _hAccountEmailLabel = emailValue;
-
-    const emailRow = HStack(8, [emailLabel, Spacer(), emailValue]);
-    const emailDesc = Text('Link an email at account.hone.codes to manage your account.');
-    textSetFontSize(emailDesc, 11);
-    setFg(emailDesc, getInputPlaceholderForeground());
-    const emailSection = VStackWithInsets(2, 4, 0, 4, 0);
-    widgetAddChild(emailSection, emailRow);
-    widgetAddChild(emailSection, emailDesc);
-    widgetAddChild(ctr, emailSection);
+    const emailVal = Button('Not linked', () => { _labelClick(); });
+    buttonSetBordered(emailVal, 0);
+    setBtnFg(emailVal, getInputPlaceholderForeground());
+    textSetFontSize(emailVal, 12);
+    const emailLbl = makeSettingLabel('Email', ''); widgetSetWidth(emailLbl, 200);
+    const emailRow = HStack(12, [emailLbl, emailVal]);
+    widgetSetHeight(emailRow, 26);
+    widgetAddChild(ctr, emailRow);
+    _hAccountEmailLabel = emailVal;
   }
 }
 
@@ -877,27 +830,26 @@ export function renderSettingsTab(container: unknown, colors: ResolvedUIColors):
   _searchText = '';
 
   // Header
-  const titleText = Text('Settings');
-  textSetFontSize(titleText, 18);
-  textSetFontWeight(titleText, 18, 0.6);
-  setFg(titleText, getEditorForeground());
+  const titleText = Button('Settings', () => { _labelClick(); });
+  buttonSetBordered(titleText, 0);
+  textSetFontSize(titleText, 20);
+  textSetFontWeight(titleText, 20, 0.6);
+  setBtnFg(titleText, getEditorForeground());
 
   const searchField = TextField('Search settings...', onSearchChange);
   widgetSetWidth(searchField, 220);
 
-  const header = HStackWithInsets(8, 12, 16, 12, 16);
+  const header = HStackWithInsets(8, 16, 16, 16, 16);
   widgetAddChild(header, titleText);
   widgetAddChild(header, Spacer());
   widgetAddChild(header, searchField);
 
-  // Scrollable content area
-  const content = VStackWithInsets(6, 0, 12, 0, 12);
+  // Scrollable content
+  const content = VStackWithInsets(10, 0, 16, 0, 16);
   _contentContainer = content;
-  buildContent(content, colors);
 
   const scroll = ScrollView();
-  // Perry: scrollViewSetChild compiles to no-op, use widgetAddChild workaround
-  widgetAddChild(scroll, content);
+  scrollViewSetChild(scroll, content);
   widgetSetHugging(scroll, 1);
 
   // Outer container
@@ -905,6 +857,9 @@ export function renderSettingsTab(container: unknown, colors: ResolvedUIColors):
   setBg(outer, getEditorBackground());
   widgetSetHugging(outer, 1);
   widgetAddChild(container, outer);
+
+  // Build settings content
+  buildContent(content, colors);
 }
 
 export function updateAccountTier(tier: string): void {

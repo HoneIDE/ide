@@ -17,6 +17,7 @@ import { readFileSync } from 'fs';
 import { setBg, setBtnFg, setBtnTint, getFileIcon, getFileIconColor } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getTabActiveForeground, getTabActiveBackground, getTabInactiveForeground, getTabInactiveBackground, getTabBorder, getFocusBorder } from '../../theme/theme-colors';
+import { setStringSetting, setNumberSetting } from '../../settings';
 
 // ---------------------------------------------------------------------------
 // Module-level state (must be declared BEFORE any function — Perry no-hoist)
@@ -37,6 +38,7 @@ let tabSavedLengths: number[] = [];
 
 let tabBarContainer: unknown = null;
 let tabBarReady: number = 0;
+let tabBarRestoring: number = 0;
 let panelColors: ResolvedUIColors = null as any;
 
 let pendingTabClickIdx: number = -1;
@@ -119,6 +121,7 @@ export function openTab(filePath: string, fileName: string): number {
         if (tabBarReady > 0) {
           applyTabColors(openTabCount);
         }
+        persistTabState();
         return 1;
       }
     }
@@ -146,6 +149,7 @@ export function openTab(filePath: string, fileName: string): number {
   if (tabBarReady > 0) {
     rebuildTabBarDirect(openTabCount, openTabNames, openTabs, tabBarContainer);
   }
+  persistTabState();
   return 0;
 }
 
@@ -239,18 +243,16 @@ function rebuildTabBarDirect(count: number, names: string[], paths: string[], co
     widgetSetHeight(accent, 2);
     widgetSetHugging(accent, 750);
 
-    // Apply colors using widgetSetBackgroundColor directly (setBg doesn't work on NSStackView)
+    // Apply colors from theme
     if (i === activeTabIdx) {
       setBtnFg(tabBtn, getTabActiveForeground());
-      // Active: white bg (light) / editor bg (dark)
-      widgetSetBackgroundColor(tabGroup, 1.0, 1.0, 1.0, 1.0);
+      setBg(tabGroup, getTabActiveBackground());
       // Blue accent bar
-      widgetSetBackgroundColor(accent, 0.0, 0.48, 0.80, 1.0);
+      setBg(accent, getFocusBorder());
       setBtnFg(closeBtn, getTabActiveForeground());
     } else {
       setBtnFg(tabBtn, getTabInactiveForeground());
-      // Inactive: gray bg
-      widgetSetBackgroundColor(tabGroup, 0.925, 0.925, 0.925, 1.0);
+      setBg(tabGroup, getTabInactiveBackground());
       // No accent bar
       widgetSetBackgroundColor(accent, 0.0, 0.0, 0.0, 0.0);
       setBtnFg(closeBtn, getTabInactiveForeground());
@@ -298,8 +300,8 @@ function rebuildTabBarDirect(count: number, names: string[], paths: string[], co
 function applyTabColors(count: number): void {
   for (let i = 0; i < count; i++) {
     if (i === activeTabIdx) {
-      widgetSetBackgroundColor(tabBarButtons[i], 1.0, 1.0, 1.0, 1.0);
-      if (i < tabAccentBars.length) widgetSetBackgroundColor(tabAccentBars[i], 0.0, 0.48, 0.80, 1.0);
+      setBg(tabBarButtons[i], getTabActiveBackground());
+      if (i < tabAccentBars.length) setBg(tabAccentBars[i], getFocusBorder());
       if (i < tabLabelButtons.length) setBtnFg(tabLabelButtons[i], getTabActiveForeground());
       if (i < tabCloseButtons.length) setBtnFg(tabCloseButtons[i], getTabActiveForeground());
       if (i < tabIconButtons.length) {
@@ -310,7 +312,7 @@ function applyTabColors(count: number): void {
         }
       }
     } else {
-      widgetSetBackgroundColor(tabBarButtons[i], 0.925, 0.925, 0.925, 1.0);
+      setBg(tabBarButtons[i], getTabInactiveBackground());
       if (i < tabAccentBars.length) widgetSetBackgroundColor(tabAccentBars[i], 0.0, 0.0, 0.0, 0.0);
       if (i < tabLabelButtons.length) setBtnFg(tabLabelButtons[i], getTabInactiveForeground());
       if (i < tabCloseButtons.length) setBtnFg(tabCloseButtons[i], getTabInactiveForeground());
@@ -330,6 +332,24 @@ export function applyAllTabColors(): void {
   applyTabColors(openTabCount);
 }
 
+/** Suppress persistence during tab restore. */
+export function setTabBarRestoring(val: number): void {
+  tabBarRestoring = val;
+}
+
+/** Persist open tabs to settings (pipe-separated paths). */
+function persistTabState(): void {
+  if (tabBarReady < 1) return;
+  if (tabBarRestoring > 0) return;
+  let joined = '';
+  for (let i = 0; i < openTabCount; i++) {
+    if (i > 0) joined += '|';
+    joined += openTabs[i];
+  }
+  setStringSetting('lastOpenTabs', joined);
+  setNumberSetting('lastActiveTab', activeTabIdx);
+}
+
 // ---------------------------------------------------------------------------
 // Tab click / close handlers
 // ---------------------------------------------------------------------------
@@ -339,6 +359,7 @@ function onTabClickDirect(idx: number, path: string): void {
   if (tabBarButtons.length > 0) {
     applyTabColors(tabBarButtons.length);
   }
+  persistTabState();
   _displayCallback(path);
 }
 
@@ -373,6 +394,7 @@ function onTabCloseDeferred(): void {
   if (tabBarReady > 0) {
     rebuildTabBarDirect(newCount, newNames, newTabs, tabBarContainer);
   }
+  persistTabState();
   if (activeTabIdx >= 0 && activeTabIdx < newCount) {
     _displayCallback(newTabs[activeTabIdx]);
   }
@@ -394,6 +416,7 @@ function closeAllTabsDeferred(): void {
   if (tabBarReady > 0) {
     widgetClearChildren(tabBarContainer);
   }
+  persistTabState();
   _displayCallback('');
 }
 
@@ -416,6 +439,7 @@ function closeOtherTabsDeferred(): void {
   if (tabBarReady > 0) {
     rebuildTabBarDirect(1, openTabNames, openTabs, tabBarContainer);
   }
+  persistTabState();
   _displayCallback(keptPath);
 }
 

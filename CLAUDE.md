@@ -11,6 +11,11 @@ No Rust here. All Rust lives in `../perry/` (Perry compiler) and its sub-crates.
 # Compile for macOS (from hone-ide/)
 perry compile src/app.ts --output hone-ide
 
+# Compile with geisterhand (testing/automation — bakes HTTP API into binary)
+# MUST run from the perry source dir so it finds target/geisterhand/
+cd ../perry && perry compile /path/to/hone-ide/src/app.ts --output /path/to/hone-ide/hone-ide --enable-geisterhand
+# Then just: ./hone-ide . — geisterhand API on port 7676 automatically
+
 # Compile for Windows (from hone-ide/)
 perry compile src/app.ts --target windows --output hone-ide
 mv hone-ide hone-ide.exe  # Perry outputs without .exe extension
@@ -21,6 +26,14 @@ mv hone-ide hone-ide.exe  # Perry outputs without .exe extension
 
 # Type check only
 bun run typecheck
+```
+
+**Geisterhand build prerequisite** (one-time, from `../perry/`):
+```bash
+CARGO_PROFILE_RELEASE_LTO=off CARGO_TARGET_DIR=target/geisterhand cargo build --release \
+  -p perry-runtime --features geisterhand \
+  -p perry-ui-macos --features geisterhand \
+  -p perry-ui-geisterhand
 ```
 
 ## Critical Perry rules
@@ -159,18 +172,38 @@ const s = getWorkbenchSettings();
 updateSettings({ sidebarLocation: 'right' });
 ```
 
-## Testing interactions
+## Testing
+
+### Manual (geisterhand CLI)
 
 ```bash
-# Screenshot
-geisterhand screenshot --output /tmp/shot.png
-
-# Click (screen coordinates)
-geisterhand click x y
-
-# Get button positions (AppleScript)
-osascript -e 'tell application "System Events" to tell process "hone-ide" to get position of every button of window 1'
+geisterhand screenshot --output /tmp/shot.png   # Take screenshot
+geisterhand click x y                            # Click at coordinates
 ```
+
+### Agentic UI tests (Claude Code)
+
+LLM-driven visual testing in `tests/agentic/`. A single Claude Code sub-agent runs all scenarios sequentially against the live IDE, using geisterhand's HTTP API for interaction and Claude's vision to evaluate screenshots.
+
+```bash
+# 1. Build the IDE with geisterhand baked in (run from ../perry/)
+cd ../perry && perry compile ../hone/hone-ide/src/app.ts --output ../hone/hone-ide/hone-ide --enable-geisterhand
+
+# 2. Run — geisterhand API is available automatically on port 7676
+./hone-ide /path/to/project
+
+# 3. Run all 10 scenarios (from any Claude Code session)
+#    Spawn a single agent following tests/agentic/run-all.md
+#    Or run one scenario:
+#    "Run the scenario in tests/agentic/scenarios/05-git.md against port 7676"
+```
+
+**Key rules:**
+- **Single agent, sequential** — multiple agents on one IDE instance will conflict
+- **Screenshots are proof** — agent must `Read` every screenshot it captures (Claude vision evaluates it)
+- **Fresh widgets before each click** — handles change after UI updates (`GET /widgets`)
+
+Scenarios: startup, explorer, editor tabs, search, git, terminal, settings, AI chat, sidebar toggle, multi-step workflows. See `tests/agentic/run-all.md` for full orchestrator instructions.
 
 ## Slice plan
 

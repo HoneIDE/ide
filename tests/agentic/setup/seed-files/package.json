@@ -1,0 +1,15 @@
+{
+  "name": "sample-project",
+  "version": "1.0.0",
+  "description": "A sample TypeScript project for IDE testing",
+  "main": "src/main.ts",
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "test": "bun test"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/bun": "^1.0.0"
+  }
+}

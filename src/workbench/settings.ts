@@ -104,6 +104,10 @@ export interface WorkbenchSettings {
   telemetryEnabled: boolean;
   /** Whether the first-run setup has been completed */
   setupComplete: boolean;
+  /** Pipe-separated list of open tab file paths */
+  lastOpenTabs: string;
+  /** Index of the active tab at last save */
+  lastActiveTab: number;
 }
 
 type SettingsChangeListener = (settings: WorkbenchSettings) => void;
@@ -182,6 +186,8 @@ let _settings_syncAuthUrl: string = 'https://auth.hone.codes';
 let _settings_syncDeviceToken: string = '';
 let _settings_telemetryEnabled: number = 0;
 let _settings_setupComplete: number = 0;
+let _settings_lastOpenTabs: string = '';
+let _settings_lastActiveTab: number = 0;
 let _settingsLoaded: number = 0;
 let _settingsVersion: number = 0;
 
@@ -275,6 +281,8 @@ export function initSettings(): void {
     if (key === 'syncDeviceToken') _settings_syncDeviceToken = val;
     if (key === 'telemetryEnabled') _settings_telemetryEnabled = val === '1' ? 1 : 0;
     if (key === 'setupComplete') _settings_setupComplete = val === '1' ? 1 : 0;
+    if (key === 'lastOpenTabs') _settings_lastOpenTabs = val;
+    if (key === 'lastActiveTab') { const n = parseInt(val); if (n >= 0) _settings_lastActiveTab = n; }
   }
 
   // Migrate legacy aiApiKey → aiKeyAnthropic
@@ -334,6 +342,8 @@ function buildSnapshot(): WorkbenchSettings {
     syncDeviceToken: _settings_syncDeviceToken,
     telemetryEnabled: _settings_telemetryEnabled > 0,
     setupComplete: _settings_setupComplete > 0,
+    lastOpenTabs: _settings_lastOpenTabs,
+    lastActiveTab: _settings_lastActiveTab,
   };
 }
 
@@ -512,6 +522,12 @@ function serializeFromVars(): string {
   out += 'setupComplete=';
   out += _settings_setupComplete > 0 ? '1' : '0';
   out += '\n';
+  out += 'lastOpenTabs=';
+  out += _settings_lastOpenTabs;
+  out += '\n';
+  out += 'lastActiveTab=';
+  out += intToStr(_settings_lastActiveTab);
+  out += '\n';
   return out;
 }
 
@@ -550,6 +566,7 @@ export function setStringSetting(key: string, value: string): void {
   if (key === 'syncRelayUrl') _settings_syncRelayUrl = value;
   if (key === 'syncAuthUrl') _settings_syncAuthUrl = value;
   if (key === 'syncDeviceToken') _settings_syncDeviceToken = value;
+  if (key === 'lastOpenTabs') _settings_lastOpenTabs = value;
   persistToDisk();
   notifyListeners();
 }
@@ -564,6 +581,16 @@ export function getLastOpenFolder(): string {
   return _settings_lastOpenFolder;
 }
 
+/** Get the pipe-separated list of last open tab paths. */
+export function getLastOpenTabs(): string {
+  return _settings_lastOpenTabs;
+}
+
+/** Get the index of the last active tab. */
+export function getLastActiveTab(): number {
+  return _settings_lastActiveTab;
+}
+
 /** Update a number setting. */
 export function setNumberSetting(key: string, value: number): void {
   if (key === 'activePanelIndex') _settings_activePanelIndex = value;
@@ -572,6 +599,7 @@ export function setNumberSetting(key: string, value: number): void {
   if (key === 'filesAutoSaveDelay') _settings_filesAutoSaveDelay = value;
   if (key === 'terminalFontSize') _settings_terminalFontSize = value;
   if (key === 'aiInlineCompletionDelay') _settings_aiInlineCompletionDelay = value;
+  if (key === 'lastActiveTab') _settings_lastActiveTab = value;
   persistToDisk();
   notifyListeners();
 }
@@ -653,6 +681,8 @@ export function updateSettings(patch: Partial<WorkbenchSettings>): void {
     if (k === 'syncDeviceToken') _settings_syncDeviceToken = (patch as any).syncDeviceToken;
     if (k === 'telemetryEnabled') _settings_telemetryEnabled = (patch as any).telemetryEnabled ? 1 : 0;
     if (k === 'setupComplete') _settings_setupComplete = (patch as any).setupComplete ? 1 : 0;
+    if (k === 'lastOpenTabs') _settings_lastOpenTabs = (patch as any).lastOpenTabs;
+    if (k === 'lastActiveTab') _settings_lastActiveTab = (patch as any).lastActiveTab;
   }
   persistToDisk();
   notifyListeners();

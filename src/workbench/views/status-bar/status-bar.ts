@@ -141,7 +141,7 @@ export function recolorStatusBar(c: ResolvedUIColors): void {
   if (statusBarCursorLabel) setFg(statusBarCursorLabel, getStatusBarForeground());
   if (statusBarEncodingLabel) setFg(statusBarEncodingLabel, getStatusBarForeground());
   if (statusBarLangLabel) setFg(statusBarLangLabel, getStatusBarForeground());
-  if (statusBarUpdateBtn) setFg(statusBarUpdateBtn, getStatusBarForeground());
+  if (statusBarUpdateBtn) setBtnTint(statusBarUpdateBtn, getStatusBarForeground());
 }
 
 /** Get the status bar widget ref (for recoloring from render.ts). */

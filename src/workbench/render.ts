@@ -48,7 +48,7 @@ import {
   applyDarkColors, applyLightColors, isCurrentThemeDark,
 } from './theme/theme-colors';
 import type { LayoutMode } from '../platform';
-import { getWorkbenchSettings, updateSettings, onSettingsChange, getSettingsVersion } from './settings';
+import { getWorkbenchSettings, updateSettings, onSettingsChange, getSettingsVersion, getLastOpenTabs, getLastActiveTab } from './settings';
 import { readFileSync, writeFileSync, readdirSync, isDirectory, existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { spawnBackground } from 'child_process';
@@ -87,7 +87,7 @@ import {
   setContextMenuFileOpener, setContextMenuTerminalOpener,
 } from './views/explorer/context-menu';
 import {
-  initTabBar, setTabDisplayCallback, setTabThemeColors,
+  initTabBar, setTabDisplayCallback, setTabThemeColors, setTabBarRestoring,
   openTab, getActiveTabPath, getActiveTabIdx, getTabCount,
   getOpenTabCount, getOpenTabPath, setActiveTabByIndex,
   markTabSaved, updateTabDirtyIcon, applyAllTabColors, closeActiveTab, renameActiveTab, closeAllOpenTabs,
@@ -2358,17 +2358,77 @@ function renderSidebar(): unknown {
 // ---------------------------------------------------------------------------
 
 function renderEditorArea(): unknown {
+  // Restore saved tabs, or fall back to src/app.ts
+  const savedTabs = getLastOpenTabs();
+  const savedActiveIdx = getLastActiveTab();
   let defaultFile = '';
-  defaultFile += workspaceRoot;
-  if (__platform__ === 3) {
-    defaultFile += '\\src\\app.ts';
-  } else {
-    defaultFile += '/src/app.ts';
+  let defaultName = '';
+
+  // Check if we have saved tabs that still exist
+  let restoredCount = 0;
+  let restorePaths: string[] = [];
+  if (savedTabs.length > 2) {
+    // Split on pipe — Perry-safe (no for...of, manual split)
+    let start = 0;
+    for (let ci = 0; ci <= savedTabs.length; ci++) {
+      if (ci === savedTabs.length || savedTabs.charCodeAt(ci) === 124) { // '|'
+        if (ci > start) {
+          const p = savedTabs.slice(start, ci);
+          if (existsSync(p)) {
+            restorePaths.push(p);
+            restoredCount = restoredCount + 1;
+          }
+        }
+        start = ci + 1;
+      }
+    }
   }
-  const defaultName = 'app.ts';
+
+  if (restoredCount > 0) {
+    defaultFile = restorePaths[0];
+    // Extract filename from path
+    let lastSlash = -1;
+    for (let fi = 0; fi < defaultFile.length; fi++) {
+      if (defaultFile.charCodeAt(fi) === 47 || defaultFile.charCodeAt(fi) === 92) lastSlash = fi;
+    }
+    if (lastSlash >= 0) {
+      defaultName = defaultFile.slice(lastSlash + 1);
+    } else {
+      defaultName = defaultFile;
+    }
+  } else {
+    defaultFile += workspaceRoot;
+    if (__platform__ === 3) {
+      defaultFile += '\\src\\app.ts';
+    } else {
+      defaultFile += '/src/app.ts';
+    }
+    defaultName = 'app.ts';
+  }
 
   const tbc = HStack(1, []);
+  setTabBarRestoring(1);
   initTabBar(tbc, null as any, defaultFile, defaultName);
+
+  // Open remaining restored tabs (first one was opened by initTabBar)
+  for (let ri = 1; ri < restoredCount; ri++) {
+    const rPath = restorePaths[ri];
+    let rLastSlash = -1;
+    for (let fi = 0; fi < rPath.length; fi++) {
+      if (rPath.charCodeAt(fi) === 47 || rPath.charCodeAt(fi) === 92) rLastSlash = fi;
+    }
+    let rName = rPath;
+    if (rLastSlash >= 0) {
+      rName = rPath.slice(rLastSlash + 1);
+    }
+    openTab(rPath, rName);
+  }
+
+  // Restore active tab index
+  if (restoredCount > 1 && savedActiveIdx >= 0 && savedActiveIdx < restoredCount) {
+    setActiveTabByIndex(savedActiveIdx);
+  }
+  setTabBarRestoring(0);
 
   const ed = new Editor(800, 600);
   editorInstance = ed;
@@ -2390,7 +2450,13 @@ function renderEditorArea(): unknown {
     setDecorationRenderCallback(onDecorationChanged);
   }
 
-  displayFileContent(defaultFile);
+  // Display the active tab's file
+  const activeFile = getActiveTabPath();
+  if (activeFile.length > 0) {
+    displayFileContent(activeFile);
+  } else {
+    displayFileContent(defaultFile);
+  }
 
   // Apply native editor view colors AFTER content is displayed
   applyEditorColors();
@@ -2619,47 +2685,42 @@ function applyEditorColors(): void {
 
 /** Re-apply theme colors to all stored widget refs. Called after theme switch. */
 function recolorUI(): void {
-  // Shell containers
+  // Shell backgrounds
   if (shellWidget) setBg(shellWidget, getEditorBackground());
   if (leftContentWidget) setBg(leftContentWidget, getEditorBackground());
   if (activityBarWidget) setBg(activityBarWidget, getActivityBarBackground());
   if (sidebarContainer) setBg(sidebarContainer, getSideBarBackground());
   if (editorPaneWidget) setBg(editorPaneWidget, getEditorBackground());
   if (breadcrumbContainer) setBg(breadcrumbContainer, getEditorBackground());
-
-  // Terminal area
   if (termPanelWidget) setBg(termPanelWidget, getEditorBackground());
   if (termBorderWidget) setBg(termBorderWidget, getPanelBorder());
-
-  // Borders
   if (sidebarBorderWidget) setBg(sidebarBorderWidget, getPanelBorder());
   if (rightPanelBorder) setBg(rightPanelBorder, getPanelBorder());
-
-  // Right panel (AI Chat)
   if (rightPanelWidget) setBg(rightPanelWidget, getSideBarBackground());
-
-  // Activity bar icon colors
-  for (let i = 0; i < activityButtons.length; i++) {
-    if (i === activeActivityIdx) {
-      setBtnTint(activityButtons[i], getActivityBarForeground());
-    } else {
-      setBtnTint(activityButtons[i], getActivityBarInactiveForeground());
-    }
-  }
 
   // Status bar
   recolorStatusBar(null as any);
 
-  // Tab bar
+  // Tab bar colors
   setTabThemeColors(null as any);
   applyAllTabColors();
 
   // Diff view
   setDiffThemeColors(null as any);
 
-  // Embedded editor NSView colors
+  // Activity bar icon colors
+  for (let i = 0; i < activityButtons.length; i++) {
+    if (activityButtons[i]) {
+      if (i === activeActivityIdx) {
+        setBtnTint(activityButtons[i], getActivityBarForeground());
+      } else {
+        setBtnTint(activityButtons[i], getActivityBarInactiveForeground());
+      }
+    }
+  }
+
+  // Editor colors
   applyEditorColors();
-  // Switch syntax token colors
   if (editorReady > 0) {
     if (isCurrentThemeDark() > 0) {
       editorInstance.setThemeMode(0);
@@ -2668,11 +2729,8 @@ function recolorUI(): void {
     }
   }
 
-  // Terminal colors
-  applyTerminalThemeColors();
-
-  // Re-render active sidebar panel with new colors
-  switchSidebarPanel(activeActivityIdx);
+  // Sidebar rebuild — deferred to avoid crash during button callback context
+  setTimeout(() => { switchSidebarPanel(activeActivityIdx); }, 200);
 }
 
 /** Open the Settings tab in the editor pane. */
