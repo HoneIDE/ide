@@ -240,6 +240,7 @@ let termBorderWidget: unknown = null;
 // Deferred button actions (Perry button callbacks can't do structural UI mutations —
 // widgetClearChildren/widgetAddChild inside a button callback causes RefCell panic)
 let pendingActivityIdx: number = -1;
+let sidebarSwitchInProgress: number = 0;
 
 // ---------------------------------------------------------------------------
 // Named update functions (read module-level refs at call time)
@@ -2143,11 +2144,22 @@ function onActivityClickDeferred(): void {
   const idx = pendingActivityIdx;
   if (idx < 0) return;
   pendingActivityIdx = -1;
+  // Prevent reentrancy — rapid clicks can queue multiple deferred calls
+  if (sidebarSwitchInProgress > 0) return;
   // AI Chat (idx=4) toggles the right panel instead of the sidebar
   if (idx === 4) {
     toggleRightPanel();
     return;
   }
+  // Re-clicking the active icon toggles sidebar hidden
+  if (idx === activeActivityIdx && sidebarVisible > 0 && sidebarToggleReady > 0) {
+    sidebarVisible = 0;
+    widgetSetHidden(sidebarWidget, 1);
+    widgetSetHidden(sidebarBorderWidget, 1);
+    updateSettings({ sidebarVisible: false });
+    return;
+  }
+  sidebarSwitchInProgress = 1;
   activeActivityIdx = idx;
   updateActivityBar();
   switchSidebarPanel(idx);
@@ -2162,6 +2174,7 @@ function onActivityClickDeferred(): void {
   if (idx >= 0 && idx <= 3) {
     updateSettings({ activePanelIndex: idx });
   }
+  sidebarSwitchInProgress = 0;
 }
 
 function switchSidebarPanel(idx: number): void {
