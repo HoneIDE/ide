@@ -2151,6 +2151,13 @@ function onActivityClickDeferred(): void {
   activeActivityIdx = idx;
   updateActivityBar();
   switchSidebarPanel(idx);
+  // Ensure sidebar is visible when switching panels
+  if (sidebarToggleReady > 0 && sidebarVisible < 1) {
+    sidebarVisible = 1;
+    widgetSetHidden(sidebarWidget, 0);
+    widgetSetHidden(sidebarBorderWidget, 0);
+    updateSettings({ sidebarVisible: true });
+  }
   // Persist active panel (only for sidebar panels, not settings gear)
   if (idx >= 0 && idx <= 3) {
     updateSettings({ activePanelIndex: idx });
@@ -2200,6 +2207,7 @@ function renderActivityBarDesktop(): unknown {
   // Icons: 0=Files, 1=Search, 2=Git, 3=Sync, 4=AI Chat
   // On web: skip Git (idx 2) — execSync not available
   const icons = ['doc.on.doc', 'magnifyingglass', 'arrow.triangle.branch', 'arrow.triangle.2.circlepath', 'sparkles'];
+  const labels = ['Files', 'Search', 'Git', 'Sync', 'AI Chat'];
   const _isWeb = isWebPlatform();
 
   for (let i = 0; i < 5; i++) {
@@ -2207,7 +2215,7 @@ function renderActivityBarDesktop(): unknown {
     if (_isWeb > 0 && i === 2) continue;
 
     const idx = i;
-    const btn = Button('', () => { onActivityClick(idx); });
+    const btn = Button(labels[i], () => { onActivityClick(idx); });
     buttonSetBordered(btn, 0);
     buttonSetImage(btn, icons[i]);
     buttonSetImagePosition(btn, 1);
@@ -2242,7 +2250,7 @@ function renderActivityBarDesktop(): unknown {
   widgetAddChild(bar, Spacer());
 
   // Settings gear icon → opens Settings tab in editor pane
-  const settingsBtn = Button('', () => { openSettingsAction(); });
+  const settingsBtn = Button('Settings', () => { openSettingsAction(); });
   buttonSetBordered(settingsBtn, 0);
   buttonSetImage(settingsBtn, 'gearshape');
   buttonSetImagePosition(settingsBtn, 1);
@@ -5018,6 +5026,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   // Register commands with real handlers (overrides stubs in commands.ts)
   registerBuiltinCommands();
   registerCommand('workbench.action.newEditor', 'New Editor', newFileAction, { showInPalette: false });
+  registerCommand('view.toggleSidebar', 'Toggle Sidebar', () => { toggleSidebarAction(); }, { category: 'View' });
 
   // Determine workspace root
   const _initSettings = getWorkbenchSettings();
