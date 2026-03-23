@@ -2481,6 +2481,12 @@ function renderEditorArea(): unknown {
 
   // Apply native editor view colors AFTER content is displayed
   applyEditorColors();
+  // Sync editor syntax theme mode with current UI theme
+  if (isCurrentThemeDark() > 0) {
+    editorInstance.setThemeMode(0);
+  } else {
+    editorInstance.setThemeMode(1);
+  }
 
   // Poll cursor position for status bar + sync decorations + blame
   setInterval(() => { pollCursorPositionImpl(); syncEditorDecorations(); syncInlineBlame(); }, 250);
