@@ -53,6 +53,7 @@ import { readFileSync, writeFileSync, readdirSync, isDirectory, existsSync, unli
 import { join } from 'path';
 import { spawnBackground } from 'child_process';
 import { execSync } from 'child_process';
+import { spawn } from 'perry/thread';
 import { getTempDir, getCwd, getHomeDir, getAppDataDir } from './paths';
 import { getPlatformContext, isWebPlatform } from '../platform';
 
@@ -68,7 +69,7 @@ import {
 import {
   renderGitPanel as renderGitPanelImpl,
   setGitWorkspaceRoot, setGitFileOpener, setGitStatusBarUpdater, setGitDiffOpener,
-  resetGitPanelReady, refreshGitState, updateStatusBarBranch,
+  resetGitPanelReady, refreshGitState, refreshGitStateAsync, updateStatusBarBranch,
   getGitFileStatus, getGitDirStatus,
 } from './views/git/git-panel';
 import {
@@ -824,26 +825,26 @@ let goToFileFilePaths: string[] = [];
 let goToFileFileNames: string[] = [];
 let goToFileCount: number = 0;
 
-function collectFiles(dirPath: string, depth: number): void {
-  if (depth > 6) return;
-  if (goToFileCount >= 500) return;
+function collectFilesRecursive(out: string[], outNames: string[], dirPath: string, depth: number): number {
+  if (depth > 6) return out.length;
+  if (out.length >= 500) return out.length;
   let names: string[] = [];
-  try { names = readdirSync(dirPath); } catch (e) { return; }
+  try { names = readdirSync(dirPath); } catch (e) { return out.length; }
   for (let i = 0; i < names.length; i++) {
     const name = names[i];
     if (name.charCodeAt(0) === 46) continue; // skip hidden
-    if (goToFileCount >= 500) return;
+    if (out.length >= 500) return out.length;
     const fullPath = join(dirPath, name);
     if (isDirectory(fullPath)) {
       // Skip node_modules
       if (name.length === 12 && name.charCodeAt(0) === 110) continue;
-      collectFiles(fullPath, depth + 1);
+      collectFilesRecursive(out, outNames, fullPath, depth + 1);
     } else {
-      goToFileFilePaths[goToFileCount] = fullPath;
-      goToFileFileNames[goToFileCount] = name;
-      goToFileCount = goToFileCount + 1;
+      out.push(fullPath);
+      outNames.push(name);
     }
   }
+  return out.length;
 }
 
 function goToFileDeferred(): void {
@@ -867,20 +868,31 @@ function goToFileDeferred(): void {
   goToFileInput = TextField('File name...', (text: string) => { onGoToFileInput(text); });
   widgetAddChild(sidebarContainer, goToFileInput);
 
-  // Collect all files from workspace
+  // Collect all files from workspace (async — doesn't block UI)
   goToFileFilePaths = [];
   goToFileFileNames = [];
   goToFileCount = 0;
-  if (workspaceRoot.length > 0) {
-    collectFiles(workspaceRoot, 0);
-  }
 
   goToFileResults = VStack(2, []);
   const scroll = ScrollView();
-  // Perry: scrollViewSetChild compiles to no-op, use widgetAddChild workaround
   widgetAddChild(scroll, goToFileResults);
   widgetAddChild(sidebarContainer, scroll);
 
+  if (workspaceRoot.length > 0) {
+    const wsRoot = workspaceRoot;
+    spawn(() => {
+      const paths: string[] = [];
+      const names: string[] = [];
+      collectFilesRecursive(paths, names, wsRoot, 0);
+      return { paths: paths, names: names, count: paths.length };
+    }).then((result) => { applyGoToFileResult(result); });
+  }
+}
+
+function applyGoToFileResult(r: { paths: string[]; names: string[]; count: number }): void {
+  goToFileFilePaths = r.paths;
+  goToFileFileNames = r.names;
+  goToFileCount = r.count;
   // Show all files initially
   renderGoToFileList('');
 }
@@ -1774,6 +1786,8 @@ function onLspSignatureResult(label: string, activeParam: number, doc: string): 
 let lastBlameLine: number = -1;
 let blameText: string = '';
 let blameWidget: unknown = null;
+let blameInFlight: number = 0;
+let blameGeneration: number = 0;
 
 /** Initialize the blame overlay widget. Called once during render setup. */
 function initBlameWidget(parent: unknown): void {
@@ -1781,93 +1795,103 @@ function initBlameWidget(parent: unknown): void {
   // For now, update the status bar or a dedicated label
 }
 
-/** Sync blame annotation for current cursor line. Called every 250ms. */
+/** Async blame annotation for current cursor line. Called every 250ms. */
 function syncInlineBlame(): void {
   if (editorReady < 1) return;
   if (currentEditorFilePath.length < 1) return;
+  if (blameInFlight > 0) return; // don't stack blame requests
 
   const curLine = editorInstance.getCursorLine();
   if (curLine === lastBlameLine) return;
   lastBlameLine = curLine;
 
-  // Run git blame for the single line (1-indexed)
+  // Run git blame on a background thread
   const lineNum = curLine + 1;
-  let cmd = 'git blame -L ';
-  cmd += String(lineNum);
-  cmd += ',';
-  cmd += String(lineNum);
-  cmd += ' --porcelain -- ';
-  cmd += currentEditorFilePath;
+  const filePath = currentEditorFilePath;
+  blameGeneration = blameGeneration + 1;
+  const gen = blameGeneration;
+  blameInFlight = 1;
 
-  let output = '';
-  try {
-    output = execSync(cmd) as unknown as string;
-  } catch (e) {
-    blameText = '';
-    return;
-  }
+  spawn(() => {
+    let cmd = 'git blame -L ';
+    cmd += String(lineNum);
+    cmd += ',';
+    cmd += String(lineNum);
+    cmd += ' --porcelain -- ';
+    cmd += filePath;
 
-  if (output.length < 10) {
-    blameText = '';
-    return;
-  }
-
-  // Parse porcelain blame output — extract author + summary
-  let author = '';
-  let summary = '';
-  let authorTime = 0;
-  const lines = output.split('\n');
-  for (let i = 0; i < lines.length; i = i + 1) {
-    const line = lines[i];
-    if (line.indexOf('author ') === 0) {
-      author = line.slice(7);
+    let output = '';
+    try {
+      output = execSync(cmd) as unknown as string;
+    } catch (e) {
+      return '';
     }
-    if (line.indexOf('summary ') === 0) {
-      summary = line.slice(8);
+
+    if (output.length < 10) return '';
+
+    // Parse porcelain blame output — extract author + summary + time
+    let author = '';
+    let summary = '';
+    let authorTime = 0;
+    let lineStart = 0;
+    for (let i = 0; i <= output.length; i = i + 1) {
+      if (i === output.length || output.charCodeAt(i) === 10) {
+        if (i > lineStart) {
+          const line = output.slice(lineStart, i);
+          if (line.indexOf('author ') === 0) {
+            author = line.slice(7);
+          }
+          if (line.indexOf('summary ') === 0) {
+            summary = line.slice(8);
+          }
+          if (line.indexOf('author-time ') === 0) {
+            authorTime = parseInt(line.slice(12));
+          }
+        }
+        lineStart = i + 1;
+      }
     }
-    if (line.indexOf('author-time ') === 0) {
-      authorTime = parseInt(line.slice(12));
+
+    if (author.length < 1) return '';
+
+    // Build relative time string
+    let timeStr = '';
+    if (authorTime > 0) {
+      const now = Math.floor(Date.now() / 1000);
+      const diff = now - authorTime;
+      if (diff < 60) timeStr = 'just now';
+      else if (diff < 3600) {
+        timeStr = String(Math.floor(diff / 60));
+        timeStr += ' min ago';
+      } else if (diff < 86400) {
+        timeStr = String(Math.floor(diff / 3600));
+        timeStr += ' hours ago';
+      } else if (diff < 2592000) {
+        timeStr = String(Math.floor(diff / 86400));
+        timeStr += ' days ago';
+      } else {
+        timeStr = String(Math.floor(diff / 2592000));
+        timeStr += ' months ago';
+      }
     }
-  }
 
-  if (author.length < 1) {
-    blameText = '';
-    return;
-  }
-
-  // Build relative time string
-  let timeStr = '';
-  if (authorTime > 0) {
-    const now = Math.floor(Date.now() / 1000);
-    const diff = now - authorTime;
-    if (diff < 60) timeStr = 'just now';
-    else if (diff < 3600) {
-      timeStr = String(Math.floor(diff / 60));
-      timeStr += ' min ago';
-    } else if (diff < 86400) {
-      timeStr = String(Math.floor(diff / 3600));
-      timeStr += ' hours ago';
-    } else if (diff < 2592000) {
-      timeStr = String(Math.floor(diff / 86400));
-      timeStr += ' days ago';
-    } else {
-      timeStr = String(Math.floor(diff / 2592000));
-      timeStr += ' months ago';
+    let result = author;
+    if (timeStr.length > 0) {
+      result += ', ';
+      result += timeStr;
     }
-  }
+    if (summary.length > 0) {
+      result += ' — ';
+      result += summary;
+    }
+    return result;
+  }).then((result) => { applyBlameResult(result, gen); });
+}
 
-  // Build blame text: "Author, time ago — commit message"
-  blameText = author;
-  if (timeStr.length > 0) {
-    blameText += ', ';
-    blameText += timeStr;
-  }
-  if (summary.length > 0) {
-    blameText += ' — ';
-    blameText += summary;
-  }
-
-  // Push as a faded decoration at the end of the line
+function applyBlameResult(text: string, gen: number): void {
+  blameInFlight = 0;
+  if (gen !== blameGeneration) return; // stale
+  blameText = text;
   if (blameText.length > 0) {
     updateStatusBarBlame(blameText);
   }
@@ -5105,9 +5129,8 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   setUpdateBtnClickHandler(() => { openUpdateAction(); });
   initUpdateChecker();
 
-  // Initialize git state for status bar
-  refreshGitState();
-  updateStatusBarBranch();
+  // Initialize git state for status bar (async — doesn't block startup)
+  refreshGitStateAsync();
 
   // Initialize sync system
   initSyncSystem(layoutMode);

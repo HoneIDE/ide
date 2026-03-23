@@ -11,6 +11,7 @@ import {
   widgetAddChild, widgetClearChildren,
 } from 'perry/ui';
 import { execSync } from 'child_process';
+import { spawn } from 'perry/thread';
 import { setFg, setBtnFg } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getSideBarForeground, getSecondaryTextColor } from '../../theme/theme-colors';
@@ -37,38 +38,73 @@ export function renderGitLog(container: unknown, _colors: ResolvedUIColors): voi
   refreshGitLog();
 }
 
-/** Refresh the commit log from git. */
+/** Refresh the commit log from git (async — runs on background thread). */
 export function refreshGitLog(): void {
-  if (logWorkspaceRoot.length < 1) return;
+  const wsRoot = logWorkspaceRoot;
+  if (wsRoot.length < 1) return;
 
-  logHashes = [];
-  logAuthors = [];
-  logDates = [];
-  logMessages = [];
-  logCount = 0;
-
-  let output = '';
-  try {
-    // Get last 50 commits in a parseable format
-    output = execSync('git -C ' + logWorkspaceRoot + ' log --oneline --format="%h|%an|%ar|%s" -50') as unknown as string;
-  } catch (e) {
-    return;
-  }
-
-  if (output.length < 1) return;
-
-  // Parse each line: hash|author|date|message
-  let lineStart = 0;
-  for (let i = 0; i <= output.length; i = i + 1) {
-    if (i === output.length || output.charCodeAt(i) === 10) {
-      if (i > lineStart + 5) {
-        const line = output.slice(lineStart, i);
-        parseLogLine(line);
-      }
-      lineStart = i + 1;
+  spawn(() => {
+    let output = '';
+    try {
+      output = execSync('git -C ' + wsRoot + ' log --oneline --format="%h|%an|%ar|%s" -50') as unknown as string;
+    } catch (e) {
+      return { hashes: [] as string[], authors: [] as string[], dates: [] as string[], messages: [] as string[], count: 0 };
     }
-  }
 
+    const hashes: string[] = [];
+    const authors: string[] = [];
+    const dates: string[] = [];
+    const messages: string[] = [];
+    let count = 0;
+
+    if (output.length < 1) {
+      return { hashes: hashes, authors: authors, dates: dates, messages: messages, count: 0 };
+    }
+
+    let lineStart = 0;
+    for (let i = 0; i <= output.length; i = i + 1) {
+      if (i === output.length || output.charCodeAt(i) === 10) {
+        if (i > lineStart + 5 && count < 50) {
+          const line = output.slice(lineStart, i);
+          // Inline parseLogLine
+          let sep1 = -1;
+          for (let j = 0; j < line.length; j = j + 1) {
+            if (line.charCodeAt(j) === 124) { sep1 = j; break; }
+          }
+          if (sep1 >= 1) {
+            let sep2 = -1;
+            for (let j = sep1 + 1; j < line.length; j = j + 1) {
+              if (line.charCodeAt(j) === 124) { sep2 = j; break; }
+            }
+            if (sep2 >= 0) {
+              let sep3 = -1;
+              for (let j = sep2 + 1; j < line.length; j = j + 1) {
+                if (line.charCodeAt(j) === 124) { sep3 = j; break; }
+              }
+              if (sep3 >= 0) {
+                hashes[count] = line.slice(0, sep1);
+                authors[count] = line.slice(sep1 + 1, sep2);
+                dates[count] = line.slice(sep2 + 1, sep3);
+                messages[count] = line.slice(sep3 + 1);
+                count = count + 1;
+              }
+            }
+          }
+        }
+        lineStart = i + 1;
+      }
+    }
+
+    return { hashes: hashes, authors: authors, dates: dates, messages: messages, count: count };
+  }).then((result) => { applyLogResult(result); });
+}
+
+function applyLogResult(r: { hashes: string[]; authors: string[]; dates: string[]; messages: string[]; count: number }): void {
+  logHashes = r.hashes;
+  logAuthors = r.authors;
+  logDates = r.dates;
+  logMessages = r.messages;
+  logCount = r.count;
   if (logReady > 0) {
     updateLogUI();
   }

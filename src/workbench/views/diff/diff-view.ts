@@ -19,6 +19,7 @@ import {
 import { Editor } from '@honeide/editor/perry';
 import { readFileSync } from 'fs';
 import { execSync } from 'child_process';
+import { spawn } from 'perry/thread';
 import { parseDiffOutput, countLines } from './diff-parser';
 import { setBg, setFg } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
@@ -106,6 +107,8 @@ export function isDiffActive(): number {
 
 /**
  * Open a side-by-side diff for a file.
+ * Data fetching (git show, readFileSync, git diff) runs on a background thread.
+ * UI construction happens on the main thread via .then().
  *
  * @param filePath  Absolute path to the working copy file
  * @param relPath   Path relative to workspace root (for git commands)
@@ -120,24 +123,44 @@ export function openDiffForFile(filePath: string, relPath: string, wsRoot: strin
 
   if (!diffContainer) return;
 
-  // Get HEAD version of the file
-  let oldContent = '';
-  if (staged > 0) {
-    oldContent = execGit('git -C ' + wsRoot + ' show HEAD:' + relPath);
-  } else {
-    oldContent = execGit('git -C ' + wsRoot + ' show HEAD:' + relPath);
-  }
+  // Capture immutable values for spawn closure
+  const fp = filePath;
+  const rp = relPath;
+  const ws = wsRoot;
+  const stg = staged;
 
-  // Read working copy
-  const newContent = safeReadFile(filePath);
+  spawn(() => {
+    // All git commands + file reads run on a background thread
+    let oldContent = '';
+    try { oldContent = execSync('git -C ' + ws + ' show HEAD:' + rp) as unknown as string; } catch (e) { oldContent = ''; }
 
-  // Get unified diff
-  let diffText = '';
-  if (staged > 0) {
-    diffText = execGit('git -C ' + wsRoot + ' diff --cached -- ' + relPath);
-  } else {
-    diffText = execGit('git -C ' + wsRoot + ' diff -- ' + relPath);
-  }
+    let newContent = '';
+    try { newContent = readFileSync(fp); } catch (e) { newContent = ''; }
+
+    let diffText = '';
+    if (stg > 0) {
+      try { diffText = execSync('git -C ' + ws + ' diff --cached -- ' + rp) as unknown as string; } catch (e) { diffText = ''; }
+    } else {
+      try { diffText = execSync('git -C ' + ws + ' diff -- ' + rp) as unknown as string; } catch (e) { diffText = ''; }
+    }
+
+    return { oldContent: oldContent, newContent: newContent, diffText: diffText };
+  }).then((data) => { buildDiffUI(fp, rp, data); });
+}
+
+interface DiffData {
+  oldContent: string;
+  newContent: string;
+  diffText: string;
+}
+
+/** Build diff UI on the main thread after data is fetched. */
+function buildDiffUI(filePath: string, relPath: string, data: DiffData): void {
+  if (!diffContainer) return;
+
+  const oldContent = data.oldContent;
+  const newContent = data.newContent;
+  const diffText = data.diffText;
 
   const oldLineCount = countLines(oldContent);
   const newLineCount = countLines(newContent);
@@ -209,8 +232,7 @@ export function openDiffForFile(filePath: string, relPath: string, wsRoot: strin
   leftEd.render();
   rightEd.render();
 
-  // Embed directly into HStack (no VStack wrappers — they prevent
-  // the VStack Fill distribution from sizing the HStack properly).
+  // Embed directly into HStack
   const leftNsview = hone_editor_nsview(leftEd.nativeHandle as number);
   const leftWidget = embedNSView(leftNsview);
   widgetSetHugging(leftWidget, 1);
@@ -220,14 +242,12 @@ export function openDiffForFile(filePath: string, relPath: string, wsRoot: strin
   widgetSetHugging(rightWidget, 1);
 
   const editorsRow = HStack(0, [leftWidget, rightWidget]);
-  stackSetDistribution(editorsRow, 1); // FillEqually — both editors get equal width
+  stackSetDistribution(editorsRow, 1); // FillEqually
   widgetSetHugging(editorsRow, 1);
 
-  // Pin each editor to fill the HStack height
   widgetMatchParentHeight(leftWidget);
   widgetMatchParentHeight(rightWidget);
 
-  // Store widgets for external layout (render.ts adds them to editorPane directly)
   diffHeaderWidget = headerRow;
   diffEditorsWidget = editorsRow;
 

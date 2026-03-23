@@ -101,6 +101,26 @@ declare const __platform__: number;
 declare const __plugins__: number;
 
 // ---------------------------------------------------------------------------
+// Perry threading (real OS threads)
+// ---------------------------------------------------------------------------
+
+declare module 'perry/thread' {
+  /** Run a closure on a background OS thread. Returns a Promise that resolves
+   *  when the thread completes. Captured variables are deep-copied (immutable
+   *  captures only — compile-time enforced). */
+  export function spawn<T>(fn: () => T): Promise<T>;
+
+  /** Process every element of an array in parallel across all CPU cores.
+   *  Returns a new array with results in the same order as the input.
+   *  Small arrays skip threading automatically. */
+  export function parallelMap<T, U>(data: T[], fn: (item: T) => U): U[];
+
+  /** Filter an array in parallel across all CPU cores. Returns a new array
+   *  containing only elements where the predicate returned truthy. Order preserved. */
+  export function parallelFilter<T>(data: T[], predicate: (item: T) => boolean): T[];
+}
+
+// ---------------------------------------------------------------------------
 // bun:test (for test files)
 // ---------------------------------------------------------------------------
 

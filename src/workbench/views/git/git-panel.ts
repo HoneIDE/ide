@@ -14,6 +14,7 @@ import {
   textfieldSetString,
 } from 'perry/ui';
 import { execSync } from 'child_process';
+import { spawn } from 'perry/thread';
 import { join } from 'path';
 import { setFg, setBtnFg, getFileName } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
@@ -42,6 +43,9 @@ let gitResultsContainer: unknown = null;
 let gitBranchLabel: unknown = null;
 let gitCommitTextField: unknown = null;
 let gitCommitMessage = '';
+
+// Generation counter for async refresh — discard stale results
+let gitRefreshGeneration: number = 0;
 
 // Stored from render call
 let panelColors: ResolvedUIColors = null as any;
@@ -168,6 +172,7 @@ function gitExec(cmd: string): string {
   return result;
 }
 
+/** Synchronous refresh — used only for initial renderGitPanel (needs result immediately). */
 export function refreshGitState(): void {
   if (gitWorkspaceRoot.length < 1) {
     gitIsRepo = 0;
@@ -257,75 +262,230 @@ function parseGitStatusLine(line: string): void {
   }
 }
 
-function gitStageFile(filePath: string): void {
-  gitExec('git -C ' + gitWorkspaceRoot + ' add -- ' + filePath);
-  refreshGitState();
+// ---------------------------------------------------------------------------
+// Async git refresh — runs all git commands on a background thread
+// ---------------------------------------------------------------------------
+
+interface GitRefreshResult {
+  isRepo: number;
+  branch: string;
+  stagedPaths: string[];
+  stagedStatuses: string[];
+  modifiedPaths: string[];
+  modifiedStatuses: string[];
+  untrackedPaths: string[];
+}
+
+/** Async refresh — runs git commands off the main thread. UI stays responsive. */
+export function refreshGitStateAsync(): void {
+  const wsRoot = gitWorkspaceRoot;
+  if (wsRoot.length < 1) {
+    gitIsRepo = 0;
+    return;
+  }
+
+  gitRefreshGeneration = gitRefreshGeneration + 1;
+  const gen = gitRefreshGeneration;
+
+  spawn(() => {
+    // All git commands run on a background OS thread
+    let isRepo = 0;
+    let branch = '';
+    const sPaths: string[] = [];
+    const sStatuses: string[] = [];
+    const mPaths: string[] = [];
+    const mStatuses: string[] = [];
+    const uPaths: string[] = [];
+
+    let check = '';
+    try { check = execSync('git -C ' + wsRoot + ' rev-parse --is-inside-work-tree') as unknown as string; } catch (e) { check = ''; }
+    if (check.length < 1) {
+      return { isRepo: 0, branch: '', stagedPaths: sPaths, stagedStatuses: sStatuses, modifiedPaths: mPaths, modifiedStatuses: mStatuses, untrackedPaths: uPaths };
+    }
+    isRepo = 1;
+
+    let branchOut = '';
+    try { branchOut = execSync('git -C ' + wsRoot + ' rev-parse --abbrev-ref HEAD') as unknown as string; } catch (e) { branchOut = ''; }
+    for (let i = 0; i < branchOut.length; i++) {
+      if (branchOut.charCodeAt(i) === 10) break;
+      if (branchOut.charCodeAt(i) === 13) break;
+      branch = branch + branchOut.charAt(i);
+    }
+
+    let statusOut = '';
+    try { statusOut = execSync('git -C ' + wsRoot + ' status --porcelain=v2') as unknown as string; } catch (e) { statusOut = ''; }
+
+    // Parse status lines (inline — can't call module-level parseGitStatusLine from spawn)
+    let sCount = 0;
+    let mCount = 0;
+    let uCount = 0;
+    let lineStart = 0;
+    for (let i = 0; i <= statusOut.length; i++) {
+      if (i === statusOut.length || statusOut.charCodeAt(i) === 10) {
+        if (i > lineStart) {
+          const line = statusOut.slice(lineStart, i);
+          if (line.length >= 2) {
+            const first = line.charCodeAt(0);
+            if (first === 49) {
+              const x = line.charAt(2);
+              const y = line.charAt(3);
+              let spaceCount = 0;
+              let pathStart = 0;
+              for (let j = 0; j < line.length; j++) {
+                if (line.charCodeAt(j) === 32) {
+                  spaceCount = spaceCount + 1;
+                  if (spaceCount === 8) {
+                    pathStart = j + 1;
+                    break;
+                  }
+                }
+              }
+              const fpath = line.slice(pathStart);
+              const xCode = x.charCodeAt(0);
+              const yCode = y.charCodeAt(0);
+              if (xCode !== 46) {
+                let st = 'modified';
+                if (xCode === 65) st = 'added';
+                if (xCode === 68) st = 'deleted';
+                sPaths[sCount] = fpath;
+                sStatuses[sCount] = st;
+                sCount = sCount + 1;
+              }
+              if (yCode !== 46) {
+                let st = 'modified';
+                if (yCode === 68) st = 'deleted';
+                mPaths[mCount] = fpath;
+                mStatuses[mCount] = st;
+                mCount = mCount + 1;
+              }
+            } else if (first === 63) {
+              uPaths[uCount] = line.slice(2);
+              uCount = uCount + 1;
+            }
+          }
+        }
+        lineStart = i + 1;
+      }
+    }
+
+    return { isRepo: isRepo, branch: branch, stagedPaths: sPaths, stagedStatuses: sStatuses, modifiedPaths: mPaths, modifiedStatuses: mStatuses, untrackedPaths: uPaths };
+  }).then((result) => { applyGitRefreshResult(result, gen); });
+}
+
+function applyGitRefreshResult(r: GitRefreshResult, gen: number): void {
+  // Discard stale result if a newer refresh was triggered
+  if (gen !== gitRefreshGeneration) return;
+
+  gitIsRepo = r.isRepo;
+  gitBranch = r.branch;
+  gitStagedPaths = r.stagedPaths;
+  gitStagedStatuses = r.stagedStatuses;
+  gitStagedCount = r.stagedPaths.length;
+  gitModifiedPaths = r.modifiedPaths;
+  gitModifiedStatuses = r.modifiedStatuses;
+  gitModifiedCount = r.modifiedPaths.length;
+  gitUntrackedPaths = r.untrackedPaths;
+  gitUntrackedCount = r.untrackedPaths.length;
+
   if (gitPanelReady > 0) {
     updateGitResultsUI();
   }
+  updateStatusBarBranch();
+}
+
+// ---------------------------------------------------------------------------
+// Async git actions — each runs its command on a background thread
+// ---------------------------------------------------------------------------
+
+function gitStageFile(filePath: string): void {
+  const wsRoot = gitWorkspaceRoot;
+  const fp = filePath;
+  spawn(() => {
+    try { execSync('git -C ' + wsRoot + ' add -- ' + fp) as unknown as string; } catch (e) {}
+    return 0;
+  }).then((_) => { onGitActionComplete(); });
 }
 
 function gitUnstageFile(filePath: string): void {
-  gitExec('git -C ' + gitWorkspaceRoot + ' restore --staged -- ' + filePath);
-  refreshGitState();
-  if (gitPanelReady > 0) {
-    updateGitResultsUI();
-  }
+  const wsRoot = gitWorkspaceRoot;
+  const fp = filePath;
+  spawn(() => {
+    try { execSync('git -C ' + wsRoot + ' restore --staged -- ' + fp) as unknown as string; } catch (e) {}
+    return 0;
+  }).then((_) => { onGitActionComplete(); });
 }
 
 function gitDiscardFile(filePath: string): void {
-  gitExec('git -C ' + gitWorkspaceRoot + ' checkout -- ' + filePath);
-  refreshGitState();
-  if (gitPanelReady > 0) {
-    updateGitResultsUI();
-  }
+  const wsRoot = gitWorkspaceRoot;
+  const fp = filePath;
+  spawn(() => {
+    try { execSync('git -C ' + wsRoot + ' checkout -- ' + fp) as unknown as string; } catch (e) {}
+    return 0;
+  }).then((_) => { onGitActionComplete(); });
 }
 
 function gitCommit(): void {
   if (gitCommitMessage.length < 1) return;
   if (gitStagedCount < 1) return;
-  gitExec('git -C ' + gitWorkspaceRoot + ' commit -m "' + gitCommitMessage + '"');
+  const wsRoot = gitWorkspaceRoot;
+  const msg = gitCommitMessage;
   gitCommitMessage = '';
   if (gitCommitTextField) {
     textfieldSetString(gitCommitTextField, '');
   }
-  refreshGitState();
-  if (gitPanelReady > 0) {
-    updateGitResultsUI();
-  }
-  updateStatusBarBranch();
+  spawn(() => {
+    try { execSync('git -C ' + wsRoot + ' commit -m "' + msg + '"') as unknown as string; } catch (e) {}
+    return 0;
+  }).then((_) => { onGitCommitComplete(); });
+}
+
+function onGitCommitComplete(): void {
+  refreshGitStateAsync();
   telemetryTrackGitCommit();
 }
 
 function gitPush(): void {
-  const result = gitExec('git -C ' + gitWorkspaceRoot + ' push');
-  updateStatusBarBranch();
-  refreshGitState();
-  if (gitPanelReady > 0) updateGitResultsUI();
+  const wsRoot = gitWorkspaceRoot;
+  spawn(() => {
+    try { execSync('git -C ' + wsRoot + ' push') as unknown as string; } catch (e) {}
+    return 0;
+  }).then((_) => { onGitActionComplete(); });
 }
 
 function gitPull(): void {
-  const result = gitExec('git -C ' + gitWorkspaceRoot + ' pull');
-  refreshGitState();
-  if (gitPanelReady > 0) updateGitResultsUI();
-  updateStatusBarBranch();
+  const wsRoot = gitWorkspaceRoot;
+  spawn(() => {
+    try { execSync('git -C ' + wsRoot + ' pull') as unknown as string; } catch (e) {}
+    return 0;
+  }).then((_) => { onGitActionComplete(); });
 }
 
 function gitFetch(): void {
-  gitExec('git -C ' + gitWorkspaceRoot + ' fetch');
-  updateStatusBarBranch();
+  const wsRoot = gitWorkspaceRoot;
+  spawn(() => {
+    try { execSync('git -C ' + wsRoot + ' fetch') as unknown as string; } catch (e) {}
+    return 0;
+  }).then((_) => { updateStatusBarBranch(); });
 }
 
 function gitStash(): void {
-  gitExec('git -C ' + gitWorkspaceRoot + ' stash');
-  refreshGitState();
-  if (gitPanelReady > 0) updateGitResultsUI();
+  const wsRoot = gitWorkspaceRoot;
+  spawn(() => {
+    try { execSync('git -C ' + wsRoot + ' stash') as unknown as string; } catch (e) {}
+    return 0;
+  }).then((_) => { onGitActionComplete(); });
 }
 
 function gitStashPop(): void {
-  gitExec('git -C ' + gitWorkspaceRoot + ' stash pop');
-  refreshGitState();
-  if (gitPanelReady > 0) updateGitResultsUI();
+  const wsRoot = gitWorkspaceRoot;
+  spawn(() => {
+    try { execSync('git -C ' + wsRoot + ' stash pop') as unknown as string; } catch (e) {}
+    return 0;
+  }).then((_) => { onGitActionComplete(); });
+}
+
+function onGitActionComplete(): void {
+  refreshGitStateAsync();
 }
 
 export function updateStatusBarBranch(): void {
@@ -508,11 +668,7 @@ function onCommitMessageInput(text: string): void {
 }
 
 function onGitRefresh(): void {
-  refreshGitState();
-  if (gitPanelReady > 0) {
-    updateGitResultsUI();
-  }
-  updateStatusBarBranch();
+  refreshGitStateAsync();
 }
 
 // ---------------------------------------------------------------------------

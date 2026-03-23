@@ -11,6 +11,7 @@
 import { LSP_BRIDGE_LIVE } from '@honeide/lsp-bridge/perry/live';
 import { readFileSync, existsSync, unlinkSync } from 'fs';
 import { spawnBackground, execSync } from 'child_process';
+import { spawn } from 'perry/thread';
 import { updateDiagnostics } from './diagnostics-panel';
 import { getTempDir, canRunShellCommands } from '../../paths';
 
@@ -324,79 +325,71 @@ function tryStartServer(): void {
 }
 
 function startTypeScriptServer(): void {
-  // Find TypeScript LSP server. Priority:
-  // 1. tsgo --lsp (Microsoft's Go-native TS compiler — single binary, no Node.js)
-  // 2. typescript-language-server --stdio (Node.js-based, legacy fallback)
-  let serverCmd = '';
-  let serverArgs = '';
+  // Discover LSP server on a background thread (which commands can be slow)
+  const wsRoot = lspWorkspaceRoot;
 
-  // Check for tsgo (bundled with Hone or on PATH)
-  // tsgo is a single Go binary (~30-40MB) with built-in LSP server.
-  // Covers: diagnostics, completions, hover, go-to-def, references, formatting.
+  // First check local paths synchronously (fast — just existsSync)
   const tsgoLocations = [
-    lspWorkspaceRoot + '/node_modules/.bin/tsgo',
+    wsRoot + '/node_modules/.bin/tsgo',
     '/usr/local/bin/tsgo',
   ];
   for (let i = 0; i < tsgoLocations.length; i = i + 1) {
     if (fileExistsSafe(tsgoLocations[i])) {
-      serverCmd = tsgoLocations[i];
-      serverArgs = '--lsp';
-      break;
+      launchLspServer(tsgoLocations[i], '--lsp');
+      return;
     }
   }
 
-  // Try which tsgo
-  if (serverCmd.length < 1) {
-    try {
-      const which = execSync('which tsgo');
-      if (which.length > 0) {
-        serverCmd = which.trim();
-        serverArgs = '--lsp';
-      }
-    } catch (e: any) { /* not found */ }
-  }
-
-  // Fallback: typescript-language-server (requires Node.js)
-  if (serverCmd.length < 1) {
-    const tslsLocations = [
-      lspWorkspaceRoot + '/node_modules/.bin/typescript-language-server',
-    ];
-    for (let i = 0; i < tslsLocations.length; i = i + 1) {
-      if (fileExistsSafe(tslsLocations[i])) {
-        serverCmd = tslsLocations[i];
-        serverArgs = '--stdio';
-        break;
-      }
+  const tslsLocations = [
+    wsRoot + '/node_modules/.bin/typescript-language-server',
+  ];
+  for (let i = 0; i < tslsLocations.length; i = i + 1) {
+    if (fileExistsSafe(tslsLocations[i])) {
+      launchLspServer(tslsLocations[i], '--stdio');
+      return;
     }
   }
 
-  if (serverCmd.length < 1) {
+  // Fallback: run `which` commands on a background thread
+  spawn(() => {
+    let cmd = '';
+    let args = '';
     try {
-      const which = execSync('which typescript-language-server');
+      const which = execSync('which tsgo') as unknown as string;
       if (which.length > 0) {
-        serverCmd = which.trim();
-        serverArgs = '--stdio';
+        cmd = which.trim();
+        args = '--lsp';
       }
-    } catch (e: any) { /* not found */ }
-  }
+    } catch (e) {}
+    if (cmd.length < 1) {
+      try {
+        const which = execSync('which typescript-language-server') as unknown as string;
+        if (which.length > 0) {
+          cmd = which.trim();
+          args = '--stdio';
+        }
+      } catch (e) {}
+    }
+    return { cmd: cmd, args: args };
+  }).then((result) => { onLspDiscoveryResult(result); });
+}
 
-  if (serverCmd.length < 1) {
-    // No server found — fall back to tsc diagnostics
+function onLspDiscoveryResult(r: { cmd: string; args: string }): void {
+  if (r.cmd.length < 1) {
     useFallbackDiag = 1;
     return;
   }
+  launchLspServer(r.cmd, r.args);
+}
 
-  // Start the LSP server via native FFI
+function launchLspServer(serverCmd: string, serverArgs: string): void {
   const handle = hone_lsp_start(serverCmd as any, serverArgs as any, lspWorkspaceRoot as any);
   if (handle < 0) {
     useFallbackDiag = 1;
     return;
   }
-
   lspServerHandle = handle;
   lspServerLanguage = 'typescript';
-
-  // Send initialize request
   sendInitialize();
 }
 
