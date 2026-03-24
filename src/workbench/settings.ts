@@ -531,12 +531,24 @@ function serializeFromVars(): string {
   return out;
 }
 
+// Debounced disk persistence — batches rapid successive writes
+let _settingsDirty = 0;
+
 function persistToDisk(): void {
+  _settingsDirty = 1;
+}
+
+function _flushSettingsToDisk(): void {
+  if (_settingsDirty < 1) return;
+  _settingsDirty = 0;
   try {
     ensureDir(getSettingsDir());
     writeFileSync(getSettingsPath(), serializeFromVars());
   } catch (e: any) { /* ignore */ }
 }
+
+// Self-contained flush timer — fires every 500ms, writes only if dirty
+setInterval(() => { _flushSettingsToDisk(); }, 500);
 
 /** Update a string setting. */
 export function setStringSetting(key: string, value: string): void {

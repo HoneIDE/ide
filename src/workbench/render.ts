@@ -107,6 +107,11 @@ import { renderUpdateTab, resetUpdateTab } from './views/update/update-tab';
 // Extensions panel hidden for now — no runtime extension system yet
 import { renderChatPanel, focusChatInput, getChatInputHandle, setChatWorkspaceRoot, setChatFilePathGetter, setChatFileContentGetter, setChatRemoteGuest, setChatRelaySendFn, setChatRelayForwardFn, startClaudeForRelay, handleClaudeRelayLine, handleClaudeRelayEvent } from './views/ai-chat/chat-panel';
 import { renderTerminalPanel, setTerminalCwd, destroyTerminalPanel, setTerminalCloseCallback, setTerminalProblemsFileOpener, applyTerminalThemeColors } from './views/terminal/terminal-panel';
+import {
+  renderDebugPanel as renderDebugPanelImpl,
+  setDebugWorkspaceRoot, setDebugCurrentFilePath, setDebugFileOpener,
+  resetDebugPanelReady,
+} from './views/debug/debug-panel';
 import { renderSettingsTab } from './views/settings-ui/settings-panel';
 import { setWelcomeActions, setWelcomeRecentCallback, createWelcomeContent } from './views/welcome/welcome-tab';
 import { initNotifications, showNotification } from './views/notifications/notifications';
@@ -132,6 +137,7 @@ import { getDiagFiles, getDiagLines, getDiagMessages, getDiagSeverities, getDiag
 import { lspDidOpen, lspDidSave, lspFormatDocument, lspHover, lspDefinition, lspSignatureHelp, setHoverCallback, setDefinitionCallback, setSignatureCallback, setFormatCallback, lspIsReady } from './views/lsp/lsp-bridge';
 import { createHoverPopup, showHoverPopup, hideHoverPopup, isHoverVisible } from './views/lsp/hover-popup';
 import { createSignaturePopup, showSignaturePopup, hideSignaturePopup, isSignatureVisible } from './views/lsp/signature-popup';
+import { initInlineCompletion, setInlineEditorAccess, setInlineContextProviders, setInlineInsertCallback } from './views/ai-inline/inline-completion';
 
 // Compile-time platform ID injected by Perry codegen:
 // 0 = macOS, 1 = iOS, 2 = Android, 3 = Windows, 4 = Linux, 5 = Web
@@ -349,6 +355,7 @@ function onFolderOpened(folderPath: string): void {
   setContextMenuWorkspaceRoot(folderPath);
   setSearchWorkspaceRoot(folderPath);
   setGitWorkspaceRoot(folderPath);
+  setDebugWorkspaceRoot(folderPath);
   setTerminalCwd(folderPath);
   setLspWorkspaceRoot(folderPath);
   setChatWorkspaceRoot(folderPath);
@@ -694,6 +701,59 @@ function findBarClearLineBgs(): void {
   if (editorReady < 1) return;
   editorInstance.clearLineBackgrounds();
   editorInstance.clearFindHighlights();
+}
+
+// ---------------------------------------------------------------------------
+// Inline completion editor callbacks (module-level for Perry)
+// ---------------------------------------------------------------------------
+
+function inlineGetCursorLine(): number {
+  if (editorReady < 1) return -1;
+  return editorInstance.getCursorLine();
+}
+
+function inlineGetCursorCol(): number {
+  if (editorReady < 1) return -1;
+  return editorInstance.getCursorColumn();
+}
+
+function inlineGetLineContent(line: number): string {
+  if (editorReady < 1) return '';
+  const vm = editorInstance.viewModel;
+  const buf = vm.document.buffer;
+  const lineCount = buf.getLineCount();
+  if (line < 0 || line >= lineCount) return '';
+  return buf.getLine(line);
+}
+
+function inlineSetGhostText(text: string, line: number, col: number): void {
+  if (editorReady < 1) return;
+  const vm = editorInstance.viewModel;
+  vm.ghostText.show(line, col, text);
+  editorInstance.render();
+}
+
+function inlineClearGhostText(): void {
+  if (editorReady < 1) return;
+  const vm = editorInstance.viewModel;
+  vm.ghostText.dismiss();
+  editorInstance.render();
+}
+
+function inlineGetFileContent(): string {
+  if (editorReady < 1) return '';
+  return editorInstance.getContent();
+}
+
+function inlineGetFilePath(): string {
+  return currentEditorFilePath;
+}
+
+function inlineInsertText(text: string): void {
+  if (editorReady < 1) return;
+  // Use the editor's type command to insert text at cursor position
+  editorInstance.executeCommand('editor.action.type', { text: text });
+  editorInstance.render();
 }
 
 export function openRecentItem(idx: number): void {
@@ -2127,6 +2187,23 @@ function openFileFromGitPanel(path: string, name: string): void {
   openFileInEditor(path, name);
 }
 
+/** Called by debug panel to get current editor file path. */
+function getDebugEditorPath(): string {
+  return currentEditorFilePath;
+}
+
+/** Called by debug panel when a stack frame or breakpoint is clicked. */
+function openFileFromDebugPanel(file: string, line: number): void {
+  // Extract filename from full path
+  let lastSlash = -1;
+  for (let i = file.length - 1; i >= 0; i = i - 1) {
+    if (file.charCodeAt(i) === 47) { lastSlash = i; break; }
+  }
+  let name = file;
+  if (lastSlash >= 0) name = file.slice(lastSlash + 1);
+  openFileInEditor(file, name);
+}
+
 // Deferred diff opener (Perry button callbacks can't do structural UI mutations)
 let pendingDiffFilePath = '';
 let pendingDiffRelPath = '';
@@ -2176,7 +2253,7 @@ function onActivityClickDeferred(): void {
   updateActivityBar();
   switchSidebarPanel(idx);
   // Persist active panel (only for sidebar panels, not settings gear)
-  if (idx >= 0 && idx <= 3) {
+  if (idx >= 0 && idx <= 5 && idx !== 4) {
     updateSettings({ activePanelIndex: idx });
   }
 }
@@ -2211,6 +2288,12 @@ function switchSidebarPanel(idx: number): void {
   }
 
   // idx===4 (AI Chat) handled by toggleRightPanel, not here
+
+  if (idx === 5) {
+    resetDebugPanelReady();
+    renderDebugPanelImpl(sidebarContainer, null as any);
+    return;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2221,12 +2304,12 @@ function renderActivityBarDesktop(): unknown {
   activityButtons = [];
   activityIndicators = [];
 
-  // Icons: 0=Files, 1=Search, 2=Git, 3=Sync, 4=AI Chat
+  // Icons: 0=Files, 1=Search, 2=Git, 3=Sync, 4=AI Chat, 5=Debug
   // On web: skip Git (idx 2) — execSync not available
-  const icons = ['doc.on.doc', 'magnifyingglass', 'arrow.triangle.branch', 'arrow.triangle.2.circlepath', 'sparkles'];
+  const icons = ['doc.on.doc', 'magnifyingglass', 'arrow.triangle.branch', 'arrow.triangle.2.circlepath', 'sparkles', 'ladybug'];
   const _isWeb = isWebPlatform();
 
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 6; i++) {
     // Skip git panel on web
     if (_isWeb > 0 && i === 2) continue;
 
@@ -2488,6 +2571,12 @@ function renderEditorArea(): unknown {
   // Poll cursor position for status bar + sync decorations + blame
   setInterval(() => { pollCursorPositionImpl(); syncEditorDecorations(); syncInlineBlame(); }, 250);
   setInterval(() => { pollDirtyState(); }, 500);
+
+  // Wire AI inline completion — ghost text after cursor dwell
+  setInlineEditorAccess(inlineGetCursorLine, inlineGetCursorCol, inlineGetLineContent, inlineSetGhostText, inlineClearGhostText);
+  setInlineContextProviders(inlineGetFileContent, inlineGetFilePath);
+  setInlineInsertCallback(inlineInsertText);
+  initInlineCompletion();
 
   // Breadcrumb bar — fully opaque background to cover editor behind
   breadcrumbContainer = HStackWithInsets(4, 4, 8, 4, 8);
@@ -5111,6 +5200,9 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   setTerminalCwd(workspaceRoot);
   setChatWorkspaceRoot(workspaceRoot);
   setChatFilePathGetter(() => { return getCurrentEditorPathForChat(); });
+  setDebugWorkspaceRoot(workspaceRoot);
+  setDebugCurrentFilePath(() => { return getDebugEditorPath(); });
+  setDebugFileOpener(openFileFromDebugPanel);
   setWelcomeActions(openFolderAction, openFileAction, openFileAction);
   setWelcomeRecentCallback(openRecentItem);
 
