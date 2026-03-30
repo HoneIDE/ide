@@ -1,0 +1,69 @@
+[android]
+distribute = "playstore:production"
+google_play_key = "/Users/amlug/projects/gscmaster.com/searchbird-483214-a77c096cd7bb.json"
+key_alias = "key0"
+keystore = "../android.keystore"
+
+[build]
+opt_level = 2
+out_dir = "dist"
+
+[i18n]
+default_locale = "en"
+locales = [
+    "en",
+    "de",
+    "ja",
+    "zh-Hans",
+    "es-MX",
+    "fr",
+    "pt",
+    "ko",
+    "it",
+    "tr",
+    "th",
+    "id",
+    "vi",
+]
+
+[ios]
+bundle_id = "com.hone.ide"
+certificate = "/Users/amlug/.perry/distribution.p12"
+distribute = "testflight"
+encryption_exempt = true
+provisioning_profile = "/Users/amlug/.perry/com_hone_ide.mobileprovision"
+signing_identity = "Apple Distribution: Skelpo GmbH (K6UW5YV9F7)"
+
+[linux]
+format = "tarball"
+
+[macos]
+bundle_id = "com.hone.ide"
+distribute = "both"
+encryption_exempt = true
+entitlements = [
+    "com.apple.security.app-sandbox",
+    "com.apple.security.network.client",
+    "com.apple.security.files.user-selected.read-write",
+    "com.apple.security.files.downloads.read-write",
+]
+notarize_signing_identity = "Developer ID Application: Skelpo GmbH"
+signing_identity = "3rd Party Mac Developer Application: Skelpo GmbH (K6UW5YV9F7)"
+
+[project]
+build_number = 1
+entry = "src/app.ts"
+name = "Hone"
+version = "0.1.0"
+
+[project.icons]
+source = "Hone.icns"
+
+[publish]
+exclude = [
+    "tests",
+    "node_modules",
+]
+
+[windows]
+gcloud_kms_key = "projects/skelpo/locations/europe-west3/keyRings/code-signing-eu/cryptoKeys/skelpo-codesign/cryptoKeyVersions/1"
