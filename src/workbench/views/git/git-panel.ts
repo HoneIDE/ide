@@ -13,6 +13,7 @@ import {
   widgetAddChild, widgetClearChildren,
   textfieldSetString,
 } from 'perry/ui';
+import { t } from 'perry/i18n';
 import { execSync } from 'child_process';
 import { spawn } from 'perry/thread';
 import { join } from 'path';
@@ -492,7 +493,7 @@ export function updateStatusBarBranch(): void {
   if (gitIsRepo > 0 && gitBranch.length > 0) {
     _statusBarUpdater(gitBranch);
   } else {
-    _statusBarUpdater('No repo');
+    _statusBarUpdater(t('No repo'));
   }
 }
 
@@ -506,7 +507,7 @@ function updateGitResultsUI(): void {
 
   const totalChanges = gitStagedCount + gitModifiedCount + gitUntrackedCount;
   if (totalChanges < 1) {
-    const clean = Text('No changes');
+    const clean = Text(t('No changes'));
     textSetFontSize(clean, 12);
     if (panelColors) setFg(clean, getSideBarForeground());
     widgetAddChild(gitResultsContainer, clean);
@@ -515,7 +516,7 @@ function updateGitResultsUI(): void {
 
   // Staged changes section
   if (gitStagedCount > 0) {
-    const header = Text('STAGED CHANGES');
+    const header = Text(t('STAGED CHANGES'));
     textSetFontSize(header, 10);
     textSetFontWeight(header, 10, 0.6);
     if (panelColors) setFg(header, getSideBarForeground());
@@ -559,7 +560,7 @@ function updateGitResultsUI(): void {
 
   // Modified (unstaged) changes section
   if (gitModifiedCount > 0) {
-    const header = Text('CHANGES');
+    const header = Text(t('CHANGES'));
     textSetFontSize(header, 10);
     textSetFontWeight(header, 10, 0.6);
     if (panelColors) setFg(header, getSideBarForeground());
@@ -605,7 +606,7 @@ function updateGitResultsUI(): void {
 
   // Untracked files section
   if (gitUntrackedCount > 0) {
-    const header = Text('UNTRACKED');
+    const header = Text(t('UNTRACKED'));
     textSetFontSize(header, 10);
     textSetFontWeight(header, 10, 0.6);
     if (panelColors) setFg(header, getSideBarForeground());
@@ -679,7 +680,7 @@ export function renderGitPanel(container: unknown, colors: ResolvedUIColors): vo
   panelColors = colors;
   gitPanelReady = 0;
 
-  const title = Text('SOURCE CONTROL');
+  const title = Text(t('SOURCE CONTROL'));
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.7);
   if (colors) setFg(title, getSideBarForeground());
@@ -688,7 +689,7 @@ export function renderGitPanel(container: unknown, colors: ResolvedUIColors): vo
   refreshGitState();
 
   if (gitIsRepo < 1) {
-    const noRepo = Text('Not a git repository');
+    const noRepo = Text(t('Not a git repository'));
     textSetFontSize(noRepo, 12);
     if (colors) setFg(noRepo, getSideBarForeground());
     widgetAddChild(container, noRepo);
@@ -710,16 +711,16 @@ export function renderGitPanel(container: unknown, colors: ResolvedUIColors): vo
   widgetAddChild(container, branchRow);
 
   // Commit message input
-  gitCommitTextField = TextField('Commit message', (text: string) => { onCommitMessageInput(text); });
+  gitCommitTextField = TextField(t('Commit message'), (text: string) => { onCommitMessageInput(text); });
   widgetAddChild(container, gitCommitTextField);
 
   // Commit button
-  const commitBtn = Button('Commit', () => { gitCommit(); });
+  const commitBtn = Button(t('Commit'), () => { gitCommit(); });
   buttonSetBordered(commitBtn, 0);
   textSetFontSize(commitBtn, 12);
   if (colors) setBtnFg(commitBtn, getSideBarForeground());
   // Refresh button
-  const refreshBtn = Button('Refresh', () => { onGitRefresh(); });
+  const refreshBtn = Button(t('Refresh'), () => { onGitRefresh(); });
   buttonSetBordered(refreshBtn, 0);
   textSetFontSize(refreshBtn, 12);
   if (colors) setBtnFg(refreshBtn, getSideBarForeground());
@@ -727,26 +728,26 @@ export function renderGitPanel(container: unknown, colors: ResolvedUIColors): vo
   widgetAddChild(container, actionRow);
 
   // Push / Pull / Fetch / Stash buttons
-  const pushBtn = Button('Push', () => { gitPush(); });
+  const pushBtn = Button(t('Push'), () => { gitPush(); });
   buttonSetBordered(pushBtn, 0);
   textSetFontSize(pushBtn, 11);
   if (colors) setBtnFg(pushBtn, getSideBarForeground());
-  const pullBtn = Button('Pull', () => { gitPull(); });
+  const pullBtn = Button(t('Pull'), () => { gitPull(); });
   buttonSetBordered(pullBtn, 0);
   textSetFontSize(pullBtn, 11);
   if (colors) setBtnFg(pullBtn, getSideBarForeground());
-  const fetchBtn = Button('Fetch', () => { gitFetch(); });
+  const fetchBtn = Button(t('Fetch'), () => { gitFetch(); });
   buttonSetBordered(fetchBtn, 0);
   textSetFontSize(fetchBtn, 11);
   if (colors) setBtnFg(fetchBtn, getSideBarForeground());
   const syncRow = HStack(8, [pushBtn, pullBtn, fetchBtn]);
   widgetAddChild(container, syncRow);
 
-  const stashBtn = Button('Stash', () => { gitStash(); });
+  const stashBtn = Button(t('Stash'), () => { gitStash(); });
   buttonSetBordered(stashBtn, 0);
   textSetFontSize(stashBtn, 11);
   if (colors) setBtnFg(stashBtn, getSideBarForeground());
-  const popBtn = Button('Pop', () => { gitStashPop(); });
+  const popBtn = Button(t('Pop'), () => { gitStashPop(); });
   buttonSetBordered(popBtn, 0);
   textSetFontSize(popBtn, 11);
   if (colors) setBtnFg(popBtn, getSideBarForeground());

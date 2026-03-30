@@ -15,6 +15,7 @@ import {
   widgetSetBackgroundColor, widgetSetWidth, widgetMatchParentWidth,
   textfieldGetString,
 } from 'perry/ui';
+import { t } from 'perry/i18n';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
 import { getSideBarForeground, getButtonForeground } from '../../theme/theme-colors';
 
@@ -25,7 +26,7 @@ let syncContainer: unknown = null;
 
 // Status text
 let statusLabel: unknown = null;
-let statusText = 'Not connected';
+let statusText = t('Not connected');
 
 // Pairing code display
 let codeLabel: unknown = null;
@@ -63,7 +64,7 @@ function _noopCode(c: string): void {}
 
 export function buildSyncPanel(): unknown {
   // Title
-  const title = Text('Sync');
+  const title = Text(t('Sync'));
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.7);
   setFg(title, getSideBarForeground());
@@ -74,7 +75,7 @@ export function buildSyncPanel(): unknown {
   textSetColor(statusLabel, 0.5, 0.5, 0.5, 1.0);
 
   // Pairing section
-  const pairBtn = Button('Pair Device', () => { onPairClicked(); });
+  const pairBtn = Button(t('Pair Device'), () => { onPairClicked(); });
   buttonSetBordered(pairBtn, 0);
   setBtnFg(pairBtn, getButtonForeground());
 
@@ -87,14 +88,14 @@ export function buildSyncPanel(): unknown {
   textSetFontWeight(codeLabel, 18, 0.7);
   setFg(codeLabel, getSideBarForeground());
 
-  const codeHint = Text('Share this code with your mobile device');
+  const codeHint = Text(t('Share this code with your mobile device'));
   textSetFontSize(codeHint, 9);
   textSetColor(codeHint, 0.45, 0.45, 0.45, 1.0);
 
   const pairSection = VStack(4, [pairBtn, codeLabel, codeHint]);
 
   // Devices section header
-  const devHeader = Text('Connected Devices');
+  const devHeader = Text(t('Connected Devices'));
   textSetFontSize(devHeader, 10);
   textSetFontWeight(devHeader, 10, 0.6);
   setFg(devHeader, getSideBarForeground());
@@ -105,17 +106,17 @@ export function buildSyncPanel(): unknown {
   rebuildDeviceList();
 
   // Join session section (enter code from another device)
-  const joinHeader = Text('Join Session');
+  const joinHeader = Text(t('Join Session'));
   textSetFontSize(joinHeader, 10);
   textSetFontWeight(joinHeader, 10, 0.6);
   setFg(joinHeader, getSideBarForeground());
 
-  const joinInput = TextField('Enter 6-char code', onJoinTextInput);
+  const joinInput = TextField(t('Enter 6-char code'), onJoinTextInput);
   joinInputHandle = joinInput;
   joinInputReady = 1;
   widgetSetWidth(joinInput, 180);
 
-  const joinBtn = Button('Join', () => { onJoinClicked(); });
+  const joinBtn = Button(t('Join'), () => { onJoinClicked(); });
   buttonSetBordered(joinBtn, 0);
   setBtnFg(joinBtn, getButtonForeground());
 
@@ -123,7 +124,7 @@ export function buildSyncPanel(): unknown {
   const joinSection = VStack(4, [joinHeader, joinRow]);
 
   // Divider
-  const divider = Text('— or —');
+  const divider = Text(t('— or —'));
   textSetFontSize(divider, 9);
   textSetColor(divider, 0.4, 0.4, 0.4, 1.0);
 
@@ -238,12 +239,12 @@ export function showSyncLimitPrompt(): void {
   // Build the upgrade message
   widgetClearChildren(upgradeContainer);
 
-  const limitMsg = Text('Free plan syncs 1 project.');
+  const limitMsg = Text(t('Free plan syncs 1 project.'));
   textSetFontSize(limitMsg, 11);
   textSetColor(limitMsg, 0.85, 0.65, 0.2, 1.0);
   widgetAddChild(upgradeContainer, limitMsg);
 
-  const upgradeMsg = Text('Upgrade to Pro or use a self-hosted relay.');
+  const upgradeMsg = Text(t('Upgrade to Pro or use a self-hosted relay.'));
   textSetFontSize(upgradeMsg, 10);
   textSetColor(upgradeMsg, 0.5, 0.5, 0.5, 1.0);
   widgetAddChild(upgradeContainer, upgradeMsg);
@@ -270,7 +271,7 @@ function onJoinTextInput(text: string): void {
 }
 
 function onJoinClicked(): void {
-  setSyncStatusText('Join clicked...');
+  setSyncStatusText(t('Join clicked...'));
   // Read text directly from the TextField handle (onChange callback may not fire on iOS)
   if (joinInputReady > 0) {
     const directText = textfieldGetString(joinInputHandle);
@@ -283,7 +284,7 @@ function onJoinClicked(): void {
       joinCodeText = directText;
     }
   } else {
-    setSyncStatusText('No input handle');
+    setSyncStatusText(t('No input handle'));
   }
   let dbg2 = 'Joining with: [';
   dbg2 += joinCodeText;
@@ -301,7 +302,7 @@ function rebuildDeviceList(): void {
   widgetClearChildren(deviceContainer);
 
   if (devCount === 0) {
-    const empty = Text('No devices paired');
+    const empty = Text(t('No devices paired'));
     textSetFontSize(empty, 11);
     textSetColor(empty, 0.45, 0.45, 0.45, 1.0);
     widgetAddChild(deviceContainer, empty);

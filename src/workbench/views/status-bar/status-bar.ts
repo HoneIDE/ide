@@ -12,6 +12,7 @@ import {
   buttonSetBordered, buttonSetImage, buttonSetImagePosition,
   widgetAddChild, widgetSetHeight, widgetSetHidden,
 } from 'perry/ui';
+import { t } from 'perry/i18n';
 import { setBg, setFg, setBtnTint, detectLanguage } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getStatusBarForeground, getStatusBarBackground } from '../../theme/theme-colors';
@@ -61,7 +62,7 @@ export function updateStatusBarBranchLabel(branch: string): void {
 export function updateStatusBarDiagnostics(errors: number, warnings: number): void {
   if (statusBarDiagLabel) {
     if (errors > 0 || warnings > 0) {
-      textSetString(statusBarDiagLabel, errors + ' errors, ' + warnings + ' warnings');
+      textSetString(statusBarDiagLabel, errors + ' ' + t('errors') + ', ' + warnings + ' ' + t('warnings'));
     } else {
       textSetString(statusBarDiagLabel, '');
     }
@@ -93,7 +94,7 @@ export function updateStatusBarLanguage(filePath: string): void {
   else if (lang.length === 4 && lang.charCodeAt(0) === 116 && lang.charCodeAt(1) === 111) display = 'TOML';
   else if (lang.length === 3 && lang.charCodeAt(0) === 115 && lang.charCodeAt(1) === 113) display = 'SQL';
   else if (lang.length === 3 && lang.charCodeAt(0) === 120) display = 'XML';
-  else display = 'Plain Text';
+  else display = t('Plain Text');
   textSetString(statusBarLangLabel, display + ' ');
 }
 
@@ -107,14 +108,14 @@ export function pollCursorPosition(): void {
   if (line === lastStatusCursorLine && col === lastStatusCursorCol) return;
   lastStatusCursorLine = line;
   lastStatusCursorCol = col;
-  const lnStr = 'Ln ' + (line + 1) + ', Col ' + (col + 1);
+  const lnStr = t('Ln') + ' ' + (line + 1) + ', ' + t('Col') + ' ' + (col + 1);
   textSetString(statusBarCursorLabel, lnStr);
 }
 
 /** Show the update indicator button with the new version string. */
 export function showUpdateIndicator(version: string): void {
   if (!statusBarUpdateBtn) return;
-  let label = 'Update v';
+  let label = t('Update') + ' v';
   label += version;
   textSetString(statusBarUpdateBtn, label);
   widgetSetHidden(statusBarUpdateBtn, 0);
@@ -164,7 +165,7 @@ export function renderStatusBar(colors: ResolvedUIColors): unknown {
   textSetFontSize(branchBtn, 10);
   setBtnTint(branchBtn, getStatusBarForeground());
 
-  const branch = Text('main');
+  const branch = Text(t('main'));
   textSetFontSize(branch, 11);
   setFg(branch, getStatusBarForeground());
   statusBarBranchLabel = branch;
@@ -178,13 +179,13 @@ export function renderStatusBar(colors: ResolvedUIColors): unknown {
   statusBarDiagLabel = diagLabel;
 
   // Cursor position
-  const cursorLabel = Text('Ln 1, Col 1');
+  const cursorLabel = Text(t('Ln') + ' 1, ' + t('Col') + ' 1');
   textSetFontSize(cursorLabel, 11);
   setFg(cursorLabel, getStatusBarForeground());
   statusBarCursorLabel = cursorLabel;
 
   // Indent size
-  const indentLabel = Text('Spaces: 2');
+  const indentLabel = Text(t('Spaces') + ': 2');
   textSetFontSize(indentLabel, 11);
   setFg(indentLabel, getStatusBarForeground());
 
@@ -200,7 +201,7 @@ export function renderStatusBar(colors: ResolvedUIColors): unknown {
   setFg(eolLabel, getStatusBarForeground());
 
   // Language
-  const lang = Text('TypeScript');
+  const lang = Text(t('TypeScript'));
   textSetFontSize(lang, 11);
   setFg(lang, getStatusBarForeground());
   statusBarLangLabel = lang;

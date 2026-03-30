@@ -15,6 +15,7 @@ import {
   widgetSetBackgroundColor, widgetSetHidden,
   ScrollView, scrollViewSetChild,
 } from 'perry/ui';
+import { t } from 'perry/i18n';
 import { setBg, setFg, setBtnFg } from '../../ui-helpers';
 import {
   getEditorBackground, getEditorForeground, getButtonBackground, getButtonForeground,
@@ -46,7 +47,7 @@ let _rendered: number = 0;
 
 function onInstallClick(): void {
   if (_statusLabel !== null) {
-    textSetString(_statusLabel, 'Downloading and verifying update...');
+    textSetString(_statusLabel, t('Downloading and verifying update...'));
   }
   if (_installBtn !== null) widgetSetHidden(_installBtn, 1);
   if (_dismissBtn !== null) widgetSetHidden(_dismissBtn, 1);
@@ -73,12 +74,12 @@ function pollUpdateState(): void {
   if (state === 3) {
     // Downloading
     if (_statusLabel !== null) {
-      textSetString(_statusLabel, 'Downloading and verifying update...');
+      textSetString(_statusLabel, t('Downloading and verifying update...'));
     }
   } else if (state === 4) {
     // Ready — restarting
     if (_statusLabel !== null) {
-      textSetString(_statusLabel, 'Update installed! Restarting...');
+      textSetString(_statusLabel, t('Update installed! Restarting...'));
     }
     clearInterval(_pollInterval);
     _pollInterval = 0;
@@ -106,14 +107,14 @@ export function renderUpdateTab(container: unknown): void {
   const fgColor = getEditorForeground();
 
   // Title
-  const title = Text('Update Available');
+  const title = Text(t('Update Available'));
   textSetFontSize(title, 20);
   textSetFontWeight(title, 20, 0.7);
   setFg(title, fgColor);
   _titleLabel = title;
 
   // Current version
-  let curVerText = 'Current version: ';
+  let curVerText = t('Current version: ');
   curVerText += getCurrentVersion();
   const curVer = Text(curVerText);
   textSetFontSize(curVer, 13);
@@ -121,7 +122,7 @@ export function renderUpdateTab(container: unknown): void {
   _currentVerLabel = curVer;
 
   // New version
-  let newVerText = 'New version: ';
+  let newVerText = t('New version: ');
   newVerText += getLatestVersion();
   const newVer = Text(newVerText);
   textSetFontSize(newVer, 13);
@@ -130,14 +131,14 @@ export function renderUpdateTab(container: unknown): void {
   _newVerLabel = newVer;
 
   // Release notes header
-  const notesHeader = Text('Release Notes');
+  const notesHeader = Text(t('Release Notes'));
   textSetFontSize(notesHeader, 15);
   textSetFontWeight(notesHeader, 15, 0.6);
   setFg(notesHeader, fgColor);
 
   // Release notes body
   let notes = getReleaseNotes();
-  if (notes.length === 0) notes = 'No release notes available.';
+  if (notes.length === 0) notes = t('No release notes available.');
   const notesBody = Text(notes);
   textSetFontSize(notesBody, 13);
   setFg(notesBody, fgColor);
@@ -150,7 +151,7 @@ export function renderUpdateTab(container: unknown): void {
   _statusLabel = statusLabel;
 
   // Install button
-  const installBtn = Button('Install & Restart', () => { onInstallClick(); });
+  const installBtn = Button(t('Install & Restart'), () => { onInstallClick(); });
   buttonSetBordered(installBtn, 0);
   setBtnFg(installBtn, '#ffffff');
   widgetSetBackgroundColor(installBtn, 0.0, 0.48, 0.80, 1.0);
@@ -159,7 +160,7 @@ export function renderUpdateTab(container: unknown): void {
   _installBtn = installBtn;
 
   // Dismiss button
-  const dismissBtn = Button('Not Now', () => { onDismissClick(); });
+  const dismissBtn = Button(t('Not Now'), () => { onDismissClick(); });
   buttonSetBordered(dismissBtn, 0);
   setBtnFg(dismissBtn, fgColor);
   widgetSetWidth(dismissBtn, 100);
@@ -167,7 +168,7 @@ export function renderUpdateTab(container: unknown): void {
   _dismissBtn = dismissBtn;
 
   // Retry button (hidden by default)
-  const retryBtn = Button('Try Again', () => { onRetryClick(); });
+  const retryBtn = Button(t('Try Again'), () => { onRetryClick(); });
   buttonSetBordered(retryBtn, 0);
   setBtnFg(retryBtn, '#ffffff');
   widgetSetBackgroundColor(retryBtn, 0.0, 0.48, 0.80, 1.0);

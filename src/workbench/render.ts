@@ -28,6 +28,7 @@ import {
   menuCreate, menuAddItem, menuAddSeparator, widgetSetContextMenu,
 } from 'perry/ui';
 import { Editor, editorSetBgColor, editorSetFgColor, editorSetGutterFgColor, editorSetSelectionColor, editorSetCursorColor } from '@honeide/editor/perry';
+import { t } from 'perry/i18n';
 import { getActiveTheme, setActiveTheme } from './theme/theme-loader';
 import {
   getEditorBackground, getEditorForeground,
@@ -430,7 +431,7 @@ function newFileDeferred(): void {
   untitledCounter = untitledCounter + 1;
   let numStr = '';
   numStr += String(untitledCounter);
-  let name = 'Untitled-';
+  let name = t('Untitled') + '-';
   name += numStr;
   let path = getTempDir();
   path += '/Untitled-';
@@ -492,7 +493,7 @@ export function saveFileAction(): void {
     msg += '\n';
     msg += content;
     sendToRelay(msg);
-    let savingMsg = 'Saving: ';
+    let savingMsg = t('Saving') + ': ';
     savingMsg += currentEditorFilePath;
     setSyncStatusText(savingMsg);
     return;
@@ -547,7 +548,7 @@ function onSaveAsCb(path: string): void {
   // Update tab bar entry with the new path/name
   renameActiveTab(path, getFileName(path));
   markTabSaved(content.length);
-  let savedMsg = 'Saved to ';
+  let savedMsg = t('Saved to') + ' ';
   savedMsg += getFileName(path);
   showNotification(savedMsg, 'info');
 }
@@ -806,7 +807,7 @@ export function showWelcomeAction(): void {
 function showWelcomeDeferred(): void {
   const welcomeContent = createWelcomeContent(null as any);
   const path = '__welcome__';
-  const name = 'Welcome';
+  const name = t('Welcome');
   openTab(path, name);
   // Don't load file content for welcome tab
 }
@@ -830,17 +831,17 @@ function goToLineDeferred(): void {
   widgetClearChildren(sidebarContainer);
   resetSearchPanelReady();
 
-  const title = Text('GO TO LINE');
+  const title = Text(t('GO TO LINE'));
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.7);
   setFg(title, getSideBarForeground());
   widgetAddChild(sidebarContainer, title);
 
   goToLineText = '';
-  goToLineInput = TextField('Line number...', (text: string) => { goToLineText = text; });
+  goToLineInput = TextField(t('Line number...'), (text: string) => { goToLineText = text; });
   widgetAddChild(sidebarContainer, goToLineInput);
 
-  const goBtn = Button('Go', () => { onGoToLineConfirm(); });
+  const goBtn = Button(t('Go'), () => { onGoToLineConfirm(); });
   buttonSetBordered(goBtn, 0);
   textSetFontSize(goBtn, 12);
   setBtnFg(goBtn, getSideBarForeground());
@@ -918,14 +919,14 @@ function goToFileDeferred(): void {
   widgetClearChildren(sidebarContainer);
   resetSearchPanelReady();
 
-  const title = Text('GO TO FILE');
+  const title = Text(t('GO TO FILE'));
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.7);
   setFg(title, getSideBarForeground());
   widgetAddChild(sidebarContainer, title);
 
   goToFileText = '';
-  goToFileInput = TextField('File name...', (text: string) => { onGoToFileInput(text); });
+  goToFileInput = TextField(t('File name...'), (text: string) => { onGoToFileInput(text); });
   widgetAddChild(sidebarContainer, goToFileInput);
 
   // Collect all files from workspace (async — doesn't block UI)
@@ -1021,7 +1022,7 @@ function renderGoToFileList(query: string): void {
   }
 
   if (shown < 1) {
-    const noResults = Text('No matching files');
+    const noResults = Text(t('No matching files'));
     textSetFontSize(noResults, 11);
     setFg(noResults, getSideBarForeground());
     widgetAddChild(goToFileResults, noResults);
@@ -1919,19 +1920,19 @@ function syncInlineBlame(): void {
     if (authorTime > 0) {
       const now = Math.floor(Date.now() / 1000);
       const diff = now - authorTime;
-      if (diff < 60) timeStr = 'just now';
+      if (diff < 60) timeStr = t('just now');
       else if (diff < 3600) {
         timeStr = String(Math.floor(diff / 60));
-        timeStr += ' min ago';
+        timeStr += ' ' + t('min ago');
       } else if (diff < 86400) {
         timeStr = String(Math.floor(diff / 3600));
-        timeStr += ' hours ago';
+        timeStr += ' ' + t('hours ago');
       } else if (diff < 2592000) {
         timeStr = String(Math.floor(diff / 86400));
-        timeStr += ' days ago';
+        timeStr += ' ' + t('days ago');
       } else {
         timeStr = String(Math.floor(diff / 2592000));
-        timeStr += ' months ago';
+        timeStr += ' ' + t('months ago');
       }
     }
 
@@ -2619,9 +2620,9 @@ function renderEditorArea(): unknown {
 
   // Editor right-click context menu
   const editorMenu = menuCreate();
-  menuAddItem(editorMenu, 'Format Document', () => { formatDocumentDeferred(); });
+  menuAddItem(editorMenu, t('Format Document'), () => { formatDocumentDeferred(); });
   menuAddSeparator(editorMenu);
-  menuAddItem(editorMenu, 'Go to Definition', () => { goToDefinitionDeferred(); });
+  menuAddItem(editorMenu, t('Go to Definition'), () => { goToDefinitionDeferred(); });
   menuAddSeparator(editorMenu);
   widgetSetContextMenu(editorWidget, editorMenu);
 
@@ -2853,7 +2854,7 @@ export function openSettingsAction(): void {
 
 function openSettingsDeferred(): void {
   if (settingsTabCreated < 1) {
-    openTab('__settings__', 'Settings');
+    openTab('__settings__', t('Settings'));
     settingsTabCreated = 1;
   } else {
     // Tab exists — just activate it via tab click simulation
@@ -2882,7 +2883,7 @@ export function openUpdateAction(): void {
 
 function openUpdateDeferred(): void {
   if (updateTabCreated < 1) {
-    openTab('__update__', 'Update');
+    openTab('__update__', t('Update'));
     updateTabCreated = 1;
   } else {
     activateUpdateTab();
@@ -3210,7 +3211,7 @@ function requestFileTreeAfterRestore(): void {
 
 function requestFileTreeAfterRestoreRetry(): void {
   if (isRelayConnected() < 1) {
-    setSyncStatusText('Reconnect failed — try Pair Device');
+    setSyncStatusText(t('Reconnect failed — try Pair Device'));
     removeSyncDevice(syncPairedDeviceName);
     return;
   }
@@ -3221,11 +3222,11 @@ function onRestoredConnection(): void {
   // Update device status
   removeSyncDevice(syncPairedDeviceName);
   addSyncDevice(syncPairedDeviceName, 'connected');
-  setSyncStatusText('Reconnected');
+  setSyncStatusText(t('Reconnected'));
   // Guest: request file tree from host (use saved role, not deviceClass — desktop can be guest)
   if (syncRestoredRole > 0) {
     sendToRelay('FILE_TREE_REQ');
-    setSyncStatusText('Requesting files...');
+    setSyncStatusText(t('Requesting files...'));
     fileTreeRetries = 0;
     setInterval(() => { retryFileTreeReq(); }, 3000);
   }
@@ -3317,7 +3318,7 @@ function initSyncSystem(layoutMode: LayoutMode): void {
       }
       autoConnectDebug();
     } else {
-      setSyncStatusText('Ready — click Pair Device or Join');
+      setSyncStatusText(t('Ready — click Pair Device or Join'));
     }
   }
 
@@ -3339,7 +3340,7 @@ function autoConnectDebug(): void {
 
 function sendAutoJoinDebug(): void {
   // Auto-join: skip pairing, just request file tree directly
-  setSyncStatusText('Requesting file tree...');
+  setSyncStatusText(t('Requesting file tree...'));
   sendToRelay('FILE_TREE_REQ');
   fileTreeRetries = 0;
   // Retry FILE_TREE_REQ every 3s until we get a response (host may not be connected yet)
@@ -3380,8 +3381,8 @@ function onSyncPairClicked(): void {
   disconnectFromRelay();
   connectToRelay(syncRelayUrl, roomId, syncDeviceId);
 
-  syncStatusOverride = 'Waiting for guest...';
-  setSyncStatusText('Waiting for guest...');
+  syncStatusOverride = t('Waiting for guest...');
+  setSyncStatusText(t('Waiting for guest...'));
 }
 
 function onSyncJoinClicked(code: string): void {
@@ -3391,7 +3392,7 @@ function onSyncJoinClicked(code: string): void {
   dbg += String(code.length);
   setSyncStatusText(dbg);
   if (code.length < 1) {
-    setSyncStatusText('EMPTY code, aborting');
+    setSyncStatusText(t('EMPTY code, aborting'));
     return;
   }
   const upper = code.toUpperCase();
@@ -3411,7 +3412,7 @@ function onSyncJoinClicked(code: string): void {
   setSyncStatusText(dbg2);
   connectToRelay(relayUrl, roomId, syncDeviceId);
 
-  syncStatusOverride = 'Joining...';
+  syncStatusOverride = t('Joining...');
 
   // Send pair request after a short delay (wait for WS connect)
   setTimeout(() => { sendPairRequest(upper); }, 1500);
@@ -3431,7 +3432,7 @@ function sendPairRequest(code: string): void {
 function onSyncGuestConnected(deviceId: string, deviceName: string): void {
   addSyncDevice(deviceName, 'connected');
   syncStatusOverride = '';
-  setSyncStatusText('Guest connected');
+  setSyncStatusText(t('Guest connected'));
   refreshSyncPanelDeferred();
 }
 
@@ -3475,7 +3476,7 @@ function onClaudeRelayRequestFromGuest(guestId: string, prompt: string, wsRoot: 
 
   if (claudeBin.length < 3) {
     // Send error back to guest
-    sendClaudeRelayError('Claude Code not found on host. Install: npm install -g @anthropic-ai/claude-code');
+    sendClaudeRelayError(t('Claude Code not found on host. Install: npm install -g @anthropic-ai/claude-code'));
     return;
   }
 
@@ -3517,7 +3518,7 @@ function onClaudeRelayRequestFromGuest(guestId: string, prompt: string, wsRoot: 
   try {
     writeFileSync(promptFile, prompt);
   } catch (e) {
-    sendClaudeRelayError('Failed to write prompt file on host');
+    sendClaudeRelayError(t('Failed to write prompt file on host'));
     return;
   }
 
@@ -3840,14 +3841,14 @@ function onClaudeRelayStopFromGuest(guestId: string, sessionId: string): void {
 
 function onRelayConnectedImpl(): void {
   if (syncStatusOverride.length === 0) {
-    setSyncStatusText('Connected to relay');
+    setSyncStatusText(t('Connected to relay'));
   }
   syncDebugLog('onRelayConnectedImpl fired');
   refreshSyncPanelDeferred();
   // If auto-join is pending (debug mode), request file tree now
   if (syncAutoJoinPending > 0) {
     syncAutoJoinPending = 0;
-    setSyncStatusText('Connected! Requesting files...');
+    setSyncStatusText(t('Connected! Requesting files...'));
     setTimeout(() => { sendAutoJoinDebug(); }, 500);
   }
 }
@@ -3858,7 +3859,7 @@ function onRelayDisconnectedImpl(): void {
   if (syncPairedRoomId.length > 0 && syncPairedDeviceName.length > 0) {
     saveSyncSession(syncPairedRoomId, syncPairedDeviceName);
   }
-  setSyncStatusText('Reconnecting...');
+  setSyncStatusText(t('Reconnecting...'));
   syncStatusOverride = '';
   refreshSyncPanelDeferred();
 
@@ -4119,7 +4120,7 @@ function onRelayMessageImpl(data: string): void {
       bulkSyncTotal = Number(countStr);
       bulkSyncReceived = 0;
       bulkSyncDone = 0;
-      setSyncStatusText('Receiving files: 0/' + countStr);
+      setSyncStatusText(t('Receiving files') + ': 0/' + countStr);
     }
     return;
   }
@@ -4127,9 +4128,9 @@ function onRelayMessageImpl(data: string): void {
   if (payload.indexOf('BULK_SYNC_END') === 0) {
     if (isSelf < 1) {
       bulkSyncDone = 1;
-      let doneMsg = 'Synced ';
+      let doneMsg = t('Synced') + ' ';
       doneMsg += String(fileCacheCount);
-      doneMsg += ' files';
+      doneMsg += ' ' + t('files');
       setSyncStatusText(doneMsg);
       syncDebugLog(doneMsg);
     }
@@ -4205,7 +4206,7 @@ function handlePairRequest(payload: string): void {
     addGuest(guestDeviceId, guestName);
     addSyncDevice(guestName, 'connected');
     syncStatusOverride = '';
-    setSyncStatusText('Paired!');
+    setSyncStatusText(t('Paired!'));
     setSyncPairingCode('');
 
     // Send acceptance: PAIR_OK|deviceId|deviceName
@@ -4234,7 +4235,7 @@ function handlePairAccepted(payload: string): void {
 
   addSyncDevice(hostName, 'connected');
   syncStatusOverride = '';
-  setSyncStatusText('Paired!');
+  setSyncStatusText(t('Paired!'));
   syncIsGuest = 1; // This device is the guest (received PAIR_OK from host)
   refreshSyncPanelDeferred();
 
@@ -4252,7 +4253,7 @@ function handlePairAccepted(payload: string): void {
 
 function requestFileTreeFromHost(): void {
   sendToRelay('FILE_TREE_REQ');
-  setSyncStatusText('Requesting files...');
+  setSyncStatusText(t('Requesting files...'));
 }
 
 /** Host: scan workspace and send file tree to guest. */
@@ -4286,7 +4287,7 @@ function handleFileTreeRequest(): void {
 
   syncDebugLog('msg len=' + String(msg.length) + ' first100=' + msg.substring(0, 100));
   sendToRelay(msg);
-  setSyncStatusText('Sent file tree');
+  setSyncStatusText(t('Sent file tree'));
 
   // Save host session for persistent restore
   if (syncPairedRoomId.length > 0 && syncPairedDeviceName.length < 1) {
@@ -4335,7 +4336,7 @@ function handleFileTreeRequest(): void {
   bulkSyncTotalSent = 0;
   // Drip-feed files: send 1 file every 100ms via setInterval (reduced from 3/50ms)
   if (textFileCount > 0) {
-    setSyncStatusText('Syncing ' + String(textFileCount) + ' files...');
+    setSyncStatusText(t('Syncing') + ' ' + String(textFileCount) + ' ' + t('files') + '...');
     bulkSyncTimerId = setInterval(() => { bulkSyncTick(); }, 100);
   }
 }
@@ -4355,7 +4356,7 @@ function bulkSyncTick(): void {
   if (bulkSyncTotalSent >= BULK_SYNC_TOTAL_MAX) {
     clearInterval(bulkSyncTimerId);
     sendToRelay('BULK_SYNC_END');
-    setSyncStatusText('Sync capped (' + String(bulkSyncIdx) + ' files, 5MB limit)');
+    setSyncStatusText(t('Sync capped') + ' (' + String(bulkSyncIdx) + ' ' + t('files') + ', 5MB ' + t('limit') + ')');
     syncDebugLog('Bulk sync stopped: total size cap reached');
     return;
   }
@@ -4383,7 +4384,7 @@ function bulkSyncTick(): void {
   if (bulkSyncIdx >= bulkSyncFileCount) {
     clearInterval(bulkSyncTimerId);
     sendToRelay('BULK_SYNC_END');
-    setSyncStatusText('Sync complete (' + String(bulkSyncFileCount) + ' files)');
+    setSyncStatusText(t('Sync complete') + ' (' + String(bulkSyncFileCount) + ' ' + t('files') + ')');
     syncDebugLog('Bulk sync complete');
   }
 }
@@ -4803,7 +4804,7 @@ function handleFileSave(payload: string): void {
   let okMsg = 'FILE_SAVE_OK|';
   okMsg += relPath;
   sendToRelay(okMsg);
-  let statusMsg = 'Guest saved: ';
+  let statusMsg = t('Guest saved') + ': ';
   statusMsg += relPath;
   setSyncStatusText(statusMsg);
   syncDebugLog(statusMsg);
@@ -4813,7 +4814,7 @@ function handleFileSave(payload: string): void {
 function handleFileSaveOk(payload: string): void {
   // FILE_SAVE_OK|relPath
   const relPath = payload.substring(13); // "FILE_SAVE_OK|".length
-  let statusMsg = 'Saved: ';
+  let statusMsg = t('Saved') + ': ';
   statusMsg += relPath;
   setSyncStatusText(statusMsg);
   // Update cached content so future opens show saved version
@@ -5035,7 +5036,7 @@ function handleFileContentResponse(payload: string): void {
   if (bulkSyncDone < 1 && bulkSyncTotal > 0) {
     bulkSyncReceived = bulkSyncReceived + 1;
     if (bulkSyncReceived % 5 === 0 || bulkSyncReceived === bulkSyncTotal) {
-      let progressMsg = 'Syncing: ';
+      let progressMsg = t('Syncing') + ': ';
       progressMsg += String(bulkSyncReceived);
       progressMsg += '/';
       progressMsg += String(bulkSyncTotal);
@@ -5059,7 +5060,7 @@ function handleFileContentResponse(payload: string): void {
 
 /** Display a file in the editor (from cache or network). */
 function displayFileFromCache(relPath: string, content: string): void {
-  setSyncStatusText('Loaded: ' + relPath);
+  setSyncStatusText(t('Loaded') + ': ' + relPath);
   currentEditorFilePath = relPath;
   updateBreadcrumb();
   if (editorReady > 0) {
@@ -5086,7 +5087,7 @@ function displayFileFromCache(relPath: string, content: string): void {
 /** Guest clicked a remote file in the explorer. */
 function onRemoteFileClicked(relPath: string): void {
   syncDebugLog('onRemoteFileClicked: ' + relPath);
-  setSyncStatusText('Opening: ' + relPath);
+  setSyncStatusText(t('Opening') + ': ' + relPath);
   // Check local cache first — instant open if already synced
   if (fileCacheHas(relPath) > 0) {
     syncDebugLog('Found in cache');
@@ -5096,7 +5097,7 @@ function onRemoteFileClicked(relPath: string): void {
   }
   // Not cached — request from host
   syncDebugLog('Not in cache, requesting');
-  setSyncStatusText('Loading: ' + relPath);
+  setSyncStatusText(t('Loading') + ': ' + relPath);
   pendingOpenPath = relPath;
   let msg = 'FILE_REQ|';
   msg += relPath;
@@ -5106,7 +5107,7 @@ function onRemoteFileClicked(relPath: string): void {
 function refreshSyncPanelDeferred(): void {
   if (isRelayConnected() > 0) {
     if (syncStatusOverride.length === 0) {
-      setSyncStatusText('Connected to relay');
+      setSyncStatusText(t('Connected to relay'));
     }
   }
   refreshSyncPanel();
@@ -5130,7 +5131,7 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
 
   // Register commands with real handlers (overrides stubs in commands.ts)
   registerBuiltinCommands();
-  registerCommand('workbench.action.newEditor', 'New Editor', newFileAction, { showInPalette: false });
+  registerCommand('workbench.action.newEditor', t('New Editor'), newFileAction, { showInPalette: false });
 
   // Determine workspace root
   const _initSettings = getWorkbenchSettings();

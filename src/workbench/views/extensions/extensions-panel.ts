@@ -11,6 +11,7 @@ import {
   buttonSetBordered, buttonSetTitle,
   widgetAddChild, widgetSetWidth,
 } from 'perry/ui';
+import { t } from 'perry/i18n';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 
@@ -66,38 +67,38 @@ function updateToggleLabel(idx: number): void {
   if (idx < toggleBtns.length) {
     const on = isExtOn(idx);
     if (on > 0) {
-      buttonSetTitle(toggleBtns[idx], 'Disable');
+      buttonSetTitle(toggleBtns[idx], t('Disable'));
     } else {
-      buttonSetTitle(toggleBtns[idx], 'Enable');
+      buttonSetTitle(toggleBtns[idx], t('Enable'));
     }
   }
 }
 
 export function renderExtensionsPanel(container: unknown, colors: ResolvedUIColors): void {
-  const title = Text('EXTENSIONS');
+  const title = Text(t('EXTENSIONS'));
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.7);
   setFg(title, colors.sideBarForeground);
   widgetAddChild(container, title);
 
   // Search field
-  const search = TextField('Search extensions', (t: string) => {});
+  const search = TextField(t('Search extensions'), (txt: string) => {});
   widgetAddChild(container, search);
 
   // Built-in extensions
-  const names = ['TypeScript', 'Python', 'Rust', 'Go', 'C/C++', 'HTML/CSS', 'JSON', 'Markdown', 'Git', 'Docker', 'TOML/YAML'];
+  const names = [t('TypeScript'), t('Python'), t('Rust'), t('Go'), t('C/C++'), t('HTML/CSS'), t('JSON'), t('Markdown'), t('Git'), t('Docker'), t('TOML/YAML')];
   const descs = [
-    'Language support for TypeScript and JavaScript',
-    'Language support for Python',
-    'Language support for Rust',
-    'Language support for Go',
-    'Language support for C and C++',
-    'Language support for HTML and CSS',
-    'JSON language support',
-    'Markdown preview and editing',
-    'Git integration and source control',
-    'Dockerfile and compose support',
-    'TOML and YAML language support',
+    t('Language support for TypeScript and JavaScript'),
+    t('Language support for Python'),
+    t('Language support for Rust'),
+    t('Language support for Go'),
+    t('Language support for C and C++'),
+    t('Language support for HTML and CSS'),
+    t('JSON language support'),
+    t('Markdown preview and editing'),
+    t('Git integration and source control'),
+    t('Dockerfile and compose support'),
+    t('TOML and YAML language support'),
   ];
 
   toggleBtns = [];
@@ -113,8 +114,8 @@ export function renderExtensionsPanel(container: unknown, colors: ResolvedUIColo
     setFg(descLabel, colors.sideBarForeground);
 
     const on = isExtOn(i);
-    let btnLabel = 'Disable';
-    if (on < 1) btnLabel = 'Enable';
+    let btnLabel = t('Disable');
+    if (on < 1) btnLabel = t('Enable');
     const toggleBtn = Button(btnLabel, () => { toggleExt(idx); });
     buttonSetBordered(toggleBtn, 0);
     textSetFontSize(toggleBtn, 11);
@@ -128,13 +129,13 @@ export function renderExtensionsPanel(container: unknown, colors: ResolvedUIColo
 
   // Plugin management section — only when compiled with --features plugins
   if (__plugins__) {
-    const pluginHeader = Text('INSTALLED PLUGINS');
+    const pluginHeader = Text(t('INSTALLED PLUGINS'));
     textSetFontSize(pluginHeader, 11);
     textSetFontWeight(pluginHeader, 11, 0.7);
     setFg(pluginHeader, colors.sideBarForeground);
     widgetAddChild(container, pluginHeader);
 
-    const noPlugins = Text('No plugins installed');
+    const noPlugins = Text(t('No plugins installed'));
     textSetFontSize(noPlugins, 11);
     setFg(noPlugins, colors.sideBarForeground);
     widgetAddChild(container, noPlugins);

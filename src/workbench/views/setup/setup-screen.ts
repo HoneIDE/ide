@@ -17,6 +17,7 @@ import {
   widgetAddChild, widgetSetHidden, widgetSetHugging,
   widgetMatchParentWidth, widgetMatchParentHeight,
 } from 'perry/ui';
+import { t } from 'perry/i18n';
 import { streamStart, streamPoll, streamStatus, streamClose } from 'node-fetch';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
 import {
@@ -115,10 +116,10 @@ function applyLightColors(): void {
 function onThemeDark(): void {
   setStringSetting('colorTheme', 'Hone Dark');
   if (_themeDarkBtn !== null) {
-    buttonSetTitle(_themeDarkBtn, 'Dark (selected)');
+    buttonSetTitle(_themeDarkBtn, t('Dark (selected)'));
   }
   if (_themeLightBtn !== null) {
-    buttonSetTitle(_themeLightBtn, 'Light');
+    buttonSetTitle(_themeLightBtn, t('Light'));
   }
   applyDarkColors();
 }
@@ -126,10 +127,10 @@ function onThemeDark(): void {
 function onThemeLight(): void {
   setStringSetting('colorTheme', 'Hone Light');
   if (_themeLightBtn !== null) {
-    buttonSetTitle(_themeLightBtn, 'Light (selected)');
+    buttonSetTitle(_themeLightBtn, t('Light (selected)'));
   }
   if (_themeDarkBtn !== null) {
-    buttonSetTitle(_themeDarkBtn, 'Dark');
+    buttonSetTitle(_themeDarkBtn, t('Dark'));
   }
   applyLightColors();
 }
@@ -138,20 +139,20 @@ function onStatsYes(): void {
   setBoolSetting('telemetryEnabled', 1);
   if (_statsYesBtn !== null) widgetSetHidden(_statsYesBtn, 1);
   if (_statsNoBtn !== null) widgetSetHidden(_statsNoBtn, 1);
-  if (_statsStatus !== null) textSetString(_statsStatus, 'Anonymous stats enabled. Thanks!');
+  if (_statsStatus !== null) textSetString(_statsStatus, t('Anonymous stats enabled. Thanks!'));
 }
 
 function onStatsNo(): void {
   setBoolSetting('telemetryEnabled', 0);
   if (_statsYesBtn !== null) widgetSetHidden(_statsYesBtn, 1);
   if (_statsNoBtn !== null) widgetSetHidden(_statsNoBtn, 1);
-  if (_statsStatus !== null) textSetString(_statsStatus, 'Stats disabled. You can enable this later in Settings.');
+  if (_statsStatus !== null) textSetString(_statsStatus, t('Stats disabled. You can enable this later in Settings.'));
 }
 
 function onSyncYes(): void {
   _syncChoice = 1;
   if (_statusText !== null) {
-    textSetString(_statusText, 'Setting up sync...');
+    textSetString(_statusText, t('Setting up sync...'));
   }
   if (_syncYesBtn !== null) widgetSetHidden(_syncYesBtn, 1);
   if (_syncNoBtn !== null) widgetSetHidden(_syncNoBtn, 1);
@@ -176,7 +177,7 @@ function onSyncNo(): void {
   _syncChoice = 0;
   setBoolSetting('syncEnabled', 0);
   if (_statusText !== null) {
-    textSetString(_statusText, 'Sync disabled. You can enable it later in Settings.');
+    textSetString(_statusText, t('Sync disabled. You can enable it later in Settings.'));
   }
   if (_syncYesBtn !== null) widgetSetHidden(_syncYesBtn, 1);
   if (_syncNoBtn !== null) widgetSetHidden(_syncNoBtn, 1);
@@ -197,7 +198,7 @@ function pollSetupResponse(): void {
     clearInterval(_pollInterval);
     _pollInterval = 0;
     if (_statusText !== null) {
-      textSetString(_statusText, 'Could not reach sync server. You can set up sync later in Settings.');
+      textSetString(_statusText, t('Could not reach sync server. You can set up sync later in Settings.'));
     }
     setBoolSetting('syncEnabled', 0);
     if (_getStartedBtn !== null) widgetSetHidden(_getStartedBtn, 0);
@@ -215,7 +216,7 @@ function pollSetupResponse(): void {
   if (status === 3 || responseText.length < 5) {
     // Error
     if (_statusText !== null) {
-      textSetString(_statusText, 'Could not reach sync server. You can set up sync later in Settings.');
+      textSetString(_statusText, t('Could not reach sync server. You can set up sync later in Settings.'));
     }
     setBoolSetting('syncEnabled', 0);
   } else {
@@ -230,11 +231,11 @@ function pollSetupResponse(): void {
       setStringSetting('syncDeviceToken', token);
 
       if (_statusText !== null) {
-        textSetString(_statusText, 'Sync is ready!');
+        textSetString(_statusText, t('Sync is ready!'));
       }
     } else {
       if (_statusText !== null) {
-        textSetString(_statusText, 'Setup issue. You can configure sync in Settings.');
+        textSetString(_statusText, t('Setup issue. You can configure sync in Settings.'));
       }
       setBoolSetting('syncEnabled', 0);
     }
@@ -278,25 +279,25 @@ export function setSetupParent(parent: unknown): void {
 
 export function createSetupScreen(): unknown {
   // Title
-  const title = Text('Welcome to Hone');
+  const title = Text(t('Welcome to Hone'));
   textSetFontSize(title, 28);
   textSetFontWeight(title, 28, 0.7);
   setFg(title, '#E0E0E0');
   _title = title;
 
-  const subtitle = Text('A lightweight, native code editor');
+  const subtitle = Text(t('A lightweight, native code editor'));
   textSetFontSize(subtitle, 14);
   setFg(subtitle, '#888888');
   _subtitle = subtitle;
 
   // Theme section
-  const themeLabel = Text('Choose your theme');
+  const themeLabel = Text(t('Choose your theme'));
   textSetFontSize(themeLabel, 16);
   textSetFontWeight(themeLabel, 16, 0.6);
   setFg(themeLabel, '#CCCCCC');
   _themeLabel = themeLabel;
 
-  const darkBtn = Button('Dark (selected)', () => { onThemeDark(); });
+  const darkBtn = Button(t('Dark (selected)'), () => { onThemeDark(); });
   buttonSetBordered(darkBtn, 0);
   widgetSetWidth(darkBtn, 120);
   widgetSetHeight(darkBtn, 30);
@@ -304,7 +305,7 @@ export function createSetupScreen(): unknown {
   setBtnFg(darkBtn, '#ffffff');
   _themeDarkBtn = darkBtn;
 
-  const lightBtn = Button('Light', () => { onThemeLight(); });
+  const lightBtn = Button(t('Light'), () => { onThemeLight(); });
   buttonSetBordered(lightBtn, 0);
   widgetSetWidth(lightBtn, 120);
   widgetSetHeight(lightBtn, 30);
@@ -315,28 +316,28 @@ export function createSetupScreen(): unknown {
   const themeRow = HStack(12, [darkBtn, lightBtn]);
 
   // Sync section
-  const syncLabel = Text('Cross-device sync');
+  const syncLabel = Text(t('Cross-device sync'));
   textSetFontSize(syncLabel, 16);
   textSetFontWeight(syncLabel, 16, 0.6);
   setFg(syncLabel, '#CCCCCC');
   _syncLabel = syncLabel;
 
-  const syncDesc = Text('Your first project syncs free between desktop and mobile.');
+  const syncDesc = Text(t('Your first project syncs free between desktop and mobile.'));
   textSetFontSize(syncDesc, 13);
   setFg(syncDesc, '#888888');
   _syncDesc = syncDesc;
 
-  const syncDesc2 = Text('No email or payment needed. Upgrade to Pro ($3/mo) for unlimited.');
+  const syncDesc2 = Text(t('No email or payment needed. Upgrade to Pro ($3/mo) for unlimited.'));
   textSetFontSize(syncDesc2, 13);
   setFg(syncDesc2, '#888888');
   _syncDesc2 = syncDesc2;
 
-  const syncDesc3 = Text('Files, AI chat, and editor state sync — all end-to-end encrypted.');
+  const syncDesc3 = Text(t('Files, AI chat, and editor state sync — all end-to-end encrypted.'));
   textSetFontSize(syncDesc3, 13);
   setFg(syncDesc3, '#888888');
   _syncDesc3 = syncDesc3;
 
-  const yesBtn = Button('Enable Sync', () => { onSyncYes(); });
+  const yesBtn = Button(t('Enable Sync'), () => { onSyncYes(); });
   buttonSetBordered(yesBtn, 0);
   widgetSetWidth(yesBtn, 140);
   widgetSetHeight(yesBtn, 30);
@@ -344,7 +345,7 @@ export function createSetupScreen(): unknown {
   setBtnFg(yesBtn, '#ffffff');
   _syncYesBtn = yesBtn;
 
-  const noBtn = Button('Skip', () => { onSyncNo(); });
+  const noBtn = Button(t('Skip'), () => { onSyncNo(); });
   buttonSetBordered(noBtn, 0);
   widgetSetWidth(noBtn, 100);
   widgetSetHeight(noBtn, 30);
@@ -361,7 +362,7 @@ export function createSetupScreen(): unknown {
   _statusText = statusTxt;
 
   // Get Started button (hidden until sync choice is made)
-  const startBtn = Button('Get Started', () => { onGetStarted(); });
+  const startBtn = Button(t('Get Started'), () => { onGetStarted(); });
   buttonSetBordered(startBtn, 0);
   widgetSetWidth(startBtn, 160);
   widgetSetHeight(startBtn, 30);
@@ -389,18 +390,18 @@ export function createSetupScreen(): unknown {
   widgetAddChild(content, Spacer());
 
   // Anonymous statistics section
-  const statsLabel = Text('Anonymous statistics');
+  const statsLabel = Text(t('Anonymous statistics'));
   textSetFontSize(statsLabel, 16);
   textSetFontWeight(statsLabel, 16, 0.6);
   setFg(statsLabel, '#CCCCCC');
   _statsLabel = statsLabel;
 
-  const statsDesc = Text('Share anonymous usage stats to help improve Hone. No file content, paths, or personal data is ever collected.');
+  const statsDesc = Text(t('Share anonymous usage stats to help improve Hone. No file content, paths, or personal data is ever collected.'));
   textSetFontSize(statsDesc, 13);
   setFg(statsDesc, '#888888');
   _statsDesc = statsDesc;
 
-  const statsYesBtn = Button('Yes, share stats', () => { onStatsYes(); });
+  const statsYesBtn = Button(t('Yes, share stats'), () => { onStatsYes(); });
   buttonSetBordered(statsYesBtn, 0);
   widgetSetWidth(statsYesBtn, 160);
   widgetSetHeight(statsYesBtn, 30);
@@ -408,7 +409,7 @@ export function createSetupScreen(): unknown {
   setBtnFg(statsYesBtn, '#ffffff');
   _statsYesBtn = statsYesBtn;
 
-  const statsNoBtn = Button('No thanks', () => { onStatsNo(); });
+  const statsNoBtn = Button(t('No thanks'), () => { onStatsNo(); });
   buttonSetBordered(statsNoBtn, 0);
   widgetSetWidth(statsNoBtn, 100);
   widgetSetHeight(statsNoBtn, 30);

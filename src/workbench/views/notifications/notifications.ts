@@ -7,6 +7,7 @@ import {
   buttonSetBordered,
   widgetAddChild, widgetRemoveChild, widgetSetHidden, widgetSetWidth,
 } from 'perry/ui';
+import { t } from 'perry/i18n';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import {

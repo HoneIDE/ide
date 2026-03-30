@@ -7,6 +7,7 @@
  */
 
 import type { DeviceClass, Platform } from './platform';
+import { t } from 'perry/i18n';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -64,70 +65,70 @@ export function buildDesktopMenuBar(platform: Platform): MenuBar {
   return {
     menus: [
       {
-        label: 'File',
+        label: t('File'),
         items: [
-          item('menu.file.new', 'New File', 'file.newFile', `${mod}+N`),
-          item('menu.file.open', 'Open File...', 'file.openFile', `${mod}+O`),
-          item('menu.file.openFolder', 'Open Folder...', 'file.openFolder', `${mod}+Shift+D`),
-          submenu('menu.file.openRecent', 'Open Recent', []),
+          item('menu.file.new', t('New File'), 'file.newFile', `${mod}+N`),
+          item('menu.file.open', t('Open File...'), 'file.openFile', `${mod}+O`),
+          item('menu.file.openFolder', t('Open Folder...'), 'file.openFolder', `${mod}+Shift+D`),
+          submenu('menu.file.openRecent', t('Open Recent'), []),
           separator(),
-          item('menu.file.save', 'Save', 'file.save', `${mod}+S`),
-          item('menu.file.saveAs', 'Save As...', 'file.saveAs', `${mod}+Shift+S`),
-          item('menu.file.saveAll', 'Save All', 'file.saveAll'),
+          item('menu.file.save', t('Save'), 'file.save', `${mod}+S`),
+          item('menu.file.saveAs', t('Save As...'), 'file.saveAs', `${mod}+Shift+S`),
+          item('menu.file.saveAll', t('Save All'), 'file.saveAll'),
           separator(),
-          item('menu.file.close', 'Close Editor', 'workbench.action.closeActiveEditor', `${mod}+W`),
+          item('menu.file.close', t('Close Editor'), 'workbench.action.closeActiveEditor', `${mod}+W`),
         ],
       },
       {
-        label: 'Edit',
+        label: t('Edit'),
         items: [
-          item('menu.edit.undo', 'Undo', 'edit.undo', `${mod}+Z`),
-          item('menu.edit.redo', 'Redo', 'edit.redo', `${mod}+Shift+Z`),
+          item('menu.edit.undo', t('Undo'), 'edit.undo', `${mod}+Z`),
+          item('menu.edit.redo', t('Redo'), 'edit.redo', `${mod}+Shift+Z`),
           separator(),
-          item('menu.edit.cut', 'Cut', 'edit.cut', `${mod}+X`),
-          item('menu.edit.copy', 'Copy', 'edit.copy', `${mod}+C`),
-          item('menu.edit.paste', 'Paste', 'edit.paste', `${mod}+V`),
+          item('menu.edit.cut', t('Cut'), 'edit.cut', `${mod}+X`),
+          item('menu.edit.copy', t('Copy'), 'edit.copy', `${mod}+C`),
+          item('menu.edit.paste', t('Paste'), 'edit.paste', `${mod}+V`),
           separator(),
-          item('menu.edit.find', 'Find', 'edit.find', `${mod}+F`),
-          item('menu.edit.replace', 'Replace', 'edit.replace', `${mod}+H`),
+          item('menu.edit.find', t('Find'), 'edit.find', `${mod}+F`),
+          item('menu.edit.replace', t('Replace'), 'edit.replace', `${mod}+H`),
           separator(),
-          item('menu.edit.selectAll', 'Select All', 'edit.selectAll', `${mod}+A`),
+          item('menu.edit.selectAll', t('Select All'), 'edit.selectAll', `${mod}+A`),
           separator(),
-          item('menu.edit.format', 'Format Document', 'edit.formatDocument', `Shift+Alt+F`),
+          item('menu.edit.format', t('Format Document'), 'edit.formatDocument', `Shift+Alt+F`),
         ],
       },
       {
-        label: 'View',
+        label: t('View'),
         items: [
-          item('menu.view.commandPalette', 'Command Palette...', 'view.commandPalette', `${mod}+Shift+P`),
-          item('menu.view.quickOpen', 'Quick Open...', 'view.quickOpen', `${mod}+P`),
+          item('menu.view.commandPalette', t('Command Palette...'), 'view.commandPalette', `${mod}+Shift+P`),
+          item('menu.view.quickOpen', t('Quick Open...'), 'view.quickOpen', `${mod}+P`),
           separator(),
-          item('menu.view.sidebar', 'Toggle Sidebar', 'view.toggleSidebar', `${mod}+B`),
-          item('menu.view.bottomPanel', 'Toggle Bottom Panel', 'view.toggleBottomPanel', `${mod}+J`),
-          item('menu.view.terminal', 'Toggle Terminal', 'view.toggleTerminal', `${mod}+\``),
+          item('menu.view.sidebar', t('Toggle Sidebar'), 'view.toggleSidebar', `${mod}+B`),
+          item('menu.view.bottomPanel', t('Toggle Bottom Panel'), 'view.toggleBottomPanel', `${mod}+J`),
+          item('menu.view.terminal', t('Toggle Terminal'), 'view.toggleTerminal', `${mod}+\``),
           separator(),
-          item('menu.view.zoomIn', 'Zoom In', 'view.zoomIn', `${mod}+=`),
-          item('menu.view.zoomOut', 'Zoom Out', 'view.zoomOut', `${mod}+-`),
-          item('menu.view.resetZoom', 'Reset Zoom', 'view.resetZoom', `${mod}+0`),
+          item('menu.view.zoomIn', t('Zoom In'), 'view.zoomIn', `${mod}+=`),
+          item('menu.view.zoomOut', t('Zoom Out'), 'view.zoomOut', `${mod}+-`),
+          item('menu.view.resetZoom', t('Reset Zoom'), 'view.resetZoom', `${mod}+0`),
         ],
       },
       {
-        label: 'Go',
+        label: t('Go'),
         items: [
-          item('menu.go.goToFile', 'Go to File...', 'view.quickOpen', `${mod}+P`),
-          item('menu.go.goToLine', 'Go to Line...', 'editor.action.goToLine', `${mod}+G`),
-          item('menu.go.goToSymbol', 'Go to Symbol...', 'editor.action.goToSymbol', `${mod}+Shift+O`),
+          item('menu.go.goToFile', t('Go to File...'), 'view.quickOpen', `${mod}+P`),
+          item('menu.go.goToLine', t('Go to Line...'), 'editor.action.goToLine', `${mod}+G`),
+          item('menu.go.goToSymbol', t('Go to Symbol...'), 'editor.action.goToSymbol', `${mod}+Shift+O`),
         ],
       },
       {
-        label: 'Help',
+        label: t('Help'),
         items: [
-          item('menu.help.welcome', 'Welcome', 'workbench.action.showWelcome'),
-          item('menu.help.docs', 'Documentation', 'workbench.action.openDocs'),
+          item('menu.help.welcome', t('Welcome'), 'workbench.action.showWelcome'),
+          item('menu.help.docs', t('Documentation'), 'workbench.action.openDocs'),
           separator(),
-          item('menu.help.checkUpdates', 'Check for Updates...', 'workbench.action.checkForUpdates'),
+          item('menu.help.checkUpdates', t('Check for Updates...'), 'workbench.action.checkForUpdates'),
           separator(),
-          item('menu.help.about', 'About Hone', 'workbench.action.showAbout'),
+          item('menu.help.about', t('About Hone'), 'workbench.action.showAbout'),
         ],
       },
     ],
@@ -144,21 +145,21 @@ export function buildDesktopMenuBar(platform: Platform): MenuBar {
  */
 export function buildMobileActions(deviceClass: DeviceClass): MenuItem[] {
   const actions: MenuItem[] = [
-    item('mobile.newFile', 'New File', 'file.newFile'),
-    item('mobile.openFile', 'Open File', 'file.openFile'),
+    item('mobile.newFile', t('New File'), 'file.newFile'),
+    item('mobile.openFile', t('Open File'), 'file.openFile'),
     separator(),
-    item('mobile.commandPalette', 'Command Palette', 'view.commandPalette'),
-    item('mobile.find', 'Find in File', 'edit.find'),
+    item('mobile.commandPalette', t('Command Palette'), 'view.commandPalette'),
+    item('mobile.find', t('Find in File'), 'edit.find'),
     separator(),
-    item('mobile.settings', 'Settings', 'workbench.action.openSettings'),
-    item('mobile.theme', 'Color Theme', 'workbench.action.selectTheme'),
+    item('mobile.settings', t('Settings'), 'workbench.action.openSettings'),
+    item('mobile.theme', t('Color Theme'), 'workbench.action.selectTheme'),
   ];
 
   if (deviceClass === 'tablet') {
     // Tablets get a few extra actions since they have more screen space
     actions.splice(5, 0,
-      item('mobile.toggleSidebar', 'Toggle Sidebar', 'view.toggleSidebar'),
-      item('mobile.toggleBottomPanel', 'Toggle Bottom Panel', 'view.toggleBottomPanel'),
+      item('mobile.toggleSidebar', t('Toggle Sidebar'), 'view.toggleSidebar'),
+      item('mobile.toggleBottomPanel', t('Toggle Bottom Panel'), 'view.toggleBottomPanel'),
     );
   }
 

@@ -13,6 +13,7 @@ import {
   widgetAddChild, widgetClearChildren, widgetSetWidth, widgetSetHeight,
   widgetSetContextMenu,
 } from 'perry/ui';
+import { t } from 'perry/i18n';
 import { readdirSync, isDirectory } from 'fs';
 import { join } from 'path';
 import { setBg, setFg, setBtnFg, setBtnTint, pathId, getFileName, getFileIcon, getFileIconColor, truncateName } from '../../ui-helpers';
@@ -246,7 +247,7 @@ function refreshSidebar(): void {
   // Remote mode (sync guest) — use same tree rendering with remote data source
   if (isRemoteMode > 0 && remoteEntryCount > 0) {
     // --- EXPLORER title ---
-    const rExplorerLabel = Text('EXPLORER');
+    const rExplorerLabel = Text(t('EXPLORER'));
     textSetFontSize(rExplorerLabel, 11);
     textSetFontWeight(rExplorerLabel, 11, 0.4);
     setFg(rExplorerLabel, getSideBarForeground());
@@ -266,7 +267,7 @@ function refreshSidebar(): void {
         rootDisplay += remoteRootName.charAt(ci);
       }
     }
-    const syncBadge = Text('SYNCED');
+    const syncBadge = Text(t('SYNCED'));
     textSetFontSize(syncBadge, 9);
     textSetFontWeight(syncBadge, 9, 0.6);
     setFg(syncBadge, getStatusAddedColor());
@@ -295,11 +296,11 @@ function refreshSidebar(): void {
   }
 
   if (sidebarWorkspaceRoot.length < 1) {
-    const hint = Text('Open a folder to start');
+    const hint = Text(t('Open a folder to start'));
     textSetFontSize(hint, 12);
     setFg(hint, getSideBarForeground());
     widgetAddChild(sidebarContainer, hint);
-    const openBtn = Button('Open Folder', () => { openFolderAction(); });
+    const openBtn = Button(t('Open Folder'), () => { openFolderAction(); });
     buttonSetBordered(openBtn, 0);
     textSetFontSize(openBtn, 13);
     setBtnFg(openBtn, getSideBarForeground());
@@ -309,7 +310,7 @@ function refreshSidebar(): void {
   }
 
   // --- 1. EXPLORER title row (22px, thin text, left-padded 4px) ---
-  const explorerLabel = Text('EXPLORER');
+  const explorerLabel = Text(t('EXPLORER'));
   textSetFontSize(explorerLabel, 11);
   textSetFontWeight(explorerLabel, 11, 0.4);
   setFg(explorerLabel, getSideBarForeground());
@@ -320,7 +321,7 @@ function refreshSidebar(): void {
   widgetAddChild(sidebarContainer, explorerRow);
 
   // --- 2. FOLDERS section header (22px, bold, translucent bg) ---
-  const foldersLabel = Text('FOLDERS');
+  const foldersLabel = Text(t('FOLDERS'));
   textSetFontSize(foldersLabel, 11);
   textSetFontWeight(foldersLabel, 11, 0.7);
   setFg(foldersLabel, getSideBarForeground());

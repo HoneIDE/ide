@@ -17,6 +17,7 @@ import {
   textfieldSetString, textfieldFocus, textfieldGetString, textfieldSetOnSubmit,
   textfieldSetOnFocus, textfieldBlurAll,
 } from 'perry/ui';
+import { t } from 'perry/i18n';
 import { execSync } from 'child_process';
 import { readFileSync, writeFileSync } from 'fs';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
@@ -423,7 +424,7 @@ export function handleClaudeRelayEvent(operation: string, data: string): void {
 
     // Show cost
     if (chatMessagesContainer && costVal >= 0) {
-      let costLabel = 'Cost: $';
+      let costLabel = t('Cost') + ': $';
       let costInt = Math.floor(costVal * 10000);
       let costMain = Math.floor(costInt / 10000);
       let costFrac = costInt % 10000;
@@ -434,7 +435,7 @@ export function handleClaudeRelayEvent(operation: string, data: string): void {
       if (costFrac < 10) costLabel += '0';
       costLabel += String(costFrac);
       if (turnsVal >= 0) {
-        costLabel += ' | Turns: ';
+        costLabel += ' | ' + t('Turns') + ': ';
         costLabel += String(turnsVal);
       }
       claudeCostLabel = Text(costLabel);
@@ -451,7 +452,7 @@ export function handleClaudeRelayEvent(operation: string, data: string): void {
   // claudeError: charCodeAt(6) === 69 'E' (length 11)
   if (operation.length === 11 && operation.charCodeAt(6) === 69) {
     let errMsg = inlineExtractRelayField(data, '"error":');
-    if (errMsg.length < 1) errMsg = 'Claude Code error from host.';
+    if (errMsg.length < 1) errMsg = t('Claude Code error from host.');
 
     stopThinking();
     claudeModeActive = 0;
@@ -764,7 +765,7 @@ function startStream(requestBody: string): void {
   // Load the right API key
   const apiKey = loadProviderApiKey(providerIdx);
   if (apiKey.length < 2 && providerIdx !== 5) {
-    appendMessage(0, 'No API key for this provider. Add one in Settings.');
+    appendMessage(0, t('No API key for this provider. Add one in Settings.'));
     updateMessages();
     return;
   }
@@ -1313,7 +1314,7 @@ function pollTitleStream(): void {
 function startThinking(): void {
   thinkingDots = 0;
   if (chatMessagesContainer) {
-    thinkingLabel = Text('Thinking');
+    thinkingLabel = Text(t('Thinking'));
     textSetFontSize(thinkingLabel, 12);
     setFg(thinkingLabel, getSideBarForeground());
     widgetAddChild(chatMessagesContainer, thinkingLabel);
@@ -1327,7 +1328,7 @@ function updateThinkingDots(): void {
   thinkingDots += 1;
   if (thinkingDots > 3) thinkingDots = 0;
   if (!thinkingLabel) return;
-  let txt = 'Thinking';
+  let txt = t('Thinking');
   for (let d = 0; d < thinkingDots; d++) {
     txt += '.';
   }
@@ -1358,7 +1359,7 @@ function onAgentToolStart(name: string, id: string): void {
   // Show tool execution indicator
   if (!chatMessagesContainer) return;
 
-  let toolLabel = '\u2699 Using tool: ';
+  let toolLabel = '\u2699 ' + t('Using tool') + ': ';
   toolLabel += name;
   const toolText = Text(toolLabel);
   textSetFontSize(toolText, 11);
@@ -1405,9 +1406,9 @@ function onAgentApprovalNeeded(name: string, args: string): void {
   approvalContainer = VStackWithInsets(4, 8, 8, 8, 8);
   if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(approvalContainer, 0.25, 0.18, 0.12, 1.0); } else { widgetSetBackgroundColor(approvalContainer, 1.0, 0.95, 0.88, 1.0); };
 
-  let warnText = '\u26A0 Tool "';
+  let warnText = '\u26A0 ' + t('Tool') + ' "';
   warnText += name;
-  warnText += '" requires approval';
+  warnText += '" ' + t('requires approval');
   const warnLabel = Text(warnText);
   textSetFontSize(warnLabel, 12);
   textSetFontWeight(warnLabel, 12, 0.5);
@@ -1423,12 +1424,12 @@ function onAgentApprovalNeeded(name: string, args: string): void {
   setFg(argsText, getSideBarForeground());
   widgetAddChild(approvalContainer, argsText);
 
-  const allowBtn = Button('Allow', () => { onAllowClick(); });
+  const allowBtn = Button(t('Allow'), () => { onAllowClick(); });
   buttonSetBordered(allowBtn, 0);
   textSetFontSize(allowBtn, 12);
   setBtnFg(allowBtn, getSideBarForeground());
 
-  const denyBtn = Button('Deny', () => { onDenyClick(); });
+  const denyBtn = Button(t('Deny'), () => { onDenyClick(); });
   buttonSetBordered(denyBtn, 0);
   textSetFontSize(denyBtn, 12);
   setBtnFg(denyBtn, getSideBarForeground());
@@ -1521,7 +1522,7 @@ function onClaudeToolActivity(name: string, status: string, inputDetail: string)
   } else {
     // Tool done — mark container
     if (claudeToolContainer) {
-      const doneText = Text('\u2713 done');
+      const doneText = Text('\u2713 ' + t('done'));
       textSetFontSize(doneText, 10);
       textSetFontFamily(doneText, 10, 'Menlo');
       setFg(doneText, getSideBarForeground());
@@ -1860,7 +1861,7 @@ function formatTimestamp(tsStr: string): string {
   const diffHr = Math.floor(diffMs / 3600000);
   const diffDay = Math.floor(diffMs / 86400000);
 
-  if (diffMin < 1) return 'just now';
+  if (diffMin < 1) return t('just now');
   if (diffMin < 60) {
     let r = '';
     r += String(diffMin);
@@ -1935,7 +1936,7 @@ function refreshSessionList(): void {
 
     // Filter by search query
     let displayTitle = stitle;
-    if (displayTitle.length < 1) displayTitle = 'New chat';
+    if (displayTitle.length < 1) displayTitle = t('New chat');
     if (query.length > 0 && titleMatchesSearch(displayTitle, query) < 1) continue;
 
     setSlotId(displayed, sid);
@@ -2236,7 +2237,7 @@ function handleClaudeLine(line: string): void {
       if (chatMessagesContainer) {
         let rlBlock = VStackWithInsets(4, 8, 8, 8, 8);
         if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(rlBlock, 0.35, 0.25, 0.05, 1.0); } else { widgetSetBackgroundColor(rlBlock, 1.0, 0.95, 0.85, 1.0); };
-        claudeRateLimitLabel = Text('Rate limited. Waiting...');
+        claudeRateLimitLabel = Text(t('Rate limited. Waiting...'));
         textSetFontSize(claudeRateLimitLabel, 12);
         textSetFontFamily(claudeRateLimitLabel, 12, 'Menlo');
         setFg(claudeRateLimitLabel, getSideBarForeground());
@@ -2256,7 +2257,7 @@ function handleClaudeLine(line: string): void {
         claudeRateLimitTimer = 0;
       }
       if (claudeRateLimitLabel) {
-        textSetString(claudeRateLimitLabel, 'Rate limit cleared');
+        textSetString(claudeRateLimitLabel, t('Rate limit cleared'));
       }
     }
     return;
@@ -2324,7 +2325,7 @@ function handleClaudeLine(line: string): void {
 
     if (isError > 0) {
       let errMsg = resultText;
-      if (errMsg.length < 1) errMsg = 'Claude Code returned an error.';
+      if (errMsg.length < 1) errMsg = t('Claude Code returned an error.');
       if (chatMessagesContainer) {
         const errBlock = VStackWithInsets(4, 8, 8, 8, 8);
         if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(errBlock, 0.3, 0.12, 0.12, 1.0); } else { widgetSetBackgroundColor(errBlock, 1.0, 0.9, 0.9, 1.0); };
@@ -2356,7 +2357,7 @@ function handleClaudeLine(line: string): void {
     if (chatMessagesContainer) {
       let statsStr = '';
       if (costVal >= 0) {
-        statsStr += 'Cost: $';
+        statsStr += t('Cost') + ': $';
         let costInt = Math.floor(costVal * 10000);
         let costMain = Math.floor(costVal);
         let costFrac = costInt % 10000;
@@ -2369,7 +2370,7 @@ function handleClaudeLine(line: string): void {
       }
       if (turnsVal >= 0) {
         if (statsStr.length > 0) statsStr += ' | ';
-        statsStr += 'Turns: ';
+        statsStr += t('Turns') + ': ';
         statsStr += String(turnsVal);
       }
       if (claudeTotalDurationMs > 0) {
@@ -2382,11 +2383,11 @@ function handleClaudeLine(line: string): void {
       // "max_turns" — m(0)a(1)x(2)_(3)t(4)
       if (stopReason.length > 5 && stopReason.charCodeAt(0) === 109 && stopReason.charCodeAt(3) === 95) {
         if (statsStr.length > 0) statsStr += ' | ';
-        statsStr += 'INCOMPLETE (max turns reached)';
+        statsStr += t('INCOMPLETE (max turns reached)');
       }
       if (claudeTotalInputTokens > 0 || claudeTotalOutputTokens > 0) {
         if (statsStr.length > 0) statsStr += ' | ';
-        statsStr += 'Tokens: ';
+        statsStr += t('Tokens') + ': ';
         statsStr += String(claudeTotalInputTokens);
         statsStr += ' in / ';
         statsStr += String(claudeTotalOutputTokens);
@@ -2603,13 +2604,13 @@ function updateRateLimitCountdown(): void {
       claudeRateLimitTimer = 0;
     }
     if (claudeRateLimitLabel) {
-      textSetString(claudeRateLimitLabel, 'Rate limit cleared');
+      textSetString(claudeRateLimitLabel, t('Rate limit cleared'));
     }
     return;
   }
   let mins = Math.floor(remaining / 60);
   let secs = remaining % 60;
-  let text = 'Rate limited. Resets in ';
+  let text = t('Rate limited. Resets in') + ' ';
   text += String(mins);
   text += 'm ';
   text += String(secs);
@@ -2652,7 +2653,7 @@ function showPermissionDenials(line: string): void {
 
   let warnBlock = VStackWithInsets(4, 8, 8, 8, 8);
   if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(warnBlock, 0.35, 0.25, 0.05, 1.0); } else { widgetSetBackgroundColor(warnBlock, 1.0, 0.95, 0.85, 1.0); };
-  let warnStr = '\u26A0 Permission denied for: ';
+  let warnStr = '\u26A0 ' + t('Permission denied for') + ': ';
   warnStr += toolNames;
   let warnLabel = Text(warnStr);
   textSetFontSize(warnLabel, 11);
@@ -2673,7 +2674,7 @@ function showThinkingBlock(text: string): void {
   setChatBgDeep(container);
 
   // Header — click toggles content
-  let headerBtn = Button('\u{1F4AD} Thinking...', () => { toggleThinkingExpand(); });
+  let headerBtn = Button('\u{1F4AD} ' + t('Thinking...'), () => { toggleThinkingExpand(); });
   buttonSetBordered(headerBtn, 0);
   textSetFontSize(headerBtn, 10);
   setBtnFg(headerBtn, getSecondaryTextColor());
@@ -3238,10 +3239,10 @@ function updateMessages(): void {
   try { fileContent = readFileSync(fp); } catch (e) {}
 
   if (fileContent.length < 2) {
-    let hintText = 'Ask a question about your code';
-    if (panelMode === 1) hintText = 'Describe a task for the AI agent';
-    if (panelMode === 2) hintText = 'Describe what you want to plan';
-    if (panelMode === 3) hintText = 'Ask Claude Code (uses your Claude.ai subscription)';
+    let hintText = t('Ask a question about your code');
+    if (panelMode === 1) hintText = t('Describe a task for the AI agent');
+    if (panelMode === 2) hintText = t('Describe what you want to plan');
+    if (panelMode === 3) hintText = t('Ask Claude Code (uses your Claude.ai subscription)');
     const hint = Text(hintText);
     textSetFontSize(hint, 12);
     setFg(hint, getSideBarForeground());
@@ -3266,7 +3267,7 @@ function updateMessages(): void {
   if (skipCount > 0 && chatMessagesContainer) {
     let hiddenText = '... ';
     hiddenText += String(skipCount);
-    hiddenText += ' older messages hidden';
+    hiddenText += ' ' + t('older messages hidden');
     const hiddenLabel = Text(hiddenText);
     textSetFontSize(hiddenLabel, 10);
     setFg(hiddenLabel, getSideBarForeground());
@@ -3314,7 +3315,7 @@ function updateMessages(): void {
           // Tool result message — show compact
           const toolBlock = VStackWithInsets(2, 4, 8, 4, 8);
           setChatBgCode(toolBlock);
-          const toolLabel = Text('\u2699 Tool result');
+          const toolLabel = Text('\u2699 ' + t('Tool result'));
           textSetFontSize(toolLabel, 10);
           textSetFontFamily(toolLabel, 10, 'Menlo');
           setFg(toolLabel, getSideBarForeground());
@@ -3340,7 +3341,7 @@ function updateMessages(): void {
           lastAddedWidget = toolBlock;
         } else {
           // User or assistant message
-          const roleLabel = Text(isUser > 0 ? 'You' : 'Hone');
+          const roleLabel = Text(isUser > 0 ? t('You') : t('Hone'));
           textSetFontSize(roleLabel, 10);
           textSetFontWeight(roleLabel, 10, 0.7);
           setFg(roleLabel, getSideBarForeground());
@@ -3435,7 +3436,7 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
   setChipsRenderCallback(() => { renderChipsArea(); });
 
   // --- Header row: New Chat + History search ---
-  const newChatBtn = Button('+ New', () => { onNewChat(); });
+  const newChatBtn = Button(t('+ New'), () => { onNewChat(); });
   buttonSetBordered(newChatBtn, 0);
   textSetFontSize(newChatBtn, 11);
   setBtnFg(newChatBtn, getSideBarForeground());
@@ -3459,25 +3460,25 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
   historyDropdownVisible = 0;
 
   // --- Mode tabs ---
-  modeChatBtn = Button('Chat', () => { onModeChat(); });
+  modeChatBtn = Button(t('Chat'), () => { onModeChat(); });
   buttonSetBordered(modeChatBtn, 0);
   textSetFontSize(modeChatBtn, 11);
   modeChatWrap = HStackWithInsets(0, 6, 3, 6, 3);
   widgetAddChild(modeChatWrap, modeChatBtn);
 
-  modeAgentBtn = Button('Agent', () => { onModeAgent(); });
+  modeAgentBtn = Button(t('Agent'), () => { onModeAgent(); });
   buttonSetBordered(modeAgentBtn, 0);
   textSetFontSize(modeAgentBtn, 11);
   modeAgentWrap = HStackWithInsets(0, 6, 3, 6, 3);
   widgetAddChild(modeAgentWrap, modeAgentBtn);
 
-  modePlanBtn = Button('Plan', () => { onModePlan(); });
+  modePlanBtn = Button(t('Plan'), () => { onModePlan(); });
   buttonSetBordered(modePlanBtn, 0);
   textSetFontSize(modePlanBtn, 11);
   modePlanWrap = HStackWithInsets(0, 6, 3, 6, 3);
   widgetAddChild(modePlanWrap, modePlanBtn);
 
-  modeClaudeBtn = Button('Claude Code', () => { onModeClaude(); });
+  modeClaudeBtn = Button(t('Claude Code'), () => { onModeClaude(); });
   buttonSetBordered(modeClaudeBtn, 0);
   textSetFontSize(modeClaudeBtn, 11);
   modeClaudeWrap = HStackWithInsets(0, 6, 3, 6, 3);
@@ -3515,13 +3516,13 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
       const hintBlock = VStackWithInsets(4, 8, 8, 8, 8);
       if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(hintBlock, 0.15, 0.18, 0.25, 1.0); } else { widgetSetBackgroundColor(hintBlock, 0.90, 0.93, 0.98, 1.0); };
 
-      const hintTitle = Text('Claude Code Required');
+      const hintTitle = Text(t('Claude Code Required'));
       textSetFontSize(hintTitle, 12);
       textSetFontWeight(hintTitle, 12, 0.7);
       setFg(hintTitle, getSideBarForeground());
       widgetAddChild(hintBlock, hintTitle);
 
-      const hint1 = Text('Install Claude Code: npm install -g @anthropic-ai/claude-code');
+      const hint1 = Text(t('Install Claude Code: npm install -g @anthropic-ai/claude-code'));
       textSetFontSize(hint1, 11);
       setFg(hint1, getSideBarForeground());
       widgetAddChild(hintBlock, hint1);
@@ -3533,13 +3534,13 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
         const hintBlock = VStackWithInsets(4, 8, 8, 8, 8);
         if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(hintBlock, 0.15, 0.18, 0.25, 1.0); } else { widgetSetBackgroundColor(hintBlock, 0.90, 0.93, 0.98, 1.0); };
 
-        const hintTitle = Text('Sign In Required');
+        const hintTitle = Text(t('Sign In Required'));
         textSetFontSize(hintTitle, 12);
         textSetFontWeight(hintTitle, 12, 0.7);
         setFg(hintTitle, getSideBarForeground());
         widgetAddChild(hintBlock, hintTitle);
 
-        const hint1 = Text('Run "claude auth login" in your terminal to sign in.');
+        const hint1 = Text(t('Run "claude auth login" in your terminal to sign in.'));
         textSetFontSize(hint1, 11);
         setFg(hint1, getSideBarForeground());
         widgetAddChild(hintBlock, hint1);
@@ -3557,13 +3558,13 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
       const hintBlock = VStackWithInsets(4, 8, 8, 8, 8);
       if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(hintBlock, 0.15, 0.18, 0.25, 1.0); } else { widgetSetBackgroundColor(hintBlock, 0.90, 0.93, 0.98, 1.0); };
 
-      const hintTitle = Text('API Key Required');
+      const hintTitle = Text(t('API Key Required'));
       textSetFontSize(hintTitle, 12);
       textSetFontWeight(hintTitle, 12, 0.7);
       setFg(hintTitle, getSideBarForeground());
       widgetAddChild(hintBlock, hintTitle);
 
-      const hint1 = Text('Open Settings to configure your provider API key.');
+      const hint1 = Text(t('Open Settings to configure your provider API key.'));
       textSetFontSize(hint1, 11);
       setFg(hint1, getSideBarForeground());
       widgetAddChild(hintBlock, hint1);
@@ -3593,12 +3594,12 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
   textSetFontSize(modelBtn, 10);
   setBtnFg(modelBtn, getSideBarForeground());
 
-  const attachFileBtn = Button('+ File', () => { onAttachFile(); });
+  const attachFileBtn = Button(t('+ File'), () => { onAttachFile(); });
   buttonSetBordered(attachFileBtn, 0);
   textSetFontSize(attachFileBtn, 10);
   setBtnFg(attachFileBtn, getSideBarForeground());
 
-  const attachSelBtn = Button('+ Selection', () => { onAttachSelection(); });
+  const attachSelBtn = Button(t('+ Selection'), () => { onAttachSelection(); });
   buttonSetBordered(attachSelBtn, 0);
   textSetFontSize(attachSelBtn, 10);
   setBtnFg(attachSelBtn, getSideBarForeground());
@@ -3613,7 +3614,7 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
   textfieldSetOnFocus(chatInput, () => { hideHistoryDropdown(); });
   widgetAddChild(container, chatInput);
 
-  const sendBtn = Button('Send', () => { onSend(); });
+  const sendBtn = Button(t('Send'), () => { onSend(); });
   buttonSetBordered(sendBtn, 0);
   textSetFontSize(sendBtn, 12);
   setBtnFg(sendBtn, getSideBarForeground());

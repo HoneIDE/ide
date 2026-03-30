@@ -5,6 +5,8 @@
  * the command palette, and programmatic calls all go through commands.
  */
 
+import { t } from 'perry/i18n';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -95,63 +97,63 @@ function notifyListeners(): void {
 
 export function registerBuiltinCommands(): void {
   // File commands
-  registerCommand('file.newFile', 'New File', () => {
+  registerCommand('file.newFile', t('New File'), () => {
     executeCommand('workbench.action.newEditor');
-  }, { category: 'File' });
+  }, { category: t('File') });
 
-  registerCommand('file.openFile', 'Open File...', () => {
+  registerCommand('file.openFile', t('Open File...'), () => {
     // Triggers native file picker
-  }, { category: 'File' });
+  }, { category: t('File') });
 
-  registerCommand('file.save', 'Save', () => {}, { category: 'File' });
-  registerCommand('file.saveAs', 'Save As...', () => {}, { category: 'File' });
-  registerCommand('file.saveAll', 'Save All', () => {}, { category: 'File' });
+  registerCommand('file.save', t('Save'), () => {}, { category: t('File') });
+  registerCommand('file.saveAs', t('Save As...'), () => {}, { category: t('File') });
+  registerCommand('file.saveAll', t('Save All'), () => {}, { category: t('File') });
 
   // Edit commands
-  registerCommand('edit.undo', 'Undo', () => {}, { category: 'Edit' });
-  registerCommand('edit.redo', 'Redo', () => {}, { category: 'Edit' });
-  registerCommand('edit.cut', 'Cut', () => {}, { category: 'Edit' });
-  registerCommand('edit.copy', 'Copy', () => {}, { category: 'Edit' });
-  registerCommand('edit.paste', 'Paste', () => {}, { category: 'Edit' });
-  registerCommand('edit.selectAll', 'Select All', () => {}, { category: 'Edit' });
-  registerCommand('edit.find', 'Find', () => {}, { category: 'Edit' });
-  registerCommand('edit.replace', 'Replace', () => {}, { category: 'Edit' });
+  registerCommand('edit.undo', t('Undo'), () => {}, { category: t('Edit') });
+  registerCommand('edit.redo', t('Redo'), () => {}, { category: t('Edit') });
+  registerCommand('edit.cut', t('Cut'), () => {}, { category: t('Edit') });
+  registerCommand('edit.copy', t('Copy'), () => {}, { category: t('Edit') });
+  registerCommand('edit.paste', t('Paste'), () => {}, { category: t('Edit') });
+  registerCommand('edit.selectAll', t('Select All'), () => {}, { category: t('Edit') });
+  registerCommand('edit.find', t('Find'), () => {}, { category: t('Edit') });
+  registerCommand('edit.replace', t('Replace'), () => {}, { category: t('Edit') });
 
   // View commands
-  registerCommand('view.commandPalette', 'Command Palette', () => {
+  registerCommand('view.commandPalette', t('Command Palette'), () => {
     executeCommand('workbench.action.showCommandPalette');
-  }, { category: 'View' });
+  }, { category: t('View') });
 
-  registerCommand('view.quickOpen', 'Quick Open', () => {
+  registerCommand('view.quickOpen', t('Quick Open'), () => {
     executeCommand('workbench.action.quickOpen');
-  }, { category: 'View' });
+  }, { category: t('View') });
 
-  registerCommand('view.toggleSidebar', 'Toggle Sidebar', () => {}, { category: 'View' });
-  registerCommand('view.toggleBottomPanel', 'Toggle Bottom Panel', () => {}, { category: 'View' });
-  registerCommand('view.toggleTerminal', 'Toggle Terminal', () => {}, { category: 'View' });
-  registerCommand('view.zoomIn', 'Zoom In', () => {}, { category: 'View' });
-  registerCommand('view.zoomOut', 'Zoom Out', () => {}, { category: 'View' });
-  registerCommand('view.resetZoom', 'Reset Zoom', () => {}, { category: 'View' });
+  registerCommand('view.toggleSidebar', t('Toggle Sidebar'), () => {}, { category: t('View') });
+  registerCommand('view.toggleBottomPanel', t('Toggle Bottom Panel'), () => {}, { category: t('View') });
+  registerCommand('view.toggleTerminal', t('Toggle Terminal'), () => {}, { category: t('View') });
+  registerCommand('view.zoomIn', t('Zoom In'), () => {}, { category: t('View') });
+  registerCommand('view.zoomOut', t('Zoom Out'), () => {}, { category: t('View') });
+  registerCommand('view.resetZoom', t('Reset Zoom'), () => {}, { category: t('View') });
 
   // Workbench actions (internal, not shown in palette)
-  registerCommand('workbench.action.newEditor', 'New Editor', () => {}, {
+  registerCommand('workbench.action.newEditor', t('New Editor'), () => {}, {
     showInPalette: false,
   });
-  registerCommand('workbench.action.showCommandPalette', 'Show Command Palette', () => {}, {
+  registerCommand('workbench.action.showCommandPalette', t('Show Command Palette'), () => {}, {
     showInPalette: false,
   });
-  registerCommand('workbench.action.quickOpen', 'Quick Open', () => {}, {
+  registerCommand('workbench.action.quickOpen', t('Quick Open'), () => {}, {
     showInPalette: false,
   });
-  registerCommand('workbench.action.closeActiveEditor', 'Close Editor', () => {}, {
-    category: 'View',
+  registerCommand('workbench.action.closeActiveEditor', t('Close Editor'), () => {}, {
+    category: t('View'),
   });
-  registerCommand('workbench.action.closeAllEditors', 'Close All Editors', () => {}, {
-    category: 'View',
+  registerCommand('workbench.action.closeAllEditors', t('Close All Editors'), () => {}, {
+    category: t('View'),
   });
 
   // Theme commands
-  registerCommand('workbench.action.selectTheme', 'Color Theme', () => {}, {
-    category: 'Preferences',
+  registerCommand('workbench.action.selectTheme', t('Color Theme'), () => {}, {
+    category: t('Preferences'),
   });
 }

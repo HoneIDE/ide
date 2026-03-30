@@ -13,6 +13,7 @@ import {
   widgetAddChild, widgetClearChildren, widgetSetHidden,
   textfieldSetString, textfieldFocus, textfieldSetBorderless, textfieldSetBackgroundColor, textfieldSetFontSize, textfieldSetOnSubmit,
 } from 'perry/ui';
+import { t } from 'perry/i18n';
 import { readFileSync, readdirSync, isDirectory, writeFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { spawn, parallelMap } from 'perry/thread';
@@ -210,7 +211,7 @@ function performSearch(): void {
 
   // Show "Searching..." immediately
   if (searchPanelReady > 0) {
-    textSetString(searchResultCountLabel, 'Searching...');
+    textSetString(searchResultCountLabel, t('Searching...'));
     widgetClearChildren(searchResultsContainer);
   }
 
@@ -506,22 +507,22 @@ function updateSearchResultsUI(): void {
   if (searchPanelReady < 1) return;
   widgetClearChildren(searchResultsContainer);
   if (searchQuery.length < 1) {
-    textSetString(searchResultCountLabel, 'Type to search');
+    textSetString(searchResultCountLabel, t('Type to search'));
     return;
   }
   if (srCount < 1) {
-    textSetString(searchResultCountLabel, 'No results');
+    textSetString(searchResultCountLabel, t('No results'));
     return;
   }
   let countText = '';
   if (srCount >= 500) {
-    countText = '500+ results';
+    countText = t('500+ results');
   } else if (srCount >= 100) {
-    countText = '100+ results';
+    countText = t('100+ results');
   } else if (srCount >= 10) {
-    countText = '10+ results';
+    countText = t('10+ results');
   } else {
-    countText = 'results found';
+    countText = t('results found');
   }
   textSetString(searchResultCountLabel, countText);
 
@@ -722,7 +723,7 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   textSetFontSize(topPad, 8);
   widgetAddChild(container, topPad);
 
-  const title = Text('SEARCH');
+  const title = Text(t('SEARCH'));
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.7);
   if (colors) setFg(title, getSideBarForeground());
@@ -746,7 +747,7 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   if (colors) setBtnFg(replToggleBtn, getSideBarForeground());
 
   // Search input
-  searchTextField = TextField('Search', (text: string) => { onSearchInput(text); });
+  searchTextField = TextField(t('Search'), (text: string) => { onSearchInput(text); });
   textfieldSetOnSubmit(searchTextField, (text: string) => { onSearchSubmit(text); });
   textfieldSetBorderless(searchTextField, 1);
   textfieldSetFontSize(searchTextField, 14);
@@ -781,7 +782,7 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   textSetFontSize(replChevronSpacer, 14);
   setFg(replChevronSpacer, '#F5F5F500');
 
-  replaceTextField = TextField('Replace', (text: string) => { onReplaceInput(text); });
+  replaceTextField = TextField(t('Replace'), (text: string) => { onReplaceInput(text); });
   textfieldSetBorderless(replaceTextField, 1);
   textfieldSetFontSize(replaceTextField, 14);
   if (_iBg.length > 0) {
@@ -793,11 +794,11 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   }
 
   // Replace buttons — same count and similar width as Aa/.*
-  const replOneBtn = Button('Replace', () => { onReplaceOne(); });
+  const replOneBtn = Button(t('Replace'), () => { onReplaceOne(); });
   buttonSetBordered(replOneBtn, 0);
   textSetFontSize(replOneBtn, 11);
   if (colors) setBtnFg(replOneBtn, '#999999');
-  const replAllBtn = Button('All', () => { onReplaceAll(); });
+  const replAllBtn = Button(t('All'), () => { onReplaceAll(); });
   buttonSetBordered(replAllBtn, 0);
   textSetFontSize(replAllBtn, 11);
   if (colors) setBtnFg(replAllBtn, '#999999');
@@ -819,7 +820,7 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   widgetAddChild(container, resPad);
 
   // Result count label
-  searchResultCountLabel = Text('Type to search');
+  searchResultCountLabel = Text(t('Type to search'));
   textSetFontSize(searchResultCountLabel, 11);
   if (colors) setFg(searchResultCountLabel, getSideBarForeground());
   widgetAddChild(container, searchResultCountLabel);

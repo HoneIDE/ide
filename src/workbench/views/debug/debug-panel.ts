@@ -15,6 +15,7 @@ import {
   widgetAddChild, widgetClearChildren,
   widgetSetBackgroundColor,
 } from 'perry/ui';
+import { t } from 'perry/i18n';
 import { execSync } from 'child_process';
 import { existsSync } from 'fs';
 import { spawn } from 'perry/thread';
@@ -357,7 +358,7 @@ function parseJsStackLine(line: string, start: number): void {
     if (line.charCodeAt(i) === 40) { parenIdx = i; break; }
   }
 
-  let funcName = '<anonymous>';
+  let funcName = t('<anonymous>');
   let fileAndLoc = '';
 
   if (parenIdx > start) {
@@ -437,7 +438,7 @@ function parsePyStackLine(line: string, start: number): void {
   }
 
   // Find ", in " for function name
-  let funcName = '<module>';
+  let funcName = t('<module>');
   const inMarker = ', in ';
   let inIdx = findSubstring(line, inMarker);
   if (inIdx > numStart) {
@@ -500,7 +501,7 @@ function debugStart(): void {
   if (filePath.length < 1) {
     // No file open — show error in output
     outputLineCount = 0;
-    outputLines[0] = 'No file open. Open a file to run it.';
+    outputLines[0] = t('No file open. Open a file to run it.');
     outputLineCount = 1;
     lastExitCode = -1;
     updateOutputUI();
@@ -511,7 +512,7 @@ function debugStart(): void {
   const ext = getFileExtension(filePath);
   if (ext.length < 1) {
     outputLineCount = 0;
-    outputLines[0] = 'Cannot detect file type — no file extension.';
+    outputLines[0] = t('Cannot detect file type — no file extension.');
     outputLineCount = 1;
     lastExitCode = -1;
     updateOutputUI();
@@ -522,7 +523,7 @@ function debugStart(): void {
   const cmd = buildRunCommand(filePath, ext);
   if (cmd.length < 1) {
     outputLineCount = 0;
-    let msg = 'Unsupported file type: .';
+    let msg = t('Unsupported file type: .');
     msg += ext;
     outputLines[0] = msg;
     outputLineCount = 1;
@@ -540,7 +541,7 @@ function debugStart(): void {
   varCount = 0;
 
   // Show "Running..." in output
-  let runningMsg = 'Running: ';
+  let runningMsg = t('Running: ');
   runningMsg += cmd;
   outputLines[0] = runningMsg;
   outputLineCount = 1;
@@ -637,9 +638,9 @@ function onRunComplete(result: RunResult): void {
       outputLineCount = outputLineCount + 1;
     }
     if (result.exitCode === 0) {
-      outputLines[outputLineCount] = 'Process exited with code 0';
+      outputLines[outputLineCount] = t('Process exited with code 0');
     } else {
-      let exitMsg = 'Process exited with code ';
+      let exitMsg = t('Process exited with code ');
       exitMsg += String(result.exitCode);
       outputLines[outputLineCount] = exitMsg;
     }
@@ -707,7 +708,7 @@ function updateBreakpointsUI(): void {
   widgetClearChildren(bpContainer);
 
   if (bpCount < 1) {
-    const hint = Text('No breakpoints set');
+    const hint = Text(t('No breakpoints set'));
     textSetFontSize(hint, 11);
     setFg(hint, getSecondaryTextColor());
     widgetAddChild(bpContainer, hint);
@@ -749,7 +750,7 @@ function updateVariablesUI(): void {
   widgetClearChildren(varContainer);
 
   if (debugPaused < 1 || varCount < 1) {
-    const hint = Text(debugRunning > 0 ? 'Running...' : 'Not started');
+    const hint = Text(debugRunning > 0 ? t('Running...') : t('Not started'));
     textSetFontSize(hint, 11);
     setFg(hint, getSecondaryTextColor());
     widgetAddChild(varContainer, hint);
@@ -772,8 +773,8 @@ function updateCallStackUI(): void {
   widgetClearChildren(csContainer);
 
   if (stackCount < 1) {
-    let hintMsg = 'No call stack';
-    if (debugRunning > 0) hintMsg = 'Running...';
+    let hintMsg = t('No call stack');
+    if (debugRunning > 0) hintMsg = t('Running...');
     const hint = Text(hintMsg);
     textSetFontSize(hint, 11);
     setFg(hint, getSecondaryTextColor());
@@ -809,7 +810,7 @@ function updateOutputUI(): void {
   widgetClearChildren(outputContainer);
 
   if (outputLineCount < 1) {
-    const hint = Text('No output');
+    const hint = Text(t('No output'));
     textSetFontSize(hint, 11);
     setFg(hint, getSecondaryTextColor());
     widgetAddChild(outputContainer, hint);
@@ -875,19 +876,19 @@ function updateOutputUI(): void {
 function updateStatusUI(): void {
   if (!statusText) return;
   if (debugRunning > 0) {
-    textSetString(statusText, 'Running...');
+    textSetString(statusText, t('Running...'));
     setFg(statusText, getStatusAddedColor());
   } else if (lastExitCode === 0) {
-    textSetString(statusText, 'Finished (exit 0)');
+    textSetString(statusText, t('Finished (exit 0)'));
     setFg(statusText, getStatusAddedColor());
   } else if (lastExitCode > 0) {
-    let msg = 'Finished (exit ';
+    let msg = t('Finished (exit ');
     msg += String(lastExitCode);
     msg += ')';
     textSetString(statusText, msg);
     setFg(statusText, getStatusDeletedColor());
   } else {
-    textSetString(statusText, 'Ready');
+    textSetString(statusText, t('Ready'));
     setFg(statusText, getSecondaryTextColor());
   }
 }
@@ -900,7 +901,7 @@ export function renderDebugPanel(container: unknown, colors: ResolvedUIColors): 
   panelColors = colors;
   debugReady = 0;
 
-  const title = Text('RUN AND DEBUG');
+  const title = Text(t('RUN AND DEBUG'));
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.7);
   setFg(title, colors.sideBarForeground);
@@ -947,13 +948,13 @@ export function renderDebugPanel(container: unknown, colors: ResolvedUIColors): 
   widgetAddChild(container, toolbar);
 
   // Status line
-  statusText = Text('Ready');
+  statusText = Text(t('Ready'));
   textSetFontSize(statusText, 11);
   setFg(statusText, getSecondaryTextColor());
   widgetAddChild(container, statusText);
 
   // Output section
-  const outHeader = Text('OUTPUT');
+  const outHeader = Text(t('OUTPUT'));
   textSetFontSize(outHeader, 10);
   textSetFontWeight(outHeader, 10, 0.6);
   setFg(outHeader, colors.sideBarForeground);
@@ -964,7 +965,7 @@ export function renderDebugPanel(container: unknown, colors: ResolvedUIColors): 
   widgetAddChild(container, outputContainer);
 
   // Breakpoints section
-  const bpHeader = Text('BREAKPOINTS');
+  const bpHeader = Text(t('BREAKPOINTS'));
   textSetFontSize(bpHeader, 10);
   textSetFontWeight(bpHeader, 10, 0.6);
   setFg(bpHeader, colors.sideBarForeground);
@@ -974,7 +975,7 @@ export function renderDebugPanel(container: unknown, colors: ResolvedUIColors): 
   widgetAddChild(container, bpContainer);
 
   // Call stack section
-  const csHeader = Text('CALL STACK');
+  const csHeader = Text(t('CALL STACK'));
   textSetFontSize(csHeader, 10);
   textSetFontWeight(csHeader, 10, 0.6);
   setFg(csHeader, colors.sideBarForeground);
@@ -984,7 +985,7 @@ export function renderDebugPanel(container: unknown, colors: ResolvedUIColors): 
   widgetAddChild(container, csContainer);
 
   // Variables section
-  const varHeader = Text('VARIABLES');
+  const varHeader = Text(t('VARIABLES'));
   textSetFontSize(varHeader, 10);
   textSetFontWeight(varHeader, 10, 0.6);
   setFg(varHeader, colors.sideBarForeground);
