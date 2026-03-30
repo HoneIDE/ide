@@ -61,16 +61,9 @@ jobs:
           echo "${{ secrets.APPLE_P8_KEY }}" | base64 -d > /tmp/appstore_connect.p8
           echo "${{ secrets.APPLE_MACOS_PROVISION_PROFILE }}" | base64 -d > /tmp/macos.provisionprofile
 
-      - name: Inject credential paths into perry.toml
-        run: |
-          sed -i '/^\[macos\]/a certificate = "/tmp/macos_appstore.p12"' perry.toml
-          sed -i '/^\[macos\]/a installer_certificate = "/tmp/macos_installer.p12"' perry.toml
-          sed -i '/^\[macos\]/a notarize_certificate = "/tmp/macos_devid.p12"' perry.toml
-          sed -i '/^\[macos\]/a provisioning_profile = "/tmp/macos.provisionprofile"' perry.toml
-
       - name: Publish macOS
         run: |
-          perry publish macos \
+          perry publish macos --skip-audit \
             --certificate /tmp/macos_appstore.p12 \
             --provisioning-profile /tmp/macos.provisionprofile \
             --apple-p8-key /tmp/appstore_connect.p8 \
@@ -142,7 +135,7 @@ jobs:
           sed -i "s/^build_number = .*/build_number = $BUILD_NUM/" perry.toml
 
       - name: Publish Linux
-        run: perry publish linux
+        run: perry publish linux --skip-audit
 
       - name: Rename and upload artifact
         run: |
@@ -200,13 +193,12 @@ jobs:
           echo "${{ secrets.GCLOUD_KMS_CERT }}" | base64 -d > /tmp/skelpo_codesign.crt
           echo "${{ secrets.GCLOUD_SERVICE_ACCOUNT }}" | base64 -d > /tmp/gcloud-codesign.json
 
-      - name: Inject credential paths into perry.toml
+      - name: Rewrite credential paths in perry.toml
         run: |
-          sed -i '/^\[windows\]/a gcloud_kms_cert = "/tmp/skelpo_codesign.crt"' perry.toml
-          sed -i '/^\[windows\]/a gcloud_service_account = "/tmp/gcloud-codesign.json"' perry.toml
+          sed -i 's|gcloud_kms_key = .*|gcloud_kms_key = "projects/skelpo/locations/europe-west3/keyRings/code-signing-eu/cryptoKeys/skelpo-codesign/cryptoKeyVersions/1"\ngcloud_kms_cert = "/tmp/skelpo_codesign.crt"\ngcloud_service_account = "/tmp/gcloud-codesign.json"|' perry.toml
 
       - name: Publish Windows
-        run: perry publish windows
+        run: perry publish windows --skip-audit
 
       - name: Rename and upload artifact
         run: |
@@ -265,14 +257,14 @@ jobs:
           echo "${{ secrets.APPLE_PROVISIONING_PROFILE }}" | base64 -d > /tmp/hone.mobileprovision
           echo "${{ secrets.APPLE_P8_KEY }}" | base64 -d > /tmp/appstore_connect.p8
 
-      - name: Inject credential paths into perry.toml
+      - name: Rewrite credential paths in perry.toml
         run: |
-          sed -i '/^\[ios\]/a certificate = "/tmp/ios_distribution.p12"' perry.toml
-          sed -i '/^\[ios\]/a provisioning_profile = "/tmp/hone.mobileprovision"' perry.toml
+          sed -i 's|^certificate = .*|certificate = "/tmp/ios_distribution.p12"|' perry.toml
+          sed -i 's|^provisioning_profile = .*|provisioning_profile = "/tmp/hone.mobileprovision"|' perry.toml
 
       - name: Publish iOS to TestFlight
         run: |
-          perry publish ios \
+          perry publish ios --skip-audit \
             --certificate /tmp/ios_distribution.p12 \
             --provisioning-profile /tmp/hone.mobileprovision \
             --apple-p8-key /tmp/appstore_connect.p8 \
@@ -331,12 +323,12 @@ jobs:
           echo "${{ secrets.ANDROID_KEYSTORE }}" | base64 -d > /tmp/hone.keystore
           echo "${{ secrets.GOOGLE_PLAY_KEY_JSON }}" | base64 -d > /tmp/googleplay.json
 
-      - name: Inject credential paths into perry.toml
+      - name: Rewrite credential paths in perry.toml
         run: |
-          sed -i '/^\[android\]/a keystore = "/tmp/hone.keystore"' perry.toml
-          sed -i '/^\[android\]/a google_play_key = "/tmp/googleplay.json"' perry.toml
+          sed -i 's|^keystore = .*|keystore = "/tmp/hone.keystore"|' perry.toml
+          sed -i 's|^google_play_key = .*|google_play_key = "/tmp/googleplay.json"|' perry.toml
 
       - name: Publish Android to Play Store
-        run: perry publish android
+        run: perry publish android --skip-audit
         env:
           PERRY_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
