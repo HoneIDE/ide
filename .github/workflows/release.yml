@@ -61,6 +61,13 @@ jobs:
           echo "${{ secrets.APPLE_P8_KEY }}" | base64 -d > /tmp/appstore_connect.p8
           echo "${{ secrets.APPLE_MACOS_PROVISION_PROFILE }}" | base64 -d > /tmp/macos.provisionprofile
 
+      - name: Inject macOS credential paths into perry.toml
+        run: |
+          sed -i '/^\[macos\]/a certificate = "/tmp/macos_appstore.p12"' perry.toml
+          sed -i '/^\[macos\]/a installer_certificate = "/tmp/macos_installer.p12"' perry.toml
+          sed -i '/^\[macos\]/a notarize_certificate = "/tmp/macos_devid.p12"' perry.toml
+          sed -i '/^\[macos\]/a provisioning_profile = "/tmp/macos.provisionprofile"' perry.toml
+
       - name: Publish macOS
         run: |
           perry publish macos --skip-audit \

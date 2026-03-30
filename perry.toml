@@ -57,7 +57,7 @@ name = "Hone"
 version = "0.1.0"
 
 [project.icons]
-source = "Hone.icns"
+source = "hone-icon.png"
 
 [publish]
 exclude = [
