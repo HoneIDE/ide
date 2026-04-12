@@ -1307,10 +1307,17 @@ function checkOpenFileRequests(): void {
 /** Get cursor position from editor for status bar polling. */
 function getCursorPosition(): { line: number; column: number } | null {
   if (editorReady < 1) return null;
-  const vm = editorInstance.viewModel;
-  const cursors = vm.cursors;
-  if (cursors.length < 1) return null;
-  return cursors[0];
+  if (editorInstance === null) return null;
+  try {
+    const vm = editorInstance.viewModel;
+    if (vm === null || vm === undefined) return null;
+    const cursors = vm.cursors;
+    if (cursors === null || cursors === undefined) return null;
+    if (cursors.length < 1) return null;
+    return cursors[0];
+  } catch (e: any) {
+    return null;
+  }
 }
 
 /** Called by tab bar when the active tab changes. */
