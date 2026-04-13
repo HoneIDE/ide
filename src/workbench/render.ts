@@ -2522,6 +2522,8 @@ function renderEditorArea(): unknown {
   }
 
   const tbc = HStack(1, []);
+  widgetSetHeight(tbc, 35);
+  widgetSetHugging(tbc, 750);
   setTabBarRestoring(1);
   initTabBar(tbc, null as any, defaultFile, defaultName);
 
@@ -2589,6 +2591,7 @@ function renderEditorArea(): unknown {
   // Breadcrumb bar — fully opaque background to cover editor behind
   breadcrumbContainer = HStackWithInsets(4, 4, 8, 4, 8);
   setBg(breadcrumbContainer, getEditorBackground());
+  widgetSetHeight(breadcrumbContainer, 24);
   widgetSetHugging(breadcrumbContainer, 750);
   breadcrumbReady = 1;
   updateBreadcrumb();
