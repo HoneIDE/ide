@@ -1,6 +1,8 @@
 # Scenario: App Startup & Layout
 Category: startup
 
+> See `tests/agentic/API.md` for the full endpoint reference.
+
 ## Goal
 Verify the IDE launches correctly with proper layout — activity bar, sidebar, editor area, and status bar.
 

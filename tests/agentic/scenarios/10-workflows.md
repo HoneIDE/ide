@@ -2,6 +2,8 @@
 Category: workflows
 Depends on: 02-explorer, 05-git
 
+> See `tests/agentic/API.md` for the full endpoint reference.
+
 ## Goal
 Test realistic multi-step user journeys that combine multiple IDE features in sequence.
 

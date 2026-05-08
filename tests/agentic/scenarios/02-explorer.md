@@ -2,6 +2,8 @@
 Category: explorer
 Depends on: 01-startup
 
+> See `tests/agentic/API.md` for the full endpoint reference.
+
 ## Goal
 Verify the file explorer shows project files, folders expand on click, and clicking a file opens it in the editor.
 

@@ -2,6 +2,8 @@
 Category: git
 Depends on: 01-startup
 
+> See `tests/agentic/API.md` for the full endpoint reference.
+
 ## Goal
 Verify the git panel shows repository status with modified/staged/untracked files, allows staging files, and supports committing.
 

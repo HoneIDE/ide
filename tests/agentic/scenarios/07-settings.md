@@ -2,12 +2,17 @@
 Category: settings
 Depends on: 01-startup
 
+> See `tests/agentic/API.md` for the full endpoint reference.
+
 ## Goal
 Verify the settings UI opens when clicking the gear icon, shows setting categories and controls, and that changing the theme updates the UI.
 
 ## Steps
 
-1. **Open Settings**: Find the gear/settings icon in the activity bar (last icon, at the bottom) and click it.
+1. **Open Settings**: Either use the keyboard shortcut via port 7677:
+   `curl -s -X POST http://127.0.0.1:7677/key -H 'Content-Type: application/json' -d '{"key":",","modifiers":["cmd"]}'`
+
+   Or find the gear/settings icon in the activity bar (last icon, at the bottom) and click it via port 7676:
    `curl -s -X POST http://127.0.0.1:7676/click/{handle}`
 
 2. **Screenshot — settings panel**:
@@ -41,10 +46,15 @@ Verify the settings UI opens when clicking the gear icon, shows setting categori
 - Theme change is visually dramatic — background, text, sidebar, activity bar colors all update
 - After theme change, all UI elements look consistent (no mixed dark/light artifacts)
 
-## Geisterhand Reference
+## Geisterhand API (Dual-Port)
+
+**Port 7676 (baked-in)** — widget clicks, screenshots:
 - `GET /widgets` → list widgets
 - `POST /click/{handle}` → click a widget
 - `GET /screenshot` → PNG image
+
+**Port 7677 (external CLI)** — keyboard shortcuts:
+- `POST /key` body=`{"key":",","modifiers":["cmd"]}` → open settings (Cmd+,)
 
 ## Report Format
 ```

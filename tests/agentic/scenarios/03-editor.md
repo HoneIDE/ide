@@ -2,6 +2,8 @@
 Category: editor
 Depends on: 02-explorer
 
+> See `tests/agentic/API.md` for the full endpoint reference.
+
 ## Goal
 Verify multi-tab behavior: opening multiple files creates tabs, switching tabs changes content, closing a tab removes it.
 

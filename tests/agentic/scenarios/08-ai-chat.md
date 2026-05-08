@@ -2,6 +2,8 @@
 Category: ai-chat
 Depends on: 01-startup
 
+> See `tests/agentic/API.md` for the full endpoint reference.
+
 ## Goal
 Verify the AI chat panel opens, shows mode tabs, and has a text input that accepts messages.
 

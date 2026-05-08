@@ -2,6 +2,8 @@
 Category: terminal
 Depends on: 01-startup
 
+> See `tests/agentic/API.md` for the full endpoint reference.
+
 ## Goal
 Verify the terminal panel can be toggled on and appears as a real terminal emulator at the bottom of the window.
 
@@ -11,14 +13,11 @@ Verify the terminal panel can be toggled on and appears as a real terminal emula
    `curl -s http://127.0.0.1:7676/screenshot -o /tmp/test/06-terminal-before.png`
    Read the screenshot. Note the current layout — editor should fill most of the vertical space.
 
-2. **Get widgets and look for terminal toggle**: Run `curl -s http://127.0.0.1:7676/widgets`.
-   Look for a widget that could toggle the terminal — it might be:
-   - A menu item labeled "Terminal"
-   - A button in the status bar or panels area
-   - A keyboard shortcut trigger (Cmd+J)
+2. **Toggle the terminal panel**: The quickest way is via keyboard shortcut on port 7677:
+   `curl -s -X POST http://127.0.0.1:7677/key -H 'Content-Type: application/json' -d '{"key":"j","modifiers":["cmd"]}'`
 
-   If you find a relevant widget, click it.
-   If not, try clicking the status bar area or look for panel tab buttons.
+   Alternatively, run `curl -s http://127.0.0.1:7676/widgets` and look for a toggle widget
+   (a button in the status bar or a panel tab labeled "Terminal") and click it via port 7676.
 
 3. **Screenshot — terminal visible**:
    `curl -s http://127.0.0.1:7676/screenshot -o /tmp/test/06-terminal-open.png`
@@ -40,10 +39,15 @@ Verify the terminal panel can be toggled on and appears as a real terminal emula
 - Panel tabs or header bar visible above the terminal content
 - The split between editor and terminal looks reasonable (terminal ~30-40% of height)
 
-## Geisterhand Reference
+## Geisterhand API (Dual-Port)
+
+**Port 7676 (baked-in)** — widget clicks, screenshots:
 - `GET /widgets` → list widgets
 - `POST /click/{handle}` → click a widget
 - `GET /screenshot` → PNG image
+
+**Port 7677 (external CLI)** — keyboard shortcuts:
+- `POST /key` body=`{"key":"j","modifiers":["cmd"]}` → toggle terminal (Cmd+J)
 
 ## Report Format
 ```
