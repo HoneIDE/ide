@@ -55,6 +55,8 @@ declare module 'node:path' {
 
 declare module 'child_process' {
   export function execSync(command: string, options?: object): string;
+  /** Argv-array spawn — no shell, args passed directly to the executable. Safe for untrusted inputs. */
+  export function spawnSync(command: string, args: string[], options?: object): { stdout: string; stderr: string; status: number };
   /** Perry extension — spawn a background process. */
   export function spawnBackground(command: string, args: string[], options?: string | object): { pid: number; handleId: number };
 }

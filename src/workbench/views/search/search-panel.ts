@@ -33,6 +33,9 @@ let searchCaseSensitive: number = 0;
 let searchUseRegex: number = 0;
 let searchShowReplace: number = 0;
 let replaceQuery = '';
+// SHIP-V1-GAPS.md #82: include / exclude globs (comma-separated patterns).
+let searchInclude = '';
+let searchExclude = '';
 
 // Search results — parallel arrays
 let srFilePaths: string[] = [];
@@ -316,6 +319,57 @@ function performSearch(): void {
 }
 
 /** Recursively collect searchable file paths (inlined in spawn — no module state access). */
+// SHIP-V1-GAPS.md #82: simple glob matcher. Supports:
+//   *.ext          → suffix match
+//   **/name        → substring match anywhere in path
+//   path/         → prefix match
+//   bare-name      → substring match
+// Pattern list is comma-separated; whitespace is trimmed.
+function matchesAnyPattern(filePath: string, patterns: string): number {
+  if (patterns.length === 0) return 0; // signals "no patterns set"
+  let start = 0;
+  for (let i = 0; i <= patterns.length; i++) {
+    if (i === patterns.length || patterns.charCodeAt(i) === 44) { // ','
+      let p = patterns.slice(start, i);
+      // Trim leading/trailing whitespace.
+      let pStart = 0; let pEnd = p.length;
+      while (pStart < pEnd && p.charCodeAt(pStart) === 32) pStart++;
+      while (pEnd > pStart && p.charCodeAt(pEnd - 1) === 32) pEnd--;
+      p = p.slice(pStart, pEnd);
+      start = i + 1;
+      if (p.length === 0) continue;
+      // Suffix match: starts with `*.`
+      if (p.length >= 2 && p.charCodeAt(0) === 42 && p.charCodeAt(1) === 46) {
+        const suf = p.slice(1);
+        if (filePath.length >= suf.length) {
+          let eq = 1;
+          const off = filePath.length - suf.length;
+          for (let k = 0; k < suf.length; k++) {
+            if (filePath.charCodeAt(off + k) !== suf.charCodeAt(k)) { eq = 0; break; }
+          }
+          if (eq > 0) return 1;
+        }
+        continue;
+      }
+      // Prefix match: ends with `/`
+      if (p.charCodeAt(p.length - 1) === 47) {
+        if (filePath.indexOf(p) >= 0) return 1;
+        continue;
+      }
+      // Substring match for everything else (including `**/foo`).
+      if (filePath.indexOf(p) >= 0) return 1;
+    }
+  }
+  return 0;
+}
+
+/** Returns 1 if the path passes the current include/exclude filters. */
+function passesGlobFilter(filePath: string): number {
+  if (searchExclude.length > 0 && matchesAnyPattern(filePath, searchExclude) > 0) return 0;
+  if (searchInclude.length > 0 && matchesAnyPattern(filePath, searchInclude) < 1) return 0;
+  return 1;
+}
+
 function collectSearchFiles(out: string[], dirPath: string, depth: number): void {
   if (depth > 9) return;
   if (out.length >= 10000) return; // safety cap
@@ -347,7 +401,10 @@ function collectSearchFiles(out: string[], dirPath: string, depth: number): void
         }
       }
     } else if (isTextFile(name)) {
-      out.push(fullPath);
+      // SHIP-V1-GAPS.md #82: honor include/exclude globs.
+      if (passesGlobFilter(fullPath) > 0) {
+        out.push(fullPath);
+      }
     }
   }
 }
@@ -810,6 +867,34 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
     widgetSetHidden(replContainer, 1);
   }
 
+  // SHIP-V1-GAPS.md #82: include / exclude glob rows. Patterns are
+  // comma-separated; `*.ts`, `**/foo`, `dist/` syntaxes covered.
+  const includeField = TextField(t('files to include'), (text: string) => {
+    searchInclude = text;
+    performSearch();
+  });
+  textfieldSetBorderless(includeField, 1);
+  textfieldSetFontSize(includeField, 13);
+  if (_iBg.length > 0) {
+    const [_iir, _iig, _iib, _iia] = hexToRGBA(_iBg);
+    textfieldSetBackgroundColor(includeField, _iir, _iig, _iib, _iia);
+  }
+  if (searchInclude.length > 0) textfieldSetString(includeField, searchInclude);
+
+  const excludeField = TextField(t('files to exclude'), (text: string) => {
+    searchExclude = text;
+    performSearch();
+  });
+  textfieldSetBorderless(excludeField, 1);
+  textfieldSetFontSize(excludeField, 13);
+  if (_iBg.length > 0) {
+    const [_ier, _ieg, _ieb, _iea] = hexToRGBA(_iBg);
+    textfieldSetBackgroundColor(excludeField, _ier, _ieg, _ieb, _iea);
+  }
+  if (searchExclude.length > 0) textfieldSetString(excludeField, searchExclude);
+  widgetAddChild(container, includeField);
+  widgetAddChild(container, excludeField);
+
   const gap2 = Text('');
   textSetFontSize(gap2, 6);
   widgetAddChild(container, gap2);
@@ -819,8 +904,8 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   textSetFontSize(resPad, 8);
   widgetAddChild(container, resPad);
 
-  // Result count label
-  searchResultCountLabel = Text(t('Type to search'));
+  // Result count label — SHIP-V1-GAPS.md #90 empty-state guidance.
+  searchResultCountLabel = Text(t('Type to search across files'));
   textSetFontSize(searchResultCountLabel, 11);
   if (colors) setFg(searchResultCountLabel, getSideBarForeground());
   widgetAddChild(container, searchResultCountLabel);

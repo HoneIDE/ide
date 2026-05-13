@@ -128,6 +128,41 @@ export function registerBuiltinCommands(): void {
     executeCommand('workbench.action.quickOpen');
   }, { category: t('View') });
 
+  registerCommand('view.outline', t('Show Outline'), () => {
+    executeCommand('workbench.action.showOutline');
+  }, { category: t('View') });
+  registerCommand('workbench.action.showOutline', t('Show Outline'), () => {}, {
+    showInPalette: false,
+  });
+
+  // SHIP-V1-GAPS.md #58: workspace trust commands. v1.0 ships the storage;
+  // plugin gating lands with the `@honeide/api` runtime.
+  registerCommand('workspace.trust', t('Workspaces: Trust Current Folder'), () => {
+    executeCommand('workbench.action.trustWorkspace');
+  }, { category: t('Workspaces') });
+  registerCommand('workspace.revokeTrust', t('Workspaces: Revoke Trust'), () => {
+    executeCommand('workbench.action.revokeWorkspaceTrust');
+  }, { category: t('Workspaces') });
+  registerCommand('workbench.action.trustWorkspace', t('Trust Workspace'), () => {}, {
+    showInPalette: false,
+  });
+  registerCommand('workbench.action.revokeWorkspaceTrust', t('Revoke Workspace Trust'), () => {}, {
+    showInPalette: false,
+  });
+
+  registerCommand('tasks.runTask', t('Tasks: Run Task...'), () => {
+    executeCommand('workbench.action.showTasks');
+  }, { category: t('Tasks') });
+  registerCommand('tasks.runBuildTask', t('Tasks: Run Build Task'), () => {
+    executeCommand('workbench.action.runBuildTask');
+  }, { category: t('Tasks') });
+  registerCommand('workbench.action.showTasks', t('Show Tasks'), () => {}, {
+    showInPalette: false,
+  });
+  registerCommand('workbench.action.runBuildTask', t('Run Build Task'), () => {}, {
+    showInPalette: false,
+  });
+
   registerCommand('view.toggleSidebar', t('Toggle Sidebar'), () => {}, { category: t('View') });
   registerCommand('view.toggleBottomPanel', t('Toggle Bottom Panel'), () => {}, { category: t('View') });
   registerCommand('view.toggleTerminal', t('Toggle Terminal'), () => {}, { category: t('View') });

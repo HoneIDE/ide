@@ -18,7 +18,7 @@ import { readdirSync, isDirectory } from 'fs';
 import { join } from 'path';
 import { setBg, setFg, setBtnFg, setBtnTint, pathId, getFileName, getFileIcon, getFileIconColor, truncateName } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
-import { getSideBarBackground, getSideBarForeground, getListActiveSelectionBackground, getListActiveSelectionForeground, getStatusAddedColor, getStatusModifiedColor, getStatusDeletedColor } from '../../theme/theme-colors';
+import { getSideBarBackground, getSideBarForeground, getListActiveSelectionBackground, getListActiveSelectionForeground, getStatusAddedColor, getStatusModifiedColor, getStatusDeletedColor, getStatusConflictColor, getStatusRenamedColor, getStatusIgnoredColor } from '../../theme/theme-colors';
 import { getGitFileStatus, getGitDirStatus } from '../git/git-panel';
 import { buildFileContextMenu, buildDirContextMenu, buildEmptySpaceContextMenu } from './context-menu';
 
@@ -63,6 +63,16 @@ function _noopVoid(): void {}
 
 export function setSidebarWorkspaceRoot(root: string): void {
   sidebarWorkspaceRoot = root;
+}
+
+// SHIP-V1-GAPS.md #95: explorer hidden-file toggle. 0 = hide dotfiles (default),
+// 1 = show them. The host pushes the setting on init + when the user toggles.
+let _showHiddenFiles: number = 0;
+export function setSidebarShowHiddenFiles(show: number): void {
+  _showHiddenFiles = show > 0 ? 1 : 0;
+}
+export function getSidebarShowHiddenFiles(): number {
+  return _showHiddenFiles;
 }
 
 export function setSidebarFileClickCallback(cb: (path: string, name: string) => void): void {
@@ -504,7 +514,7 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     try { names = readdirSync(dirPath); } catch (e) { return; }
     for (let i = 0; i < names.length; i++) {
       const n = names[i];
-      if (n.charCodeAt(0) === 46) continue; // skip hidden
+      if (_showHiddenFiles < 1 && n.charCodeAt(0) === 46) continue; // skip dotfiles unless toggled on
       const full = join(dirPath, n);
       if (isDirectory(full)) {
         dirNames.push(n);
@@ -595,6 +605,10 @@ function renderTreeLevel(dirPath: string, depth: number): void {
       if (gStatus === 2) { fileColor = getStatusAddedColor(); }
       if (gStatus === 3) { fileColor = getStatusAddedColor(); }
       if (gStatus === 4) { fileColor = getStatusDeletedColor(); }
+      // SHIP-V1-GAPS.md #99: surface the remaining status codes with distinct colors.
+      if (gStatus === 5) { fileColor = getStatusConflictColor(); }  // U — unmerged
+      if (gStatus === 6) { fileColor = getStatusRenamedColor(); }   // R / C
+      if (gStatus === 7) { fileColor = getStatusIgnoredColor(); }   // ignored
     }
     if (fileColor.length > 0) setBtnFg(nameBtn, fileColor);
     widgetAddChild(row, nameBtn);

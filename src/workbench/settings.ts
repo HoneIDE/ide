@@ -104,10 +104,22 @@ export interface WorkbenchSettings {
   telemetryEnabled: boolean;
   /** Whether the first-run setup has been completed */
   setupComplete: boolean;
+  /** Sidebar width in points (default 220). SHIP-V1-GAPS.md #37. */
+  sidebarWidth: number;
+  /** Whether the explorer shows files starting with `.`. Default false. #95. */
+  explorerShowHiddenFiles: boolean;
+  /** Bitmask of which built-in extensions are enabled. Default all on. #57. */
+  extensionsEnabledMask: number;
   /** Pipe-separated list of open tab file paths */
   lastOpenTabs: string;
   /** Index of the active tab at last save */
   lastActiveTab: number;
+  /** Cursor line of the active tab at last save (0-based). SHIP-V1-GAPS.md #43. */
+  lastActiveCursorLine: number;
+  /** Cursor column of the active tab at last save (0-based). */
+  lastActiveCursorCol: number;
+  /** Vertical scroll offset (in pixels) of the active tab at last save. */
+  lastActiveScrollTop: number;
 }
 
 type SettingsChangeListener = (settings: WorkbenchSettings) => void;
@@ -188,6 +200,12 @@ let _settings_telemetryEnabled: number = 0;
 let _settings_setupComplete: number = 0;
 let _settings_lastOpenTabs: string = '';
 let _settings_lastActiveTab: number = 0;
+let _settings_lastActiveCursorLine: number = 0;
+let _settings_lastActiveCursorCol: number = 0;
+let _settings_lastActiveScrollTop: number = 0;
+let _settings_sidebarWidth: number = 220;
+let _settings_explorerShowHiddenFiles: number = 0;
+let _settings_extensionsEnabledMask: number = 2047; // all 11 builtin extensions on by default
 let _settingsLoaded: number = 0;
 let _settingsVersion: number = 0;
 
@@ -202,11 +220,12 @@ export function initSettings(): void {
   if (_settingsLoaded > 0) return;
   _settingsLoaded = 1;
 
-  // Web defaults: dark mode, sync disabled, telemetry on, setup done
+  // Web defaults: dark mode, sync disabled, telemetry OFF (opt-in everywhere), setup done.
+  // The setup screen never runs on web, so users opt in via Settings → Privacy after install.
   if (isWebPlatform() > 0) {
     _settings_colorTheme = 'Hone Dark';
     _settings_syncEnabled = 0;
-    _settings_telemetryEnabled = 1;
+    _settings_telemetryEnabled = 0;
     _settings_setupComplete = 1;
     return;
   }
@@ -283,6 +302,12 @@ export function initSettings(): void {
     if (key === 'setupComplete') _settings_setupComplete = val === '1' ? 1 : 0;
     if (key === 'lastOpenTabs') _settings_lastOpenTabs = val;
     if (key === 'lastActiveTab') { const n = parseInt(val); if (n >= 0) _settings_lastActiveTab = n; }
+    if (key === 'lastActiveCursorLine') { const n = parseInt(val); if (n >= 0) _settings_lastActiveCursorLine = n; }
+    if (key === 'lastActiveCursorCol') { const n = parseInt(val); if (n >= 0) _settings_lastActiveCursorCol = n; }
+    if (key === 'lastActiveScrollTop') { const n = parseInt(val); if (n >= 0) _settings_lastActiveScrollTop = n; }
+    if (key === 'sidebarWidth') { const n = parseInt(val); if (n >= 120 && n <= 800) _settings_sidebarWidth = n; }
+    if (key === 'explorerShowHiddenFiles') _settings_explorerShowHiddenFiles = val === '1' ? 1 : 0;
+    if (key === 'extensionsEnabledMask') { const n = parseInt(val); if (n >= 0 && n <= 2047) _settings_extensionsEnabledMask = n; }
   }
 
   // Migrate legacy aiApiKey → aiKeyAnthropic
@@ -344,6 +369,12 @@ function buildSnapshot(): WorkbenchSettings {
     setupComplete: _settings_setupComplete > 0,
     lastOpenTabs: _settings_lastOpenTabs,
     lastActiveTab: _settings_lastActiveTab,
+    lastActiveCursorLine: _settings_lastActiveCursorLine,
+    lastActiveCursorCol: _settings_lastActiveCursorCol,
+    lastActiveScrollTop: _settings_lastActiveScrollTop,
+    sidebarWidth: _settings_sidebarWidth,
+    explorerShowHiddenFiles: _settings_explorerShowHiddenFiles > 0,
+    extensionsEnabledMask: _settings_extensionsEnabledMask,
   };
 }
 
@@ -528,6 +559,24 @@ function serializeFromVars(): string {
   out += 'lastActiveTab=';
   out += intToStr(_settings_lastActiveTab);
   out += '\n';
+  out += 'lastActiveCursorLine=';
+  out += intToStr(_settings_lastActiveCursorLine);
+  out += '\n';
+  out += 'lastActiveCursorCol=';
+  out += intToStr(_settings_lastActiveCursorCol);
+  out += '\n';
+  out += 'lastActiveScrollTop=';
+  out += intToStr(_settings_lastActiveScrollTop);
+  out += '\n';
+  out += 'sidebarWidth=';
+  out += intToStr(_settings_sidebarWidth);
+  out += '\n';
+  out += 'explorerShowHiddenFiles=';
+  out += _settings_explorerShowHiddenFiles > 0 ? '1' : '0';
+  out += '\n';
+  out += 'extensionsEnabledMask=';
+  out += intToStr(_settings_extensionsEnabledMask);
+  out += '\n';
   return out;
 }
 
@@ -549,6 +598,133 @@ function _flushSettingsToDisk(): void {
 
 // Self-contained flush timer — fires every 500ms, writes only if dirty
 setInterval(() => { _flushSettingsToDisk(); }, 500);
+
+// ---------------------------------------------------------------------------
+// Workspace overlay (SHIP-V1-GAPS.md #42)
+//
+// `${workspaceRoot}/.hone/settings.ini` overrides a curated subset of user
+// settings for the duration of the session. Overlay reads are non-persisting
+// — closing the workspace and reopening with a different one drops the
+// previous overlay. Global / sensitive keys (AI API keys, sync tokens,
+// telemetry choice) are intentionally NOT overridable from a workspace file:
+// a project shouldn't be able to repoint your AI provider or flip your
+// privacy toggle behind your back.
+// ---------------------------------------------------------------------------
+
+/** Workspace-overrideable settings — project-shaped, never security-sensitive. */
+const WORKSPACE_OVERRIDABLE: Record<string, number> = {
+  'colorTheme': 1,
+  'editorFontFamily': 1,
+  'editorFontSize': 1,
+  'editorTabSize': 1,
+  'editorInsertSpaces': 1,
+  'editorLineNumbers': 1,
+  'editorWordWrap': 1,
+  'editorMinimapEnabled': 1,
+  'editorFormatOnSave': 1,
+  'editorCursorStyle': 1,
+  'filesAutoSave': 1,
+  'filesAutoSaveDelay': 1,
+  'filesTrimTrailingWhitespace': 1,
+  'editorInsertFinalNewline': 1,
+  'editorTrimFinalNewlines': 1,
+  'editorFormatNormalizeIndent': 1,
+  'aiInlineCompletionEnabled': 1,
+  'aiInlineCompletionDelay': 1,
+  'searchUseIgnoreFiles': 1,
+  'searchFollowSymlinks': 1,
+  'terminalFontSize': 1,
+  'terminalCursorStyle': 1,
+};
+
+let _workspaceOverlayActive: number = 0;
+let _workspaceOverlayRoot: string = '';
+
+/**
+ * Apply workspace settings overlay from `${root}/.hone/settings.ini`.
+ * Returns the number of keys that were applied (0 if no file or no matches).
+ * Subsequent calls with a different root drop the previous overlay.
+ *
+ * Currently the overlay is one-shot at workspace-open time; we don't watch
+ * the file for changes. Hot-reload is a follow-up.
+ */
+export function applyWorkspaceOverlay(root: string): number {
+  if (root.length === 0) return 0;
+  const path = root + '/.hone/settings.ini';
+  if (!existsSync(path)) {
+    _workspaceOverlayActive = 0;
+    _workspaceOverlayRoot = '';
+    return 0;
+  }
+  let text = '';
+  try {
+    text = readFileSync(path);
+  } catch (_e: any) {
+    return 0;
+  }
+  if (text.length < 3) return 0;
+
+  let applied = 0;
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.length < 3) continue;
+    if (line.charCodeAt(0) === 35) continue; // '#' comment
+    let eqIdx = -1;
+    for (let j = 0; j < line.length; j++) {
+      if (line.charCodeAt(j) === 61) { eqIdx = j; break; }
+    }
+    if (eqIdx < 1) continue;
+    const key = line.slice(0, eqIdx);
+    const val = line.slice(eqIdx + 1);
+    if (WORKSPACE_OVERRIDABLE[key] !== 1) continue;
+    if (applyOverlayKey(key, val) > 0) applied++;
+  }
+
+  if (applied > 0) {
+    _workspaceOverlayActive = 1;
+    _workspaceOverlayRoot = root;
+    _settingsVersion = _settingsVersion + 1;
+    for (let i = 0; i < _listeners.length; i++) {
+      _listeners[i](buildSnapshot());
+    }
+  }
+  return applied;
+}
+
+function applyOverlayKey(key: string, val: string): number {
+  if (key === 'colorTheme') { _settings_colorTheme = val; return 1; }
+  if (key === 'editorFontFamily') { _settings_editorFontFamily = val; return 1; }
+  if (key === 'editorFontSize') { const n = parseInt(val); if (n > 0) { _settings_editorFontSize = n; return 1; } return 0; }
+  if (key === 'editorTabSize') { const n = parseInt(val); if (n > 0) { _settings_editorTabSize = n; return 1; } return 0; }
+  if (key === 'editorInsertSpaces') { _settings_editorInsertSpaces = val === '1' ? 1 : 0; return 1; }
+  if (key === 'editorLineNumbers') { _settings_editorLineNumbers = val; return 1; }
+  if (key === 'editorWordWrap') { _settings_editorWordWrap = val; return 1; }
+  if (key === 'editorMinimapEnabled') { _settings_editorMinimapEnabled = val === '1' ? 1 : 0; return 1; }
+  if (key === 'editorFormatOnSave') { _settings_editorFormatOnSave = val === '1' ? 1 : 0; return 1; }
+  if (key === 'editorCursorStyle') { _settings_editorCursorStyle = val; return 1; }
+  if (key === 'filesAutoSave') { _settings_filesAutoSave = val; return 1; }
+  if (key === 'filesAutoSaveDelay') { const n = parseInt(val); if (n >= 0) { _settings_filesAutoSaveDelay = n; return 1; } return 0; }
+  if (key === 'filesTrimTrailingWhitespace') { _settings_filesTrimTrailingWhitespace = val === '1' ? 1 : 0; return 1; }
+  if (key === 'editorInsertFinalNewline') { _settings_editorInsertFinalNewline = val === '1' ? 1 : 0; return 1; }
+  if (key === 'editorTrimFinalNewlines') { _settings_editorTrimFinalNewlines = val === '1' ? 1 : 0; return 1; }
+  if (key === 'editorFormatNormalizeIndent') { _settings_editorFormatNormalizeIndent = val === '1' ? 1 : 0; return 1; }
+  if (key === 'aiInlineCompletionEnabled') { _settings_aiInlineCompletionEnabled = val === '1' ? 1 : 0; return 1; }
+  if (key === 'aiInlineCompletionDelay') { const n = parseInt(val); if (n >= 0) { _settings_aiInlineCompletionDelay = n; return 1; } return 0; }
+  if (key === 'searchUseIgnoreFiles') { _settings_searchUseIgnoreFiles = val === '1' ? 1 : 0; return 1; }
+  if (key === 'searchFollowSymlinks') { _settings_searchFollowSymlinks = val === '1' ? 1 : 0; return 1; }
+  if (key === 'terminalFontSize') { const n = parseInt(val); if (n > 0) { _settings_terminalFontSize = n; return 1; } return 0; }
+  if (key === 'terminalCursorStyle') { _settings_terminalCursorStyle = val; return 1; }
+  return 0;
+}
+
+export function isWorkspaceOverlayActive(): number {
+  return _workspaceOverlayActive;
+}
+
+export function getWorkspaceOverlayRoot(): string {
+  return _workspaceOverlayRoot;
+}
 
 /** Update a string setting. */
 export function setStringSetting(key: string, value: string): void {
@@ -612,6 +788,10 @@ export function setNumberSetting(key: string, value: number): void {
   if (key === 'terminalFontSize') _settings_terminalFontSize = value;
   if (key === 'aiInlineCompletionDelay') _settings_aiInlineCompletionDelay = value;
   if (key === 'lastActiveTab') _settings_lastActiveTab = value;
+  if (key === 'lastActiveCursorLine') _settings_lastActiveCursorLine = value;
+  if (key === 'lastActiveCursorCol') _settings_lastActiveCursorCol = value;
+  if (key === 'lastActiveScrollTop') _settings_lastActiveScrollTop = value;
+  if (key === 'sidebarWidth') { if (value >= 120 && value <= 800) _settings_sidebarWidth = value; }
   persistToDisk();
   notifyListeners();
 }
@@ -631,6 +811,8 @@ export function setBoolSetting(key: string, value: number): void {
   if (key === 'editorFormatNormalizeIndent') _settings_editorFormatNormalizeIndent = value;
   if (key === 'searchUseIgnoreFiles') _settings_searchUseIgnoreFiles = value;
   if (key === 'searchFollowSymlinks') _settings_searchFollowSymlinks = value;
+  if (key === 'explorerShowHiddenFiles') _settings_explorerShowHiddenFiles = value;
+  if (key === 'extensionsEnabledMask') { if (value >= 0 && value <= 2047) _settings_extensionsEnabledMask = value; }
   if (key === 'syncEnabled') _settings_syncEnabled = value;
   if (key === 'telemetryEnabled') _settings_telemetryEnabled = value;
   if (key === 'setupComplete') _settings_setupComplete = value;

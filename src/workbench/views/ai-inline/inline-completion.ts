@@ -1,8 +1,16 @@
 /**
- * AI Inline completion — triggers FIM ghost text after cursor dwell.
+ * Snippet hints — local heuristic ghost text after cursor dwell.
  *
- * Polls cursor position, debounces, calls the editor's ghost text FFI
- * when a completion is available. Perry-safe: module-level state.
+ * SHIP-V1-GAPS.md #10: ships a *local* snippet engine, not a model-backed
+ * inline completion. Pattern-matches the line before the cursor and offers
+ * closings (`)`, `}`, `then`/`end`, block bodies). No AI provider is
+ * contacted; no FIM prompt is sent. The exported function/setting names keep
+ * the `aiInline*` prefix for back-compat with stored settings files.
+ * Model-backed completion using `hone-core/src/ai/inline/completion-provider.ts`
+ * is queued for v1.1 once the IDE has a streaming HTTP path for FIM.
+ *
+ * Polls cursor position, debounces, calls the editor's ghost text FFI when a
+ * suggestion is available. Perry-safe: module-level state.
  */
 import { getWorkbenchSettings } from '../../settings';
 

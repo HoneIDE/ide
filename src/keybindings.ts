@@ -61,8 +61,10 @@ function modLabel(platform: Platform): string {
 export function getDefaultKeybindings(platform: Platform): Keybinding[] {
   const mod = cmdOrCtrl(platform);
   const ml = modLabel(platform);
+  const isIpad = platform === 'ipados';
+  const isIos = platform === 'ios';
 
-  return [
+  const out: Keybinding[] = [
     // File
     kb('file.newFile', [{ key: 'n', ...mod, shift: false, alt: false }], null, `${ml}+N`),
     kb('file.openFile', [{ key: 'o', ...mod, shift: false, alt: false }], null, `${ml}+O`),
@@ -94,6 +96,30 @@ export function getDefaultKeybindings(platform: Platform): Keybinding[] {
     kb('workbench.action.closeActiveEditor', [{ key: 'w', ...mod, shift: false, alt: false }], 'editorFocus', `${ml}+W`),
     kb('workbench.action.closeAllEditors', [{ key: 'w', ...mod, shift: true, alt: true }], null, `${ml}+Shift+Alt+W`),
   ];
+
+  // SHIP-V1-GAPS.md #114: iPad-specific extras for hardware-keyboard users.
+  // iPadOS apps conventionally bind Cmd+1/2/3 to top-level navigation; we
+  // mirror that to the activity bar so Files (1) / Search (2) / Source
+  // Control (3) are reachable without leaving the keyboard. iOS phones omit
+  // these because the layout is single-pane and there's nothing to switch.
+  if (isIpad) {
+    out.push(kb('view.activity.files', [{ key: '1', ...mod, shift: false, alt: false }], null, `${ml}+1`));
+    out.push(kb('view.activity.search', [{ key: '2', ...mod, shift: false, alt: false }], null, `${ml}+2`));
+    out.push(kb('view.activity.git', [{ key: '3', ...mod, shift: false, alt: false }], null, `${ml}+3`));
+    out.push(kb('view.activity.chat', [{ key: '4', ...mod, shift: false, alt: false }], null, `${ml}+4`));
+    // Dismiss the software keyboard — iPad-specific because macOS doesn't
+    // surface a soft keyboard the user might want to hide.
+    out.push(kb('view.dismissKeyboard', [{ key: 'Escape', ctrl: false, shift: false, alt: false, meta: false }], null, 'Esc'));
+  }
+
+  // Block bindings that don't make sense on iPad/iOS where the OS handles
+  // window lifecycle (no quit, no manual close-window from Cmd+Q):
+  if (isIpad || isIos) {
+    // No additional removals today — `closeActiveEditor`/`closeAllEditors`
+    // remain useful because they close editor tabs, not the app window.
+  }
+
+  return out;
 }
 
 function kb(

@@ -597,7 +597,12 @@ function renderListingCard(container: unknown, plugin: MarketplaceListing, color
   widgetAddChild(nameRow, Spacer());
 
   const pluginName = plugin.name;
-  const installBtn = Button('Install', () => { onInstallClick(pluginName); });
+  // SHIP-V1-GAPS.md #12: install pipeline is a mock in v1.0 (returns a
+  // stub string from `hone-extension/marketplace/src/client.ts:134`). Label
+  // and behavior reflect that until the real download → sha256 verify →
+  // extract → register flow lands in v1.1. Built-in extensions still show
+  // "Built-in" via the existing onInstallClick fallback.
+  const installBtn = Button('Preview (v1.1)', () => { onInstallClick(pluginName); });
   buttonSetBordered(installBtn, 1);
   textSetFontSize(installBtn, 11);
   setBtnFg(installBtn, colors.sideBarForeground);
@@ -682,18 +687,21 @@ function onCategoryClick(category: string): void {
 }
 
 function onInstallClick(pluginName: string): void {
-  // Check if we have a registered install callback
+  // Check if we have a registered install callback (built-in extensions
+  // register their own enable handlers — those still work).
   const handler = installCallbacks.get(pluginName);
   if (handler !== undefined) {
     handler();
     return;
   }
 
-  // No callback registered — try to download via marketplace API
+  // SHIP-V1-GAPS.md #12: the marketplace install pipeline is a stub for
+  // v1.0. Rather than silently download a placeholder, surface the gap:
+  // the user can browse plugins (read-only) and the install path will
+  // land in v1.1.
   if (marketplaceOnline === 1) {
-    installFromMarketplace(pluginName);
+    showInstallStatus(pluginName, 'Marketplace install lands in v1.1. Browse and review until then.');
   } else {
-    // Built-in extension — already installed
     showInstallStatus(pluginName, 'Built-in extension (already included)');
   }
 }

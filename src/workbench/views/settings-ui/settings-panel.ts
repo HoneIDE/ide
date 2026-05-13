@@ -724,8 +724,8 @@ function buildContent(ctr: unknown, colors: ResolvedUIColors): void {
   if (matchesSearch(t('xAI'), t('API key for xAI Grok models')) > 0) hasAi = 1;
   if (matchesSearch(t('Ollama'), t('Local Ollama server')) > 0) hasAi = 1;
   if (matchesSearch(t('Custom'), t('Custom OpenAI-compatible endpoint')) > 0) hasAi = 1;
-  if (matchesSearch(t('Inline Completion'), t('Enable AI inline code completions')) > 0) hasAi = 1;
-  if (matchesSearch(t('Inline Completion Delay'), t('Delay in ms before showing completions')) > 0) hasAi = 1;
+  if (matchesSearch(t('Snippet Hints'), t('Suggest closing braces and block bodies after the cursor (local heuristics).')) > 0) hasAi = 1;
+  if (matchesSearch(t('Snippet Hints Delay'), t('Delay in ms before showing snippet hints')) > 0) hasAi = 1;
 
   if (hasAi > 0) {
     makeSection(ctr, colors, t('AI Provider Keys'));
@@ -751,11 +751,11 @@ function buildContent(ctr: unknown, colors: ResolvedUIColors): void {
       makeTextRow(ctr, colors, t('Custom Model'), t('Model name for custom endpoint'), s.aiCustomModel, onAiCustomModelChange);
     }
 
-    makeSection(ctr, colors, t('AI Features'));
-    if (matchesSearch(t('Inline Completion'), t('Enable AI inline code completions')) > 0)
-      _hAiInlineBtn = makeToggleRow(ctr, colors, t('Inline Completion'), t('Enable AI inline code completions'), s.aiInlineCompletionEnabled ? 1 : 0, () => { onAiInlineToggle(); });
-    if (matchesSearch(t('Inline Completion Delay'), t('Delay in ms before showing completions')) > 0)
-      _hAiInlineDelayVal = makeStepperRow(ctr, colors, t('Inline Completion Delay'), t('Delay in ms before showing completions'), s.aiInlineCompletionDelay, () => { onAiInlineDelayDown(); }, () => { onAiInlineDelayUp(); });
+    makeSection(ctr, colors, t('Editor Features'));
+    if (matchesSearch(t('Snippet Hints'), t('Suggest closing braces and block bodies after the cursor (local heuristics).')) > 0)
+      _hAiInlineBtn = makeToggleRow(ctr, colors, t('Snippet Hints'), t('Suggest closing braces and block bodies after the cursor. Local heuristics only — no AI provider call. Model-backed completion in v1.1.'), s.aiInlineCompletionEnabled ? 1 : 0, () => { onAiInlineToggle(); });
+    if (matchesSearch(t('Snippet Hints Delay'), t('Delay in ms before showing snippet hints')) > 0)
+      _hAiInlineDelayVal = makeStepperRow(ctr, colors, t('Snippet Hints Delay'), t('Delay in ms before showing snippet hints'), s.aiInlineCompletionDelay, () => { onAiInlineDelayDown(); }, () => { onAiInlineDelayUp(); });
   }
 
   // ---- Search ----

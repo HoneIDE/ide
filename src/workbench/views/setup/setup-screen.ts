@@ -396,7 +396,7 @@ export function createSetupScreen(): unknown {
   setFg(statsLabel, '#CCCCCC');
   _statsLabel = statsLabel;
 
-  const statsDesc = Text(t('Share anonymous usage stats to help improve Hone. No file content, paths, or personal data is ever collected.'));
+  const statsDesc = Text(t('Share anonymous usage stats with our analytics provider (Chirp). No file content, paths, code, commit messages, or personal data are ever sent — only event counts, your platform, and a random device ID. See hone.codes/privacy for details. You can change this anytime in Settings.'));
   textSetFontSize(statsDesc, 13);
   setFg(statsDesc, '#888888');
   _statsDesc = statsDesc;

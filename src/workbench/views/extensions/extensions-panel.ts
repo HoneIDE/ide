@@ -14,10 +14,13 @@ import {
 import { t } from 'perry/i18n';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
+import { getWorkbenchSettings, setNumberSetting } from '../../settings';
 
 declare const __plugins__: number;
 
 // Extension enable states — individual vars (Perry no-hoist, no Map in callbacks)
+// SHIP-V1-GAPS.md #57: extension-enable flags persisted as a bitmask in
+// settings (`extensionsEnabledMask`). Decoded on first read; encoded on toggle.
 let ext0on: number = 1;
 let ext1on: number = 1;
 let ext2on: number = 1;
@@ -29,6 +32,7 @@ let ext7on: number = 1;
 let ext8on: number = 1;
 let ext9on: number = 1;
 let ext10on: number = 1;
+let _enableMaskLoaded: number = 0;
 
 // Toggle button refs
 let toggleBtns: unknown[] = [];
@@ -46,6 +50,41 @@ function toggleExt(idx: number): void {
   if (idx === 9) { ext9on = ext9on > 0 ? 0 : 1; }
   if (idx === 10) { ext10on = ext10on > 0 ? 0 : 1; }
   updateToggleLabel(idx);
+  persistEnabledMask();
+}
+
+function decodeEnabledMask(mask: number): void {
+  ext0on = (mask & 1) > 0 ? 1 : 0;
+  ext1on = (mask & 2) > 0 ? 1 : 0;
+  ext2on = (mask & 4) > 0 ? 1 : 0;
+  ext3on = (mask & 8) > 0 ? 1 : 0;
+  ext4on = (mask & 16) > 0 ? 1 : 0;
+  ext5on = (mask & 32) > 0 ? 1 : 0;
+  ext6on = (mask & 64) > 0 ? 1 : 0;
+  ext7on = (mask & 128) > 0 ? 1 : 0;
+  ext8on = (mask & 256) > 0 ? 1 : 0;
+  ext9on = (mask & 512) > 0 ? 1 : 0;
+  ext10on = (mask & 1024) > 0 ? 1 : 0;
+}
+
+function encodeEnabledMask(): number {
+  let m = 0;
+  if (ext0on > 0) m += 1;
+  if (ext1on > 0) m += 2;
+  if (ext2on > 0) m += 4;
+  if (ext3on > 0) m += 8;
+  if (ext4on > 0) m += 16;
+  if (ext5on > 0) m += 32;
+  if (ext6on > 0) m += 64;
+  if (ext7on > 0) m += 128;
+  if (ext8on > 0) m += 256;
+  if (ext9on > 0) m += 512;
+  if (ext10on > 0) m += 1024;
+  return m;
+}
+
+function persistEnabledMask(): void {
+  setNumberSetting('extensionsEnabledMask', encodeEnabledMask());
 }
 
 function isExtOn(idx: number): number {
@@ -75,6 +114,12 @@ function updateToggleLabel(idx: number): void {
 }
 
 export function renderExtensionsPanel(container: unknown, colors: ResolvedUIColors): void {
+  // SHIP-V1-GAPS.md #57: hydrate ext on/off from the bitmask setting on first
+  // mount. Toggles persist via `setNumberSetting('extensionsEnabledMask', …)`.
+  if (_enableMaskLoaded < 1) {
+    decodeEnabledMask(getWorkbenchSettings().extensionsEnabledMask);
+    _enableMaskLoaded = 1;
+  }
   const title = Text(t('EXTENSIONS'));
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.7);

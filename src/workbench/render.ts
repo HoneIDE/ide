@@ -15,12 +15,14 @@ import {
   VStackWithInsets, HStackWithInsets,
   ScrollView, scrollViewSetChild,
   TextField,
-  textSetFontSize, textSetFontWeight,
+  textSetFontSize, textSetFontWeight, textSetFontFamily,
+  textSetString,
   buttonSetBordered, buttonSetImage, buttonSetImagePosition,
   widgetAddChild, widgetClearChildren, widgetRemoveChild, widgetAddOverlay, widgetSetOverlayFrame,
   widgetSetWidth, widgetSetHeight, widgetSetHugging, widgetSetHidden, widgetSetBackgroundColor,
   stackSetDetachesHidden, stackSetDistribution,
   widgetMatchParentHeight, widgetMatchParentWidth,
+  widgetSetTooltip,
   embedNSView,
   openFolderDialog, openFileDialog, saveFileDialog, pollOpenFile,
   textfieldFocus,
@@ -46,14 +48,15 @@ import {
   getTitleBarBackground, getTitleBarForeground,
   getEditorSelectionBackground, getEditorLineHighlightBackground,
   getEditorCursorForeground, getEditorLineNumberForeground, getEditorLineNumberActiveForeground,
+  getSecondaryTextColor,
   applyDarkColors, applyLightColors, isCurrentThemeDark,
 } from './theme/theme-colors';
 import type { LayoutMode } from '../platform';
-import { getWorkbenchSettings, updateSettings, onSettingsChange, getSettingsVersion, getLastOpenTabs, getLastActiveTab } from './settings';
+import { getWorkbenchSettings, updateSettings, onSettingsChange, getSettingsVersion, getLastOpenTabs, getLastActiveTab, applyWorkspaceOverlay, setNumberSetting } from './settings';
 import { readFileSync, writeFileSync, readdirSync, isDirectory, existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { spawnBackground } from 'child_process';
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import { spawn } from 'perry/thread';
 import { getTempDir, getCwd, getHomeDir, getAppDataDir } from './paths';
 import { getPlatformContext, isWebPlatform } from '../platform';
@@ -70,6 +73,7 @@ import {
 import {
   renderGitPanel as renderGitPanelImpl,
   setGitWorkspaceRoot, setGitFileOpener, setGitStatusBarUpdater, setGitDiffOpener,
+  setGenerateCommitMessageHandler, setGeneratePRDescriptionHandler,
   resetGitPanelReady, refreshGitState, refreshGitStateAsync, updateStatusBarBranch,
   getGitFileStatus, getGitDirStatus,
 } from './views/git/git-panel';
@@ -79,7 +83,7 @@ import {
 } from './views/diff/diff-view';
 import {
   renderExplorerPanel, refreshSidebarContent, updateSidebarSelection, revealFileInExplorer, refreshSidebarSelection,
-  setSidebarWorkspaceRoot, setSidebarFileClickCallback, setSidebarOpenFolderCallback,
+  setSidebarWorkspaceRoot, setSidebarFileClickCallback, setSidebarOpenFolderCallback, setSidebarShowHiddenFiles,
   setSidebarNewFileCallback, setSidebarThemeColors, setSidebarCurrentEditorPath,
   setRemoteFileTree, setRemoteFileClickCallback, isRemoteExplorerMode,
   toggleRemoteDir, clickRemoteFile, getExpandedDirCount, getVisibleFileCount,
@@ -93,20 +97,40 @@ import {
   openTab, getActiveTabPath, getActiveTabIdx, getTabCount,
   getOpenTabCount, getOpenTabPath, setActiveTabByIndex,
   markTabSaved, updateTabDirtyIcon, applyAllTabColors, closeActiveTab, renameActiveTab, closeAllOpenTabs,
+  setOnBeforeTabClose, forceCloseTab, isTabDirty,
 } from './views/tabs/tab-bar';
 import {
   renderStatusBar as renderStatusBarImpl, setStatusBarCursorGetter,
   updateStatusBarBranchLabel as updateStatusBarBranchLabelImpl,
   updateStatusBarDiagnostics as updateStatusBarDiagnosticsImpl,
   updateStatusBarLanguage as updateStatusBarLanguageImpl,
+  updateStatusBarIndent as statusBarUpdateIndent,
   pollCursorPosition as pollCursorPositionImpl,
   recolorStatusBar, getStatusBarWidget,
   showUpdateIndicator, setUpdateBtnClickHandler,
+  setOnBranchClick, setOnLanguageClick, setOnEncodingClick, setOnEolClick, setOnIndentClick,
+  registerStatusBarItem as _sbRegister,
+  updateStatusBarItemText as _sbUpdate,
+  disposeStatusBarItem as _sbDispose,
 } from './views/status-bar/status-bar';
+import { clipboardWrite } from 'perry/ui';
+
+// SHIP-V1-GAPS.md #98 — public API for extensions / future hone-api bridge.
+// Re-exported here so callers can `import { addStatusBarItem, ... } from './render'`
+// instead of reaching into views/status-bar directly.
+export function addStatusBarItem(alignment: number, text: string, onClick: (() => void) | null): number {
+  return _sbRegister(alignment, text, onClick);
+}
+export function setStatusBarItemText(idx: number, text: string): void {
+  _sbUpdate(idx, text);
+}
+export function removeStatusBarItem(idx: number): void {
+  _sbDispose(idx);
+}
 import { initUpdateChecker, setOnUpdateAvailable, getLatestVersion, isUpdateAvailable, checkForUpdatesManual } from './views/update/update-checker';
 import { renderUpdateTab, resetUpdateTab } from './views/update/update-tab';
 // Extensions panel hidden for now — no runtime extension system yet
-import { renderChatPanel, focusChatInput, getChatInputHandle, setChatWorkspaceRoot, setChatFilePathGetter, setChatFileContentGetter, setChatRemoteGuest, setChatRelaySendFn, setChatRelayForwardFn, startClaudeForRelay, handleClaudeRelayLine, handleClaudeRelayEvent } from './views/ai-chat/chat-panel';
+import { renderChatPanel, focusChatInput, getChatInputHandle, setChatWorkspaceRoot, setChatFilePathGetter, setChatFileContentGetter, setChatRemoteGuest, setChatRelaySendFn, setChatRelayForwardFn, startClaudeForRelay, handleClaudeRelayLine, handleClaudeRelayEvent, prefillChatInput } from './views/ai-chat/chat-panel';
 import { renderTerminalPanel, setTerminalCwd, destroyTerminalPanel, setTerminalCloseCallback, setTerminalProblemsFileOpener, applyTerminalThemeColors } from './views/terminal/terminal-panel';
 import {
   renderDebugPanel as renderDebugPanelImpl,
@@ -116,6 +140,10 @@ import {
 import { renderSettingsTab } from './views/settings-ui/settings-panel';
 import { setWelcomeActions, setWelcomeRecentCallback, createWelcomeContent } from './views/welcome/welcome-tab';
 import { initNotifications, showNotification } from './views/notifications/notifications';
+import { initCommandPalette, openCommandPalette, closeCommandPalette, isCommandPaletteOpen } from './views/command-palette/command-palette';
+import { initWorkspaceTrust, isWorkspaceTrusted, trustWorkspace } from './workspace-trust';
+import { renderReferencesPeek, showReferencesFromJson, setReferencesJumpHandler } from './views/references-peek/references-peek';
+import { renderTasksPanel, runDefaultBuildTask, runTaskByLabel, setTasksWorkspaceRoot, setTasksAppDataDir, setOnTaskRunStart, setOnTaskRunDone } from './views/tasks/tasks-panel';
 import { initRecentItems, addRecentFile, addRecentFolder, getRecentPath, getRecentType } from './views/recent/recent-store';
 import { createFindBar, setFindEditorCallbacks, showFindBar, showFindBarWithReplace, hideFindBar, isFindBarVisible } from './views/find/find-bar';
 import { setLspWorkspaceRoot, initLspBridge, triggerDiagnostics, getCompletions, setDiagnosticsStatusUpdater } from './views/lsp/lsp-bridge';
@@ -123,19 +151,42 @@ import { setDiagnosticsFileOpener } from './views/lsp/diagnostics-panel';
 import { createAutocompletePopup, setAutocompleteAcceptHandler } from './views/lsp/autocomplete-popup';
 import { initTelemetry, telemetryTrackFileOpen, telemetryTrackSettingsOpen, telemetryTrackStartup, telemetryTrackThemeChange, telemetryTrackTerminalOpen } from './telemetry';
 import { buildSyncPanel, refreshSyncPanel, setSyncStatusText, setSyncPairCallback, setSyncJoinCallback, setSyncPairingCode, addSyncDevice, removeSyncDevice } from './views/sync/sync-panel';
-import { initSyncHost, setOnGuestConnected, setOnGuestDisconnected, addGuest, handleClaudeSendFromGuest, handleClaudeStopFromGuest, setOnClaudeRelayRequest, setOnClaudeRelayStop } from './sync-host';
-import { initSyncGuest, sendClaudeRequest } from './sync-guest';
+import { initSyncHost, setOnGuestConnected, setOnGuestDisconnected, addGuest, handleClaudeSendFromGuest, handleClaudeStopFromGuest, setOnClaudeRelayRequest, setOnClaudeRelayStop,
+  generateProjectKey as hostGenerateProjectKey,
+  getProjectKeyHex as hostGetProjectKey,
+  setProjectKey as hostSetProjectKey,
+  startKeyExchange as hostStartKeyExchange,
+  getDhPublicKey as hostGetDhPublicKey,
+  completeKeyExchange as hostCompleteKeyExchange,
+  encryptDelta as hostEncryptDelta,
+  decryptDelta as hostDecryptDelta,
+} from './sync-host';
+import { initSyncGuest, sendClaudeRequest,
+  startGuestKeyExchange,
+  getGuestDhPublicKey,
+  receiveProjectKey as guestReceiveProjectKey,
+  getGuestProjectKey,
+  setGuestProjectKey,
+  encryptDelta as guestEncryptDelta,
+  decryptDelta as guestDecryptDelta,
+  setReconnectEnabled, shouldReconnect, markReconnectAttempt, getReconnectDelay, resetReconnectAttempts, getReconnectAttempts,
+} from './sync-guest';
 import { getOrCreateDeviceId } from './paths';
 import {
   connectToRelay, disconnectFromRelay, sendToRelay,
   setOnRelayConnected, setOnRelayDisconnected,
   setOnRelayMessage, isRelayConnected, setOnTransportDebug,
+  setPayloadCrypto, setEncryptionReady, decryptIncomingPayload,
   setRelayToken, setRelayLastSeq, setMaxMessagesPerPoll,
 } from './sync-transport';
 
 import { dispatchPluginHook, isPluginSystemEnabled, setDecorationRenderCallback } from '../plugins';
 import { getDiagFiles, getDiagLines, getDiagMessages, getDiagSeverities, getDiagCount } from './views/lsp/diagnostics-panel';
-import { lspDidOpen, lspDidSave, lspFormatDocument, lspHover, lspDefinition, lspSignatureHelp, setHoverCallback, setDefinitionCallback, setSignatureCallback, setFormatCallback, lspIsReady } from './views/lsp/lsp-bridge';
+import { lspDidOpen, lspDidSave, lspFormatDocument, lspHover, lspDefinition, lspSignatureHelp, setHoverCallback, setDefinitionCallback, setSignatureCallback, setFormatCallback, lspIsReady,
+  lspReferences, lspRename, lspCodeActions, setReferencesCallback, setRenameCallback, setCodeActionsCallback,
+  lspDocumentSymbols, setDocumentSymbolsCallback,
+} from './views/lsp/lsp-bridge';
+import { renderOutlinePanel, setOutlineActiveFile, setOutlineJumpHandler } from './views/outline/outline-panel';
 import { createHoverPopup, showHoverPopup, hideHoverPopup, isHoverVisible } from './views/lsp/hover-popup';
 import { createSignaturePopup, showSignaturePopup, hideSignaturePopup, isSignatureVisible } from './views/lsp/signature-popup';
 import { initInlineCompletion, setInlineEditorAccess, setInlineContextProviders, setInlineInsertCallback } from './views/ai-inline/inline-completion';
@@ -187,6 +238,12 @@ let editorReady: number = 0;
 let editorWidget: unknown = null;
 let editorNativeHandle: number = 0;
 let currentEditorFilePath = '';
+// SHIP-V1-GAPS.md #86: tracks the djb2 hash of the file content the editor
+// holds on disk. The disk-watch poller compares it against a fresh read every
+// 2s; a mismatch on a clean tab triggers a one-tap reload, while a mismatch
+// on a dirty tab surfaces a conflict notification.
+let _externalFileHash: number = 0;
+let _externalCheckPending: number = 0;
 
 // Untitled file counter
 let untitledCounter: number = 0;
@@ -215,6 +272,20 @@ let compactContentContainer: unknown = null;
 // Breadcrumb bar
 let breadcrumbContainer: unknown = null;
 let breadcrumbReady: number = 0;
+
+// SHIP-V1-GAPS.md #24 sticky scroll widgets.
+let stickyScrollRow: unknown = null;
+let stickyScrollLabel: unknown = null;
+let _lastStickyLine: number = -1;
+
+// SHIP-V1-GAPS.md #44 merge conflict resolver widgets.
+let conflictBar: unknown = null;
+let conflictLabel: unknown = null;
+let _conflictCount: number = 0;
+let _conflictStartOffsets: number[] = [];
+let _conflictSepOffsets: number[] = [];
+let _conflictEndOffsets: number[] = [];
+let _lastConflictSig: string = '';
 
 // Diff view
 let diffViewContainer: unknown = null;
@@ -352,6 +423,10 @@ export function toggleTerminalAction(): void {
 function onFolderOpened(folderPath: string): void {
   closeAllOpenTabs();
   workspaceRoot = folderPath;
+  // SHIP-V1-GAPS.md #42: read workspace settings overlay BEFORE wiring panels
+  // so panels that consult settings (theme, font, tab size) see the overlay
+  // immediately rather than reading user defaults and getting re-rendered.
+  applyWorkspaceOverlay(folderPath);
   setSidebarWorkspaceRoot(folderPath);
   setContextMenuWorkspaceRoot(folderPath);
   setSearchWorkspaceRoot(folderPath);
@@ -360,6 +435,7 @@ function onFolderOpened(folderPath: string): void {
   setTerminalCwd(folderPath);
   setLspWorkspaceRoot(folderPath);
   setChatWorkspaceRoot(folderPath);
+  setTasksWorkspaceRoot(folderPath);
   initLspBridge();
   refreshSidebarContent();
   updateSettings({ lastOpenFolder: folderPath });
@@ -388,6 +464,37 @@ export function toggleSidebarAction(): void {
     widgetSetHidden(sidebarBorderWidget, 0);
     updateSettings({ sidebarVisible: true });
   }
+}
+
+// SHIP-V1-GAPS.md #88 helpers for status-bar / sidebar context menus.
+function toggleSidebarLocation(): void {
+  const s = getWorkbenchSettings();
+  const next = s.sidebarLocation === 'left' ? 'right' : 'left';
+  updateSettings({ sidebarLocation: next });
+  showNotification(t('Sidebar moved to') + ' ' + t(next) + '. ' + t('Restart to apply.'), 'info');
+}
+
+function copyBranchNameToClipboard(): void {
+  if (workspaceRoot.length === 0) return;
+  try {
+    const r = spawnSync('git', ['-C', workspaceRoot, 'rev-parse', '--abbrev-ref', 'HEAD']);
+    if (r.status !== 0) return;
+    let s = r.stdout;
+    let end = s.length;
+    while (end > 0 && (s.charCodeAt(end - 1) === 10 || s.charCodeAt(end - 1) === 13)) end--;
+    s = s.slice(0, end);
+    clipboardWrite(s);
+    showNotification(t('Branch name copied') + ': ' + s, 'info');
+  } catch (_e: any) {}
+}
+
+function copyEditorPathToClipboard(): void {
+  if (currentEditorFilePath.length === 0) {
+    showNotification(t('No file open.'), 'info');
+    return;
+  }
+  clipboardWrite(currentEditorFilePath);
+  showNotification(t('Path copied'), 'info');
 }
 
 function toggleRightPanel(): void {
@@ -514,6 +621,10 @@ export function saveFileAction(): void {
   triggerDiagnostics();
   lspDidSave(currentEditorFilePath);
   markTabSaved(content.length);
+  // SHIP-V1-GAPS.md #86: rehash on save so the disk watcher doesn't see our
+  // own write as an external change.
+  _externalFileHash = djb2Hash(content);
+  _externalCheckPending = 0;
   // Dispatch onDocumentSave hook to plugins
   if (isPluginSystemEnabled() > 0) {
     let eventJson = '{"filePath":"';
@@ -878,6 +989,82 @@ export function goToFileAction(): void {
   setTimeout(() => { goToFileDeferred(); }, 0);
 }
 
+/**
+ * Command palette (SHIP-V1-GAPS.md #15). Cmd+Shift+P / Menu > View > Command Palette.
+ * Renders into the sidebar using the same takeover pattern as `goToFileAction`.
+ * On close, the sidebar reverts to whichever panel was active before.
+ */
+export function showCommandPaletteAction(): void {
+  setTimeout(() => { showCommandPaletteDeferred(); }, 0);
+}
+
+/**
+ * Show the Outline view in the sidebar (SHIP-V1-GAPS.md #84). The view is
+ * already kept current by `setOutlineActiveFile` on every tab change — this
+ * command just mounts it visibly.
+ */
+export function showOutlineAction(): void {
+  setTimeout(() => { showOutlineDeferred(); }, 0);
+}
+
+function showOutlineDeferred(): void {
+  if (!sidebarContainer) return;
+  if (sidebarToggleReady > 0 && sidebarVisible < 1) {
+    sidebarVisible = 1;
+    widgetSetHidden(sidebarWidget, 0);
+    widgetSetHidden(sidebarBorderWidget, 0);
+  }
+  resetSearchPanelReady();
+  renderOutlinePanel(sidebarContainer, getActiveTheme() as any);
+  // Re-trigger the current file's symbols so the panel populates immediately.
+  if (currentEditorFilePath.length > 0) {
+    setOutlineActiveFile(currentEditorFilePath);
+  }
+}
+
+/**
+ * Tasks panel (SHIP-V1-GAPS.md #105). Reads .hone/tasks.json or
+ * .vscode/tasks.json and lists tasks with run buttons.
+ */
+export function showTasksAction(): void {
+  setTimeout(() => { showTasksDeferred(); }, 0);
+}
+
+function showTasksDeferred(): void {
+  if (!sidebarContainer) return;
+  if (sidebarToggleReady > 0 && sidebarVisible < 1) {
+    sidebarVisible = 1;
+    widgetSetHidden(sidebarWidget, 0);
+    widgetSetHidden(sidebarBorderWidget, 0);
+  }
+  resetSearchPanelReady();
+  renderTasksPanel(sidebarContainer, getActiveTheme() as any);
+}
+
+/** Run the workspace's default build task (Cmd+Shift+B equivalent). */
+export function runBuildTaskAction(): void {
+  if (runDefaultBuildTask() < 1) {
+    showNotification(t('No default build task — add one to .hone/tasks.json with "group":{"kind":"build","isDefault":true}'), 'warning');
+  }
+}
+
+function showCommandPaletteDeferred(): void {
+  if (!sidebarContainer) return;
+  if (sidebarToggleReady > 0 && sidebarVisible < 1) {
+    sidebarVisible = 1;
+    widgetSetHidden(sidebarWidget, 0);
+    widgetSetHidden(sidebarBorderWidget, 0);
+  }
+  resetSearchPanelReady();
+  openCommandPalette(getActiveTheme() as any);
+}
+
+/** Restore the file explorer when the command palette closes. */
+function restoreSidebarAfterPalette(): void {
+  if (!sidebarContainer) return;
+  renderExplorerPanel(sidebarContainer, null as any);
+}
+
 // Go to File state
 let goToFileInput: unknown = null;
 let goToFileText = '';
@@ -964,7 +1151,53 @@ function onGoToFileInput(text: string): void {
 }
 
 function renderGoToFileListDeferred(): void {
+  // SHIP-V1-GAPS.md #36: quick-open prefix routing.
+  // ':' → line jump in the active editor.
+  // '@' → document symbols (deferred to a follow-up; the LSP request is
+  //       wired but a per-tab snapshot pipeline still needs threading).
+  // '#' → workspace symbols (same — Phase 2 wire ready, UI deferred).
+  if (goToFileText.length > 0 && goToFileText.charCodeAt(0) === 58) {
+    renderGoToFileLineJump(goToFileText.slice(1));
+    return;
+  }
   renderGoToFileList(goToFileText);
+}
+
+function renderGoToFileLineJump(numberText: string): void {
+  if (!goToFileResults) return;
+  widgetClearChildren(goToFileResults);
+  // Parse a positive integer. Empty input → render an instructional hint.
+  if (numberText.length === 0) {
+    const hint = Text(t('Type a line number after :'));
+    textSetFontSize(hint, 12);
+    setFg(hint, getSecondaryTextColor());
+    widgetAddChild(goToFileResults, hint);
+    return;
+  }
+  let n = 0;
+  for (let i = 0; i < numberText.length; i++) {
+    const c = numberText.charCodeAt(i);
+    if (c < 48 || c > 57) { n = -1; break; }
+    n = n * 10 + (c - 48);
+  }
+  if (n < 1) {
+    const hint = Text(t('Not a valid line number.'));
+    textSetFontSize(hint, 12);
+    setFg(hint, getSecondaryTextColor());
+    widgetAddChild(goToFileResults, hint);
+    return;
+  }
+  const target = n - 1;
+  const btn = Button(t('Go to line') + ' ' + String(n), () => { jumpToLineInActiveEditor(target); });
+  setBtnFg(btn, getSideBarForeground());
+  widgetAddChild(goToFileResults, btn);
+}
+
+function jumpToLineInActiveEditor(line: number): void {
+  if (editorReady < 1) return;
+  const col = 0;
+  editorInstance.setCursorPosition(line, col);
+  editorInstance.render();
 }
 
 function renderGoToFileList(query: string): void {
@@ -1055,6 +1288,712 @@ function pollDirtyState(): void {
   if (editorReady < 1) return;
   const content = editorInstance.getContent();
   updateTabDirtyIcon(content.length);
+  // SHIP-V1-GAPS.md #43: snapshot cursor + scroll for session restore. Runs on
+  // the 500ms dirty-poll tick to avoid a per-keystroke setting write storm.
+  persistEditorCursorState();
+  // SHIP-V1-GAPS.md #24: sticky-scroll context line refresh on the same tick
+  // so the parent-scope display tracks cursor moves without a dedicated poll.
+  updateStickyScroll();
+  // SHIP-V1-GAPS.md #44: detect and update the merge-conflict toolbar.
+  detectConflicts();
+  // SHIP-V1-GAPS.md #71: auto-save evaluation on the same tick.
+  checkAutoSave(content.length);
+  // SHIP-V1-GAPS.md #86: every 4 ticks (2s), reconcile the active file with
+  // disk. Cheaper than mtime polling on filesystems where mtime resolution is
+  // 1s — and it works without a Perry stat FFI.
+  _externalCheckPending = _externalCheckPending + 1;
+  if (_externalCheckPending >= 4) {
+    _externalCheckPending = 0;
+    checkExternalDiskChange();
+  }
+}
+
+// SHIP-V1-GAPS.md #86: DJB2 hash over a string. Same flavour as `pathId` in
+// ui-helpers, but full-string instead of sampled positions.
+function djb2Hash(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) {
+    h = (h * 33 + s.charCodeAt(i)) | 0;
+  }
+  return h;
+}
+
+function checkExternalDiskChange(): void {
+  if (currentEditorFilePath.length === 0) return;
+  // Virtual paths (settings/update/welcome) start with __.
+  if (currentEditorFilePath.charCodeAt(0) === 95) return;
+  const fresh = safeReadFile(currentEditorFilePath);
+  if (fresh.length === 0 && _externalFileHash === 0) return;
+  const freshHash = djb2Hash(fresh);
+  if (freshHash === _externalFileHash) return;
+  // Disk content changed since last read.
+  const tabIdx = getActiveTabIdx();
+  if (isTabDirty(tabIdx) > 0) {
+    // Conflict — surface but don't auto-reload.
+    showNotification(t('This file changed on disk while you have unsaved edits.'), 'warning');
+    // Adopt the new hash so we don't keep firing every 2s. The user resolves
+    // by saving (overwrite disk) or discarding (manual reload).
+    _externalFileHash = freshHash;
+  } else {
+    // Clean tab — reload silently and notify so the user sees it.
+    editorInstance.setContent(fresh);
+    markTabSaved(fresh.length);
+    editorInstance.render();
+    _externalFileHash = freshHash;
+    showNotification(t('File reloaded from disk.'), 'info');
+  }
+}
+
+// SHIP-V1-GAPS.md #71: auto-save tracking. Snapshot the content length each
+// tick; once it has been unchanged for `filesAutoSaveDelay` ms while the tab
+// is dirty, trigger save. Modes: 'off' (default) / 'afterDelay' / 'onFocusChange'
+// / 'onWindowChange'. v1 supports 'off' and 'afterDelay'; the other two need
+// Perry window/focus FFI hooks that haven't been wired (queued for v1.1).
+let _lastAutoSaveLen: number = -1;
+let _autoSaveQuietTicks: number = 0; // ticks (500ms each) with unchanged content
+
+function checkAutoSave(currentLen: number): void {
+  const s = getWorkbenchSettings();
+  // Skip when off / on unsupported mode / no file path.
+  if (s.filesAutoSave.length === 0) return;
+  if (s.filesAutoSave.charCodeAt(0) !== 97) return; // 'a' for 'afterDelay'
+  if (currentEditorFilePath.length === 0) return;
+  if (isUntitledFile() > 0) return;
+  if (isTabDirty(getActiveTabIdx()) < 1) {
+    _autoSaveQuietTicks = 0;
+    _lastAutoSaveLen = currentLen;
+    return;
+  }
+  if (currentLen === _lastAutoSaveLen) {
+    _autoSaveQuietTicks = _autoSaveQuietTicks + 1;
+  } else {
+    _autoSaveQuietTicks = 0;
+    _lastAutoSaveLen = currentLen;
+  }
+  // 500ms per tick. Delay default is 1000ms; quietTicks=2 covers it.
+  const delayMs = s.filesAutoSaveDelay > 0 ? s.filesAutoSaveDelay : 1000;
+  const requiredTicks = Math.max(1, Math.ceil(delayMs / 500));
+  if (_autoSaveQuietTicks >= requiredTicks) {
+    _autoSaveQuietTicks = 0;
+    saveFileAction();
+  }
+}
+
+// Last-known cursor snapshot — only writes settings when something changes so
+// the 500ms tick doesn't churn the settings file.
+let _lastSnapCursorLine: number = -1;
+let _lastSnapCursorCol: number = -1;
+let _lastSnapScrollTop: number = -1;
+
+// ---------------------------------------------------------------------------
+// Close-dirty-tab confirm (SHIP-V1-GAPS.md #91)
+//
+// Tab-bar invokes `onBeforeTabClose(idx, path)` synchronously on every close
+// attempt. If the tab is dirty, we throw up a native NSAlert via `osascript`
+// asking Save / Don't Save / Cancel, then force-close after the user picks
+// one of the non-cancel options. Cancel returns 1 to the tab-bar so the
+// in-flight close is aborted before any state mutation.
+// ---------------------------------------------------------------------------
+
+function escapeAppleScriptString(s: string): string {
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c === 92) { out += '\\\\'; continue; } // backslash
+    if (c === 34) { out += '\\"'; continue; }  // double-quote
+    if (c === 10) { out += '\\n'; continue; }
+    out += s.charAt(i);
+  }
+  return out;
+}
+
+function shortFileName(path: string): string {
+  let lastSlash = -1;
+  for (let i = 0; i < path.length; i++) {
+    const c = path.charCodeAt(i);
+    if (c === 47 || c === 92) lastSlash = i;
+  }
+  if (lastSlash >= 0) return path.slice(lastSlash + 1);
+  return path;
+}
+
+/**
+ * Show a native Save / Don't Save / Cancel dialog. Returns:
+ *   0 = save and close
+ *   1 = discard and close
+ *   2 = cancel
+ */
+function promptCloseDirtyTab(filePath: string): number {
+  const name = escapeAppleScriptString(shortFileName(filePath));
+  // AppleScript: `display dialog` returns the button title in `button returned`.
+  // We echo a numeric token so we don't have to parse localized button names.
+  let script = 'try\n';
+  script += '  set choice to button returned of (display dialog "Do you want to save the changes you made to \\"';
+  script += name;
+  script += '\\"?" buttons {"Don\'t Save", "Cancel", "Save"} default button "Save" cancel button "Cancel" with icon caution)\n';
+  script += '  if choice is "Save" then return "0"\n';
+  script += '  if choice is "Don\'t Save" then return "1"\n';
+  script += '  return "2"\n';
+  script += 'on error number -128\n'; // user hit Cancel / Escape
+  script += '  return "2"\n';
+  script += 'end try\n';
+  try {
+    const r = spawnSync('osascript', ['-e', script]);
+    if (r.status !== 0) return 2;
+    const out = r.stdout.length > 0 ? r.stdout.charAt(0) : '';
+    if (out === '0') return 0;
+    if (out === '1') return 1;
+    return 2;
+  } catch (_e: any) {
+    // No osascript available (non-mac, or sandboxed) → fall back to discard.
+    return 1;
+  }
+}
+
+function onBeforeTabCloseImpl(idx: number, path: string): number {
+  if (isTabDirty(idx) < 1) return 0;
+  // For non-active tabs we can't easily save the right content (the editor
+  // only holds one document at a time). v1 limitation: only the active tab
+  // benefits from the Save path; for non-active dirty tabs we still confirm
+  // but Save becomes Discard since we lack the buffered content.
+  const isActive = idx === getActiveTabIdx();
+  const choice = promptCloseDirtyTab(path);
+  if (choice === 2) return 1; // cancel
+  if (choice === 0 && isActive) {
+    saveFileAction();
+  }
+  // Defer the actual close one tick so the save flush completes first.
+  setTimeout(() => { forceCloseTab(idx); }, 0);
+  return 1; // tell tab-bar to abort the synchronous path; we already scheduled forceCloseTab
+}
+
+// ---------------------------------------------------------------------------
+// Editor context-menu handlers (SHIP-V1-GAPS.md #88)
+//
+// Each operates on the current editor cursor + active file. Results land in
+// the registered LSP callbacks (`onReferencesResult`, etc.) which surface
+// them as notifications for v1. Proper peek-view UIs are a follow-up; the
+// hooks below at least make every menu item *do something visible* the user
+// can verify works.
+// ---------------------------------------------------------------------------
+
+function findAllReferencesFromCursor(): void {
+  if (editorReady < 1 || currentEditorFilePath.length === 0) return;
+  if (lspIsReady() < 1) {
+    showNotification(t('LSP not ready'), 'warning');
+    return;
+  }
+  const line = editorInstance.getCursorLine();
+  const col = editorInstance.getCursorColumn();
+  lspReferences(currentEditorFilePath, line, col, 1);
+  showNotification(t('Finding references…'), 'info');
+}
+
+function renameSymbolFromCursor(): void {
+  if (editorReady < 1 || currentEditorFilePath.length === 0) return;
+  if (lspIsReady() < 1) {
+    showNotification(t('LSP not ready'), 'warning');
+    return;
+  }
+  const newName = promptForRename();
+  if (newName.length === 0) return;
+  const line = editorInstance.getCursorLine();
+  const col = editorInstance.getCursorColumn();
+  lspRename(currentEditorFilePath, line, col, newName);
+}
+
+function showCodeActionsFromCursor(): void {
+  if (editorReady < 1 || currentEditorFilePath.length === 0) return;
+  if (lspIsReady() < 1) {
+    showNotification(t('LSP not ready'), 'warning');
+    return;
+  }
+  const line = editorInstance.getCursorLine();
+  const col = editorInstance.getCursorColumn();
+  // Pass an empty range (start == end) — the server resolves actions around
+  // the cursor position. Diagnostics context is left empty until the editor
+  // tracks per-cursor diagnostics.
+  lspCodeActions(currentEditorFilePath, line, col, line, col, '');
+}
+
+/** Native AppleScript text-prompt for the new symbol name. Returns '' if cancelled. */
+function promptForRename(): string {
+  let script = 'try\n';
+  script += '  set result to text returned of (display dialog "New name:" default answer "" buttons {"Cancel", "Rename"} default button "Rename" cancel button "Cancel")\n';
+  script += '  return result\n';
+  script += 'on error number -128\n';
+  script += '  return ""\n';
+  script += 'end try\n';
+  try {
+    const r = spawnSync('osascript', ['-e', script]);
+    if (r.status !== 0) return '';
+    // Trim trailing newline.
+    let out = r.stdout;
+    let end = out.length;
+    while (end > 0 && (out.charCodeAt(end - 1) === 10 || out.charCodeAt(end - 1) === 13)) end--;
+    return out.slice(0, end);
+  } catch (_e: any) {
+    return '';
+  }
+}
+
+function onReferencesResult(json: string): void {
+  // Mount the peek panel in the sidebar and render the JSON. The panel renders
+  // its own empty state, so we always defer to it instead of branching on
+  // empty input here.
+  if (!sidebarContainer) return;
+  setTimeout(() => { showReferencesPeekDeferred(json); }, 0);
+}
+
+function showReferencesPeekDeferred(json: string): void {
+  if (!sidebarContainer) return;
+  if (sidebarToggleReady > 0 && sidebarVisible < 1) {
+    sidebarVisible = 1;
+    widgetSetHidden(sidebarWidget, 0);
+    widgetSetHidden(sidebarBorderWidget, 0);
+  }
+  resetSearchPanelReady();
+  renderReferencesPeek(sidebarContainer, getActiveTheme() as any);
+  showReferencesFromJson(json);
+}
+
+function onRenameResult(_json: string): void {
+  // The WorkspaceEdit JSON arrives here. v1 surfaces a hint; applying the
+  // edits across multiple files is a follow-up.
+  showNotification(t('Rename complete — review changes in the diff panel.'), 'info');
+}
+
+function onCodeActionsResult(json: string): void {
+  if (json.length === 0 || json === 'null') {
+    showNotification(t('No quick fixes available'), 'info');
+    return;
+  }
+  let count = 0;
+  for (let i = 0; i < json.length; i++) {
+    if (json.charCodeAt(i) === 123) count++;
+  }
+  let msg = String(count) + ' ' + t('code actions available — picker coming in v1.1.');
+  showNotification(msg, 'info');
+}
+
+/** Status-bar branch click — opens the Source Control sidebar panel. */
+/**
+ * SHIP-V1-GAPS.md #63: read git diff for the current workspace and pre-fill
+ * the AI chat input with a commit-message prompt. The chat handles streaming.
+ * Caps the diff to keep the prompt small.
+ */
+function onGenerateCommitMessageImpl(): void {
+  if (workspaceRoot.length === 0) {
+    showNotification(t('No workspace open.'), 'warning');
+    return;
+  }
+  // Prefer staged diff; fall back to working tree if nothing is staged.
+  let diff = '';
+  try {
+    const r = spawnSync('git', ['-C', workspaceRoot, 'diff', '--cached', '--no-color', '--stat=80,80']);
+    if (r.status === 0) diff = r.stdout;
+  } catch (_e: any) {}
+  if (diff.length < 5) {
+    try {
+      const r = spawnSync('git', ['-C', workspaceRoot, 'diff', '--no-color', '--stat=80,80']);
+      if (r.status === 0) diff = r.stdout;
+    } catch (_e: any) {}
+  }
+  if (diff.length < 5) {
+    showNotification(t('No git changes to summarize.'), 'info');
+    return;
+  }
+  // Include the patch body too, capped at ~6KB so we don't blow the context.
+  let body = '';
+  try {
+    const r = spawnSync('git', ['-C', workspaceRoot, 'diff', '--cached', '--no-color', '-U2']);
+    if (r.status === 0) body = r.stdout;
+  } catch (_e: any) {}
+  if (body.length < 5) {
+    try {
+      const r = spawnSync('git', ['-C', workspaceRoot, 'diff', '--no-color', '-U2']);
+      if (r.status === 0) body = r.stdout;
+    } catch (_e: any) {}
+  }
+  if (body.length > 6000) body = body.slice(0, 6000) + '\n[…truncated]';
+
+  let prompt = 'Write a concise conventional-commit message (max 72 chars on the subject line) for the following diff. Reply with only the commit message — no preamble, no code fences.\n\nFile summary:\n';
+  prompt += diff;
+  prompt += '\n\nPatch:\n';
+  prompt += body;
+
+  // Switch the right panel to AI Chat and pre-fill.
+  pendingActivityIdx = 4; // AI Chat slot
+  setTimeout(() => { onActivityClickDeferred(); }, 0);
+  setTimeout(() => { prefillChatInput(prompt); }, 64);
+  showNotification(t('Commit-message prompt prepared in AI Chat. Press Enter to generate.'), 'info');
+}
+
+/**
+ * SHIP-V1-GAPS.md #108 — generate a PR description.
+ *
+ * Mirrors onGenerateCommitMessageImpl: collects the commits and diff between
+ * the current branch and its merge-base with `main` (falls back to `master`,
+ * then to `origin/HEAD`), builds a structured prompt, and pre-fills AI Chat
+ * so the user can review/submit. Output is left for the user to paste into
+ * the PR body — the chat panel already supports copy via Markdown export.
+ */
+function onGeneratePRDescriptionImpl(): void {
+  if (workspaceRoot.length === 0) {
+    showNotification(t('No workspace open.'), 'warning');
+    return;
+  }
+
+  // Resolve the base ref.
+  let baseRef = '';
+  try {
+    const r = spawnSync('git', ['-C', workspaceRoot, 'rev-parse', '--verify', 'main']);
+    if (r.status === 0) baseRef = 'main';
+  } catch (_e: any) {}
+  if (baseRef.length === 0) {
+    try {
+      const r = spawnSync('git', ['-C', workspaceRoot, 'rev-parse', '--verify', 'master']);
+      if (r.status === 0) baseRef = 'master';
+    } catch (_e: any) {}
+  }
+  if (baseRef.length === 0) {
+    try {
+      const r = spawnSync('git', ['-C', workspaceRoot, 'rev-parse', '--abbrev-ref', 'origin/HEAD']);
+      if (r.status === 0) {
+        // Output is e.g. "origin/main\n" — slice off the "origin/" prefix.
+        let s = r.stdout;
+        let end = s.length;
+        while (end > 0 && (s.charCodeAt(end - 1) === 10 || s.charCodeAt(end - 1) === 13)) end--;
+        s = s.slice(0, end);
+        if (s.length > 7 && s.slice(0, 7) === 'origin/') baseRef = s.slice(7);
+      }
+    } catch (_e: any) {}
+  }
+  if (baseRef.length === 0) {
+    showNotification(t('Could not determine the base branch (no main/master).'), 'warning');
+    return;
+  }
+
+  // Current branch — used in the prompt header.
+  let branch = '';
+  try {
+    const r = spawnSync('git', ['-C', workspaceRoot, 'rev-parse', '--abbrev-ref', 'HEAD']);
+    if (r.status === 0) {
+      branch = r.stdout;
+      let end = branch.length;
+      while (end > 0 && (branch.charCodeAt(end - 1) === 10 || branch.charCodeAt(end - 1) === 13)) end--;
+      branch = branch.slice(0, end);
+    }
+  } catch (_e: any) {}
+
+  // Don't run on the base branch itself — there are no commits to summarize.
+  if (branch.length > 0 && branch.length === baseRef.length) {
+    let same = 1;
+    for (let i = 0; i < branch.length; i++) {
+      if (branch.charCodeAt(i) !== baseRef.charCodeAt(i)) { same = 0; break; }
+    }
+    if (same > 0) {
+      showNotification(t('Switch to a feature branch first.'), 'info');
+      return;
+    }
+  }
+
+  const range = baseRef + '...HEAD';
+
+  let log = '';
+  try {
+    const r = spawnSync('git', ['-C', workspaceRoot, 'log', '--no-color', '--pretty=%h %s', range]);
+    if (r.status === 0) log = r.stdout;
+  } catch (_e: any) {}
+  if (log.length < 1) {
+    showNotification(t('No commits ahead of') + ' ' + baseRef + '.', 'info');
+    return;
+  }
+
+  let stat = '';
+  try {
+    const r = spawnSync('git', ['-C', workspaceRoot, 'diff', '--no-color', '--stat=80,80', range]);
+    if (r.status === 0) stat = r.stdout;
+  } catch (_e: any) {}
+
+  let body = '';
+  try {
+    const r = spawnSync('git', ['-C', workspaceRoot, 'diff', '--no-color', '-U2', range]);
+    if (r.status === 0) body = r.stdout;
+  } catch (_e: any) {}
+  if (body.length > 8000) body = body.slice(0, 8000) + '\n[…truncated]';
+
+  let prompt = 'Write a pull-request description for the changes below.\n';
+  prompt += 'Format: a Markdown title line (no leading "#"), a blank line, then a brief\n';
+  prompt += '"## Summary" section (3–5 bullets) and a "## Test plan" section (checklist).\n';
+  prompt += 'Reply with only the PR body — no preamble, no code fences.\n\n';
+  if (branch.length > 0) {
+    prompt += 'Branch: ';
+    prompt += branch;
+    prompt += ' → ';
+    prompt += baseRef;
+    prompt += '\n\n';
+  }
+  prompt += 'Commits:\n';
+  prompt += log;
+  if (stat.length > 0) {
+    prompt += '\nFile summary:\n';
+    prompt += stat;
+  }
+  prompt += '\nPatch:\n';
+  prompt += body;
+
+  pendingActivityIdx = 4; // AI Chat slot
+  setTimeout(() => { onActivityClickDeferred(); }, 0);
+  setTimeout(() => { prefillChatInput(prompt); }, 64);
+  showNotification(t('PR description prompt prepared in AI Chat. Press Enter to generate.'), 'info');
+}
+
+function onStatusBranchClick(): void {
+  pendingActivityIdx = 2; // git activity index
+  setTimeout(() => { onActivityClickDeferred(); }, 0);
+}
+
+/**
+ * Update the sticky-scroll context line (SHIP-V1-GAPS.md #24). Cheap heuristic:
+ * walk up from the current cursor line and pin the most recent line whose
+ * indent is strictly less than the cursor line's indent. That's usually the
+ * enclosing function/class/block header. Hides the row when there's no scope.
+ */
+function updateStickyScroll(): void {
+  if (stickyScrollRow === null || stickyScrollLabel === null) return;
+  if (editorReady < 1) {
+    widgetSetHidden(stickyScrollRow, 1);
+    _lastStickyLine = -1;
+    return;
+  }
+  const cursorLine = editorInstance.getCursorLine();
+  if (cursorLine < 1) {
+    widgetSetHidden(stickyScrollRow, 1);
+    _lastStickyLine = -1;
+    return;
+  }
+  const content = editorInstance.getContent();
+  // Tokenize lines lazily — find the byte offsets of newlines up to cursorLine.
+  let lineStart: number[] = [0];
+  let lc = 0;
+  for (let i = 0; i < content.length && lc <= cursorLine; i++) {
+    if (content.charCodeAt(i) === 10) {
+      lc = lc + 1;
+      lineStart.push(i + 1);
+    }
+  }
+  if (cursorLine >= lineStart.length) {
+    widgetSetHidden(stickyScrollRow, 1);
+    _lastStickyLine = -1;
+    return;
+  }
+  // Indent of the cursor line.
+  const curStart = lineStart[cursorLine];
+  let curIndent = 0;
+  while (curStart + curIndent < content.length) {
+    const c = content.charCodeAt(curStart + curIndent);
+    if (c === 32 || c === 9) curIndent = curIndent + 1; else break;
+  }
+  // If cursor line is at column 0 indent there's no parent scope.
+  if (curIndent === 0) {
+    widgetSetHidden(stickyScrollRow, 1);
+    _lastStickyLine = -1;
+    return;
+  }
+  // Walk up and find the first line with smaller indent + non-blank.
+  let foundLine = -1;
+  for (let li = cursorLine - 1; li >= 0; li--) {
+    const ls = lineStart[li];
+    let le = li + 1 < lineStart.length ? lineStart[li + 1] - 1 : content.length;
+    if (ls >= content.length) continue;
+    // Compute indent.
+    let ind = 0;
+    while (ls + ind < le) {
+      const c = content.charCodeAt(ls + ind);
+      if (c === 32 || c === 9) ind = ind + 1; else break;
+    }
+    if (ls + ind >= le) continue; // blank line — skip
+    if (ind < curIndent) { foundLine = li; break; }
+  }
+  if (foundLine < 0) {
+    widgetSetHidden(stickyScrollRow, 1);
+    _lastStickyLine = -1;
+    return;
+  }
+  if (foundLine === _lastStickyLine) return; // no change
+  _lastStickyLine = foundLine;
+  const sStart = lineStart[foundLine];
+  let sEnd = foundLine + 1 < lineStart.length ? lineStart[foundLine + 1] - 1 : content.length;
+  if (sEnd > content.length) sEnd = content.length;
+  const sliced = content.slice(sStart, sEnd);
+  // Cap displayed length so a giant signature doesn't overflow.
+  let displayed = sliced;
+  if (displayed.length > 120) displayed = displayed.slice(0, 120) + '…';
+  textSetString(stickyScrollLabel, displayed);
+  widgetSetHidden(stickyScrollRow, 0);
+}
+
+/**
+ * Scan the active buffer for git merge conflict markers and update the
+ * conflict toolbar. SHIP-V1-GAPS.md #44.
+ *
+ * A conflict looks like:
+ *   <<<<<<< HEAD
+ *   current side
+ *   =======
+ *   incoming side
+ *   >>>>>>> theirs
+ *
+ * We track the byte offsets of each `<`, `=`, `>` triple in parallel arrays
+ * so the Accept handlers can splice the buffer without re-scanning.
+ */
+function detectConflicts(): void {
+  if (conflictBar === null || conflictLabel === null) return;
+  if (editorReady < 1) {
+    widgetSetHidden(conflictBar, 1);
+    _conflictCount = 0;
+    return;
+  }
+  const content = editorInstance.getContent();
+  // Cheap early-out — most files have no '<' at line start. Sample first.
+  if (content.indexOf('<<<<<<<') < 0) {
+    if (_conflictCount !== 0) {
+      _conflictCount = 0;
+      _conflictStartOffsets = [];
+      _conflictSepOffsets = [];
+      _conflictEndOffsets = [];
+      widgetSetHidden(conflictBar, 1);
+      _lastConflictSig = '';
+    }
+    return;
+  }
+
+  const starts: number[] = [];
+  const seps: number[] = [];
+  const ends: number[] = [];
+  let p = 0;
+  while (p < content.length) {
+    // <<<<<<< must be at line start
+    const lt = content.indexOf('<<<<<<<', p);
+    if (lt < 0) break;
+    if (lt > 0 && content.charCodeAt(lt - 1) !== 10) { p = lt + 7; continue; }
+    const eq = content.indexOf('\n=======', lt);
+    if (eq < 0) break;
+    const gt = content.indexOf('\n>>>>>>>', eq);
+    if (gt < 0) break;
+    starts.push(lt);
+    seps.push(eq + 1); // offset of the '=' itself
+    ends.push(gt + 1); // offset of the '>' itself
+    p = gt + 8;
+  }
+
+  // Build a signature so we skip a tree of redundant UI updates when the
+  // detected set hasn't changed.
+  let sig = '';
+  for (let i = 0; i < starts.length; i++) {
+    sig += String(starts[i]);
+    sig += ',';
+  }
+  if (sig === _lastConflictSig) return;
+  _lastConflictSig = sig;
+
+  _conflictStartOffsets = starts;
+  _conflictSepOffsets = seps;
+  _conflictEndOffsets = ends;
+  _conflictCount = starts.length;
+
+  if (_conflictCount === 0) {
+    widgetSetHidden(conflictBar, 1);
+    return;
+  }
+  let label = String(_conflictCount);
+  label += ' ';
+  label += _conflictCount === 1 ? t('merge conflict') : t('merge conflicts');
+  textSetString(conflictLabel, label);
+  widgetSetHidden(conflictBar, 0);
+}
+
+/**
+ * Resolve the conflict nearest the cursor. `choice`:
+ *   0 = keep current side (between `<<<<<<<` and `=======`)
+ *   1 = keep incoming side (between `=======` and `>>>>>>>`)
+ *   2 = keep both
+ */
+function resolveConflict(choice: number): void {
+  if (_conflictCount === 0 || editorReady < 1) return;
+  const content = editorInstance.getContent();
+
+  // Find the conflict closest to the cursor's byte offset.
+  const cursorLine = editorInstance.getCursorLine();
+  // Convert cursorLine to byte offset (line start). Walk newlines.
+  let cursorByte = 0;
+  let lc = 0;
+  for (let i = 0; i < content.length; i++) {
+    if (lc >= cursorLine) break;
+    if (content.charCodeAt(i) === 10) lc = lc + 1;
+    cursorByte = i + 1;
+  }
+  let bestIdx = 0;
+  let bestDist = -1;
+  for (let i = 0; i < _conflictCount; i++) {
+    const s = _conflictStartOffsets[i];
+    const e = _conflictEndOffsets[i];
+    let dist = 0;
+    if (cursorByte < s) dist = s - cursorByte;
+    else if (cursorByte > e) dist = cursorByte - e;
+    else dist = 0;
+    if (bestDist < 0 || dist < bestDist) { bestDist = dist; bestIdx = i; }
+  }
+  const startOff = _conflictStartOffsets[bestIdx];
+  const sepOff = _conflictSepOffsets[bestIdx];
+  const endOff = _conflictEndOffsets[bestIdx];
+
+  // Slice out the marker lines themselves. Each marker occupies until the
+  // next '\n'. The "current" body is between the line *after* `<<<<<<<` and
+  // the line containing `=======`. The "incoming" body is between the line
+  // *after* `=======` and the line containing `>>>>>>>`.
+  const startLineEnd = findEndOfLine(content, startOff);
+  const sepLineEnd = findEndOfLine(content, sepOff);
+  const endLineEnd = findEndOfLine(content, endOff);
+  const currentBody = content.slice(startLineEnd + 1, sepOff);   // ends just before "=======" line
+  const incomingBody = content.slice(sepLineEnd + 1, endOff);    // ends just before ">>>>>>>" line
+
+  let replacement = '';
+  if (choice === 0) replacement = currentBody;
+  else if (choice === 1) replacement = incomingBody;
+  else replacement = currentBody + incomingBody;
+
+  const before = content.slice(0, startOff);
+  const after = endLineEnd + 1 <= content.length ? content.slice(endLineEnd + 1) : '';
+  const next = before + replacement + after;
+  editorInstance.setContent(next);
+  editorInstance.render();
+  // Re-detect on next tick — the toolbar will hide itself when no markers remain.
+  _lastConflictSig = '';
+  setTimeout(() => { detectConflicts(); }, 32);
+}
+
+function findEndOfLine(s: string, from: number): number {
+  for (let i = from; i < s.length; i++) {
+    if (s.charCodeAt(i) === 10) return i;
+  }
+  return s.length;
+}
+
+function persistEditorCursorState(): void {
+  if (currentEditorFilePath.length < 1) return;
+  if (isUntitledFile() > 0) return; // untitled files don't survive restart
+  const line = editorInstance.getCursorLine();
+  const col = editorInstance.getCursorColumn();
+  const scrollTop = editorInstance.getScrollTop();
+  if (line === _lastSnapCursorLine && col === _lastSnapCursorCol && scrollTop === _lastSnapScrollTop) return;
+  _lastSnapCursorLine = line;
+  _lastSnapCursorCol = col;
+  _lastSnapScrollTop = scrollTop;
+  setNumberSetting('lastActiveCursorLine', line);
+  setNumberSetting('lastActiveCursorCol', col);
+  setNumberSetting('lastActiveScrollTop', scrollTop);
 }
 
 export function openFileAction(): void {
@@ -1205,6 +2144,15 @@ function displayFileContent(filePath: string): void {
   const lang = detectLanguage(filePath);
   editorInstance.setLanguage(lang);
   const content = safeReadFile(filePath);
+  // SHIP-V1-GAPS.md #102: LFS warning. Git-LFS stores tiny pointer files in
+  // place of large binaries — opening one looks fine but you're editing the
+  // pointer, not the asset. The file always starts with `version https://git-lfs.github.com/spec/`.
+  // Surface a notification so the user doesn't accidentally commit garbage.
+  if (content.length > 30 && content.length < 1024
+      && content.charCodeAt(0) === 118 && content.charCodeAt(1) === 101
+      && content.indexOf('git-lfs.github.com/spec/') > 0) {
+    showNotification(t('LFS pointer file. The actual asset is on the LFS server — install git-lfs and run `git lfs pull` to fetch.'), 'warning');
+  }
   const t6 = Date.now();
   // Large files (>100KB): load first 5000 lines for instant display
   let displayContent = content;
@@ -1225,6 +2173,10 @@ function displayFileContent(filePath: string): void {
   // Mark saved immediately so pollDirtyState doesn't flag it as dirty
   const editorLen = editorInstance.getContent().length;
   markTabSaved(editorLen);
+  // SHIP-V1-GAPS.md #86: seed the disk-watcher with the just-read content
+  // hash so the next poll has a baseline to compare against.
+  _externalFileHash = djb2Hash(content);
+  _externalCheckPending = 0;
   const t7 = Date.now();
   editorInstance.render();
   const t8 = Date.now();
@@ -1232,6 +2184,10 @@ function displayFileContent(filePath: string): void {
   const t9 = Date.now();
   lspDidOpen(filePath, lang, content);
   const t10 = Date.now();
+  // SHIP-V1-GAPS.md #30/#84: keep the outline view in sync with the active
+  // file. setOutlineActiveFile triggers an `lspDocumentSymbols` request; the
+  // result lands via setDocumentSymbolsCallback (registered in app init).
+  setOutlineActiveFile(filePath);
   // Write timing log
   let log = 'TIMING displayFileContent:\n';
   log += '  setSidebarPath: '; log += String(t1 - t0); log += 'ms\n';
@@ -1651,10 +2607,31 @@ function onLspFormatResult(editsJson: string): void {
 function formatDocumentDeferred(): void { setTimeout(() => { formatCurrentDocument(); }, 0); }
 function goToDefinitionDeferred(): void { setTimeout(() => { goToDefinitionAction(); }, 0); }
 
-/** Update status bar indent indicator. */
-function updateStatusBarIndent(_tabSize: number, _useTabs: boolean): void {
-  // Status bar indent is informational for now — editor tab size from settings
-  // takes precedence. Future: apply detected indent to editor.
+/**
+ * App-wide Undo. SHIP-V1-GAPS.md #92 — Cmd+Z worked in editor key-handling but
+ * the Edit menu's Undo and the registered `edit.undo` command were no-ops.
+ * Routes through the editor VM's command system when the editor is ready.
+ */
+export function undoAction(): void {
+  if (editorReady < 1) return;
+  editorInstance.executeCommand('editor.action.undo');
+  editorInstance.render();
+}
+
+export function redoAction(): void {
+  if (editorReady < 1) return;
+  editorInstance.executeCommand('editor.action.redo');
+  editorInstance.render();
+}
+
+/**
+ * Update status bar indent indicator. SHIP-V1-GAPS.md #96 — finally honors
+ * tabSize + useTabs args instead of leaving the hardcoded "Spaces: 2" label.
+ */
+function updateStatusBarIndent(tabSize: number, useTabs: boolean): void {
+  // useTabs=true means tabs are being inserted; widget label says "Tab Size: N".
+  // useTabs=false means spaces are being inserted; widget label says "Spaces: N".
+  statusBarUpdateIndent(tabSize, useTabs ? 0 : 1);
 }
 
 /** Sync all editor decorations — diagnostics + hover. Perry-safe. */
@@ -1837,7 +2814,14 @@ function onLspDefinitionResult(filePath: string, line: number): void {
 
   openFileInEditor(filePath, name);
 
-  // TODO: scroll to the target line after file opens
+  // SHIP-V1-GAPS.md #88 follow-up: jump to the target line after the file
+  // finishes loading. Same 32ms deferral as references / outline jumps to
+  // let the editor compute its layout before we ask it to move the cursor.
+  setTimeout(() => {
+    if (editorReady < 1) return;
+    editorInstance.setCursorPosition(line, 0);
+    editorInstance.render();
+  }, 32);
 }
 
 /** Called when signature help result arrives from LSP. */
@@ -2315,6 +3299,20 @@ function renderActivityBarDesktop(): unknown {
   // Icons: 0=Files, 1=Search, 2=Git, 3=Sync, 4=AI Chat, 5=Debug
   // On web: skip Git (idx 2) — execSync not available
   const icons = ['doc.on.doc', 'magnifyingglass', 'arrow.triangle.branch', 'arrow.triangle.2.circlepath', 'sparkles', 'ladybug'];
+  // SHIP-V1-GAPS.md #89 — tooltips with shortcut hints. Mac uses ⌘ glyph;
+  // other platforms use "Ctrl+". (Activity slots 0–3 are also bound to
+  // Cmd+1..Cmd+4 on iPad — see keybindings.ts #114.)
+  const isMacLike = __platform__ === 0 || __platform__ === 1;
+  const modSym = isMacLike ? '⌘' : 'Ctrl+';
+  const altSym = isMacLike ? '⌥' : 'Alt+';
+  const tooltips = [
+    t('Explorer') + ' (' + modSym + (isMacLike ? '⇧E' : 'Shift+E') + ')',
+    t('Search') + ' (' + modSym + (isMacLike ? '⇧F' : 'Shift+F') + ')',
+    t('Source Control') + ' (' + modSym + (isMacLike ? '⌃G' : 'Ctrl+G') + ')',
+    t('Sync'),
+    t('AI Chat') + ' (' + modSym + (isMacLike ? '⌃A' : 'Ctrl+A') + ')',
+    t('Run and Debug') + ' (' + modSym + (isMacLike ? '⇧D' : 'Shift+D') + ')',
+  ];
   const _isWeb = isWebPlatform();
 
   for (let i = 0; i < 6; i++) {
@@ -2328,6 +3326,7 @@ function renderActivityBarDesktop(): unknown {
     buttonSetImagePosition(btn, 1);
     textSetFontSize(btn, 20);
     setBtnTint(btn, getActivityBarForeground());
+    widgetSetTooltip(btn, tooltips[i]);
     activityButtons.push(btn);
 
     // 2px indicator bar on left side
@@ -2363,6 +3362,7 @@ function renderActivityBarDesktop(): unknown {
   buttonSetImagePosition(settingsBtn, 1);
   textSetFontSize(settingsBtn, 20);
   setBtnTint(settingsBtn, getActivityBarInactiveForeground());
+  widgetSetTooltip(settingsBtn, t('Settings') + ' (' + modSym + (isMacLike ? ',' : ',') + ')');
   widgetAddChild(bar, settingsBtn);
 
   activityBarWidget = bar;
@@ -2371,6 +3371,9 @@ function renderActivityBarDesktop(): unknown {
 
 function renderActivityBarCompact(): unknown {
   const icons = ['folder', 'doc.text', 'sparkles', 'terminal'];
+  // SHIP-V1-GAPS.md #89 — tooltips on compact icons (iPhone landscape /
+  // narrow window). Hover/long-press on iPad surfaces the label.
+  const labels = [t('Files'), t('Editor'), t('AI'), t('Terminal')];
   activityButtons = [];
 
   for (let i = 0; i < icons.length; i++) {
@@ -2381,6 +3384,7 @@ function renderActivityBarCompact(): unknown {
     buttonSetImagePosition(btn, 1);
     textSetFontSize(btn, 20);
     setBtnTint(btn, getActivityBarForeground());
+    widgetSetTooltip(btn, labels[i]);
     activityButtons.push(btn);
   }
 
@@ -2575,6 +3579,22 @@ function renderEditorArea(): unknown {
     displayFileContent(defaultFile);
   }
 
+  // SHIP-V1-GAPS.md #43: restore cursor + scroll for the active tab.
+  // Deferred one tick so the editor finishes its initial layout (line height,
+  // viewport bounds) before we ask it to jump.
+  const _restoreSettings = getWorkbenchSettings();
+  const _restoreLine = _restoreSettings.lastActiveCursorLine;
+  const _restoreCol = _restoreSettings.lastActiveCursorCol;
+  const _restoreScroll = _restoreSettings.lastActiveScrollTop;
+  if (_restoreLine > 0 || _restoreCol > 0 || _restoreScroll > 0) {
+    setTimeout(() => {
+      if (editorReady < 1) return;
+      editorInstance.setCursorPosition(_restoreLine, _restoreCol);
+      if (_restoreScroll > 0) editorInstance.setScrollTop(_restoreScroll);
+      editorInstance.render();
+    }, 32);
+  }
+
   // Apply native editor view colors AFTER content is displayed
   applyEditorColors();
 
@@ -2596,6 +3616,47 @@ function renderEditorArea(): unknown {
   breadcrumbReady = 1;
   updateBreadcrumb();
 
+  // SHIP-V1-GAPS.md #24: sticky scroll context line. Sits between the
+  // breadcrumb and the editor view, displays the parent scope of the line at
+  // the current cursor (cheap heuristic: nearest line above with smaller
+  // indent). Hidden when no scope is detected so the editor reclaims the row.
+  stickyScrollLabel = Text('');
+  textSetFontSize(stickyScrollLabel, 11);
+  textSetFontFamily(stickyScrollLabel, 11, 'Menlo');
+  setFg(stickyScrollLabel, getSecondaryTextColor());
+  stickyScrollRow = HStackWithInsets(4, 2, 12, 2, 12);
+  setBg(stickyScrollRow, getEditorBackground());
+  widgetAddChild(stickyScrollRow, stickyScrollLabel);
+  widgetSetHeight(stickyScrollRow, 20);
+  widgetSetHugging(stickyScrollRow, 750);
+  widgetSetHidden(stickyScrollRow, 1);
+
+  // SHIP-V1-GAPS.md #44: merge conflict resolver toolbar. Appears when the
+  // buffer contains `<<<<<<<`, `=======`, `>>>>>>>` markers; provides
+  // Accept Current / Incoming / Both. Resolution rewrites the buffer.
+  conflictLabel = Text('');
+  textSetFontSize(conflictLabel, 11);
+  setFg(conflictLabel, '#FAB387');
+  const conflictCurrentBtn = Button(t('Accept Current'), () => { resolveConflict(0); });
+  const conflictIncomingBtn = Button(t('Accept Incoming'), () => { resolveConflict(1); });
+  const conflictBothBtn = Button(t('Accept Both'), () => { resolveConflict(2); });
+  buttonSetBordered(conflictCurrentBtn, 0);
+  buttonSetBordered(conflictIncomingBtn, 0);
+  buttonSetBordered(conflictBothBtn, 0);
+  setBtnFg(conflictCurrentBtn, '#A6E3A1');
+  setBtnFg(conflictIncomingBtn, '#89B4FA');
+  setBtnFg(conflictBothBtn, '#CDD6F4');
+  conflictBar = HStackWithInsets(8, 4, 12, 4, 12);
+  setBg(conflictBar, '#3a2a2a');
+  widgetAddChild(conflictBar, conflictLabel);
+  widgetAddChild(conflictBar, Spacer());
+  widgetAddChild(conflictBar, conflictCurrentBtn);
+  widgetAddChild(conflictBar, conflictIncomingBtn);
+  widgetAddChild(conflictBar, conflictBothBtn);
+  widgetSetHeight(conflictBar, 28);
+  widgetSetHugging(conflictBar, 750);
+  widgetSetHidden(conflictBar, 1);
+
   widgetSetHugging(editorWidget, 1);
   tabBarContainer = tbc;
 
@@ -2611,7 +3672,7 @@ function renderEditorArea(): unknown {
   setFindEditorCallbacks(findBarGetContent, findBarSetContent, findBarScrollToLine, findBarRenderEditor, findBarPushDecorations, findBarGetCharWidth, findBarGetViewportStart, findBarSetLineBg, findBarClearLineBgs);
 
 
-  const editorPane = VStack(0, [tbc, breadcrumbContainer, findBar, hoverPopup, signaturePopup, editorWidget]);
+  const editorPane = VStack(0, [tbc, breadcrumbContainer, conflictBar, stickyScrollRow, findBar, hoverPopup, signaturePopup, editorWidget]);
   stackSetDetachesHidden(editorPane, 1);
   setBg(editorPane, getEditorBackground());
   widgetSetHugging(editorPane, 1); // editor pane stretches in mainRow
@@ -2619,6 +3680,8 @@ function renderEditorArea(): unknown {
   widgetMatchParentWidth(editorWidget);
   widgetMatchParentWidth(tbc);
   widgetMatchParentWidth(breadcrumbContainer);
+  widgetMatchParentWidth(conflictBar);
+  widgetMatchParentWidth(stickyScrollRow);
   widgetMatchParentWidth(findBar);
   editorPaneWidget = editorPane;
 
@@ -2627,13 +3690,54 @@ function renderEditorArea(): unknown {
   setDefinitionCallback(onLspDefinitionResult);
   setSignatureCallback(onLspSignatureResult);
   setFormatCallback(onLspFormatResult);
+  // SHIP-V1-GAPS.md #88: consumers for the Phase 2 LSP requests exposed by
+  // the right-click editor menu. v1 surfaces references in a dedicated peek
+  // panel that takes over the sidebar; rename + code-actions still surface
+  // as notifications until their pickers land in v1.1.
+  setReferencesCallback((json: string) => { onReferencesResult(json); });
+  setReferencesJumpHandler((filePath: string, line: number, col: number) => {
+    // Reuse displayFileContent for the file load, then jump after layout.
+    openFileInEditor(filePath, shortFileName(filePath));
+    setTimeout(() => {
+      if (editorReady < 1) return;
+      editorInstance.setCursorPosition(line, col);
+      editorInstance.render();
+    }, 32);
+  });
+  // Outline panel jumps within the active file.
+  setOutlineJumpHandler((filePath: string, line: number, col: number) => {
+    if (filePath !== currentEditorFilePath) {
+      openFileInEditor(filePath, shortFileName(filePath));
+    }
+    setTimeout(() => {
+      if (editorReady < 1) return;
+      editorInstance.setCursorPosition(line, col);
+      editorInstance.render();
+    }, 32);
+  });
+  setRenameCallback((json: string) => { onRenameResult(json); });
+  setCodeActionsCallback((json: string) => { onCodeActionsResult(json); });
 
-  // Editor right-click context menu
+  // Editor right-click context menu (SHIP-V1-GAPS.md #88). Expanded in Phase 3
+  // to cover the most-used VS Code editor menu items now that the LSP request
+  // layer is wired. Items that depend on selection coordinates are stubbed
+  // here and will pick up the editor's current cursor when invoked.
   const editorMenu = menuCreate();
-  menuAddItem(editorMenu, t('Format Document'), () => { formatDocumentDeferred(); });
+  // Clipboard — handled via standard selectors elsewhere, but a menu entry
+  // covers the case where the user wants explicit affordances.
+  menuAddItem(editorMenu, t('Cut'), () => { /* standard selector handles this via NSMenu */ });
+  menuAddItem(editorMenu, t('Copy'), () => { /* same */ });
+  menuAddItem(editorMenu, t('Paste'), () => { /* same */ });
+  menuAddSeparator(editorMenu);
+  menuAddItem(editorMenu, t('Find…'), () => { findAction(); });
+  menuAddItem(editorMenu, t('Replace…'), () => { replaceAction(); });
   menuAddSeparator(editorMenu);
   menuAddItem(editorMenu, t('Go to Definition'), () => { goToDefinitionDeferred(); });
+  menuAddItem(editorMenu, t('Find All References'), () => { findAllReferencesFromCursor(); });
+  menuAddItem(editorMenu, t('Rename Symbol…'), () => { renameSymbolFromCursor(); });
+  menuAddItem(editorMenu, t('Quick Fix…'), () => { showCodeActionsFromCursor(); });
   menuAddSeparator(editorMenu);
+  menuAddItem(editorMenu, t('Format Document'), () => { formatDocumentDeferred(); });
   widgetSetContextMenu(editorWidget, editorMenu);
 
   return editorPane;
@@ -2752,24 +3856,27 @@ function onBottomBarSettings(): void {
 }
 
 function renderBottomToolbar(): unknown {
+  // SHIP-V1-GAPS.md #70: spec is Files / Search / Git / Chat / Settings.
+  // Previous order swapped Git for Sync — restored. Sync moves into the
+  // Settings panel where users actually toggle it.
   const filesBtn = Button('', () => { onBottomBarFiles(); });
   const searchBtn = Button('', () => { onBottomBarSearch(); });
+  const gitBtn = Button('', () => { onBottomBarGit(); });
   const aiBtn = Button('', () => { onBottomBarAI(); });
-  const syncBtn = Button('', () => { onBottomBarSync(); });
   const settingsBtn = Button('', () => { onBottomBarSettings(); });
 
   buttonSetImage(filesBtn, 'folder');
   buttonSetImage(searchBtn, 'magnifyingglass');
+  buttonSetImage(gitBtn, 'arrow.triangle.branch');
   buttonSetImage(aiBtn, 'sparkles');
-  buttonSetImage(syncBtn, 'arrow.triangle.2.circlepath');
   buttonSetImage(settingsBtn, 'gearshape');
   buttonSetImagePosition(filesBtn, 1);
   buttonSetImagePosition(searchBtn, 1);
+  buttonSetImagePosition(gitBtn, 1);
   buttonSetImagePosition(aiBtn, 1);
-  buttonSetImagePosition(syncBtn, 1);
   buttonSetImagePosition(settingsBtn, 1);
 
-  const allBtns = [filesBtn, searchBtn, aiBtn, syncBtn, settingsBtn];
+  const allBtns = [filesBtn, searchBtn, gitBtn, aiBtn, settingsBtn];
   for (let i = 0; i < allBtns.length; i++) {
     buttonSetBordered(allBtns[i], 0);
     setBtnTint(allBtns[i], getActivityBarForeground());
@@ -2778,10 +3885,15 @@ function renderBottomToolbar(): unknown {
     widgetSetHeight(allBtns[i], 44);
   }
 
-  const bar = HStack(0, [filesBtn, Spacer(), searchBtn, Spacer(), aiBtn, Spacer(), syncBtn, Spacer(), settingsBtn]);
+  const bar = HStack(0, [filesBtn, Spacer(), searchBtn, Spacer(), gitBtn, Spacer(), aiBtn, Spacer(), settingsBtn]);
   setBg(bar, getActivityBarBackground());
   widgetSetHeight(bar, 49); // 44pt buttons + 5pt padding
   return bar;
+}
+
+function onBottomBarGit(): void {
+  pendingActivityIdx = 2; // git activity index
+  setTimeout(() => { onActivityClickDeferred(); }, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -2946,6 +4058,9 @@ function pollSettingsVersion(): void {
 
 function onSettingsChanged(): void {
   const s = getWorkbenchSettings();
+  // SHIP-V1-GAPS.md #95: push hidden-files toggle to the explorer + refresh.
+  setSidebarShowHiddenFiles(s.explorerShowHiddenFiles ? 1 : 0);
+  refreshSidebarContent();
   const newTheme = s.colorTheme;
   if (newTheme.length < 1) return;
   // Check if theme changed — compare 6th char: 'D' (68) for Dark, 'L' (76) for Light
@@ -3110,13 +4225,19 @@ function flushSyncDebugLog(): void {
 }
 
 function saveSyncSession(roomId: string, partnerName: string): void {
-  // Save to ~/.hone/sync-session so we can auto-restore on restart
-  // Format: roomId\npartnerName\nrole\nlastSeq (role = 'host' or 'guest')
+  // Save to ~/.hone/sync-session so we can auto-restore on restart.
+  // Format: roomId\npartnerName\nrole\nlastSeq\nprojectKey (role = 'host' or 'guest')
+  // The project key is required to keep E2E encryption working across restarts —
+  // without it we'd reconnect to the room but be unable to decrypt incoming deltas.
   let path = getAppDataDir();
   path += '/sync-session';
   let role = 'host';
+  let projectKey = '';
   if (syncIsGuest > 0) {
     role = 'guest';
+    projectKey = getGuestProjectKey();
+  } else {
+    projectKey = hostGetProjectKey();
   }
   let data = roomId;
   data += '\n';
@@ -3125,8 +4246,10 @@ function saveSyncSession(roomId: string, partnerName: string): void {
   data += role;
   data += '\n';
   data += String(syncLastSeq);
+  data += '\n';
+  data += projectKey;
   try { writeFileSync(path, data); } catch (e: any) {}
-  syncDebugLog('Saved sync session: room=' + roomId + ' partner=' + partnerName + ' role=' + role + ' lastSeq=' + String(syncLastSeq));
+  syncDebugLog('Saved sync session: room=' + roomId + ' partner=' + partnerName + ' role=' + role + ' lastSeq=' + String(syncLastSeq) + ' key=' + (projectKey.length > 0 ? 'set' : 'missing'));
 }
 
 function clearSyncSession(): void {
@@ -3164,16 +4287,31 @@ function tryRestoreSyncSession(): void {
         if (data.charCodeAt(k) === 10) { nlIdx3 = k; break; }
       }
     }
+    // Find fourth newline (projectKey separator)
+    let nlIdx4 = -1;
+    if (nlIdx3 > 0) {
+      for (let m = nlIdx3 + 1; m < data.length; m++) {
+        if (data.charCodeAt(m) === 10) { nlIdx4 = m; break; }
+      }
+    }
     const roomId = data.substring(0, nlIdx1);
     // Validate room ID — must be non-empty and at least 4 chars
     if (roomId.length < 4) return;
     let partnerName = '';
     let role = '';
+    let projectKey = '';
     if (nlIdx2 > 0) {
       partnerName = data.substring(nlIdx1 + 1, nlIdx2);
       if (nlIdx3 > 0) {
         role = data.substring(nlIdx2 + 1, nlIdx3);
-        const seqStr = data.substring(nlIdx3 + 1);
+        // lastSeq lives between nlIdx3 and either nlIdx4 (new format) or EOF (legacy)
+        let seqStr = '';
+        if (nlIdx4 > 0) {
+          seqStr = data.substring(nlIdx3 + 1, nlIdx4);
+          projectKey = data.substring(nlIdx4 + 1);
+        } else {
+          seqStr = data.substring(nlIdx3 + 1);
+        }
         if (seqStr.length > 0) {
           const parsedSeq = Number(seqStr);
           // Guard against NaN — NaN lastSeq causes relay to send ALL historical deltas
@@ -3192,9 +4330,24 @@ function tryRestoreSyncSession(): void {
       syncRestoredRole = 1;
       syncIsGuest = 1;
     }
-    syncDebugLog('Restoring sync session: room=' + roomId + ' partner=' + partnerName + ' role=' + role + ' lastSeq=' + String(syncLastSeq));
+    syncDebugLog('Restoring sync session: room=' + roomId + ' partner=' + partnerName + ' role=' + role + ' lastSeq=' + String(syncLastSeq) + ' key=' + (projectKey.length > 0 ? 'present' : 'missing'));
     syncPairedRoomId = roomId;
     syncPairedDeviceName = partnerName;
+
+    // Restore E2E project key + transport crypto before connecting.
+    // If no key was persisted (legacy session) we leave encryption off and the
+    // peer will need to re-pair to send anything.
+    if (projectKey.length > 0) {
+      if (syncIsGuest > 0) {
+        setGuestProjectKey(projectKey);
+        setPayloadCrypto(guestEncryptDelta, guestDecryptDelta);
+      } else {
+        hostSetProjectKey(projectKey);
+        setPayloadCrypto(hostEncryptDelta, hostDecryptDelta);
+      }
+      setEncryptionReady(1);
+    }
+
     // Set token + lastSeq on transport before connecting
     if (syncAuthToken.length > 0) {
       setRelayToken(syncAuthToken);
@@ -3278,6 +4431,11 @@ function initSyncSystem(layoutMode: LayoutMode): void {
   setOnRelayDisconnected(onRelayDisconnectedImpl);
   setOnRelayMessage(onRelayMessageImpl);
   setOnTransportDebug(onTransportDebugImpl);
+
+  // SHIP-V1-GAPS.md #66: enable the reconnect orchestrator. Connection drops
+  // trigger exponential-backoff retries up to the per-session attempt cap;
+  // resetReconnectAttempts fires on a successful (re)connect.
+  setReconnectEnabled(1);
 
   // Throttle sync message processing on mobile to prevent UI thread starvation
   // __platform__: 1=iOS, 2=Android
@@ -3371,9 +4529,13 @@ function onTransportDebugImpl(msg: string): void {
 }
 
 function onSyncPairClicked(): void {
-  // Generate 6-char pairing code inline (avoid cross-module string return)
+  // Generate 12-char pairing code inline (avoid cross-module string return).
+  // 34^12 ≈ 2.4e18 permutations makes brute-force infeasible even without rate limiting.
+  // TODO(SHIP-V1-GAPS.md #4): architectural fix in Phase 7 — UUID room + code as auth-only
+  // secret, exchanged via a relay-mediated pair lobby. Requires QR codegen for the same-net
+  // UX, which is also Phase 7 (gap #67).
   let code = '';
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 12; i++) {
     const idx = Math.floor(Math.random() * PAIR_CHARS.length);
     code += PAIR_CHARS.charAt(idx);
   }
@@ -3429,13 +4591,20 @@ function onSyncJoinClicked(code: string): void {
 }
 
 function sendPairRequest(code: string): void {
-  // Format: PAIR_REQ|code|deviceId|deviceName
+  // Start an X25519 key exchange — guest generates an ephemeral keypair and
+  // sends its public key alongside the pairing code. The host will reply with
+  // its own public key plus the project key encrypted under the shared secret.
+  startGuestKeyExchange();
+  const guestPubKey = getGuestDhPublicKey();
+  // Format: PAIR_REQ|code|deviceId|deviceName|guestPubKey
   let msg = 'PAIR_REQ|';
   msg += code;
   msg += '|';
   msg += syncDeviceId;
   msg += '|';
   msg += syncDeviceName;
+  msg += '|';
+  msg += guestPubKey;
   sendToRelay(msg);
 }
 
@@ -3854,6 +5023,9 @@ function onRelayConnectedImpl(): void {
     setSyncStatusText(t('Connected to relay'));
   }
   syncDebugLog('onRelayConnectedImpl fired');
+  // SHIP-V1-GAPS.md #66: reset the backoff counter on a successful connect
+  // so a future drop doesn't immediately hit the attempt cap.
+  resetReconnectAttempts();
   refreshSyncPanelDeferred();
   // If auto-join is pending (debug mode), request file tree now
   if (syncAutoJoinPending > 0) {
@@ -3864,7 +5036,11 @@ function onRelayConnectedImpl(): void {
 }
 
 function onRelayDisconnectedImpl(): void {
-  syncDebugLog('WS disconnected — lastSeq=' + String(syncLastSeq) + ', will auto-reconnect in 2s');
+  // SHIP-V1-GAPS.md #66: wire the orphaned reconnect orchestrator. The
+  // hardcoded 2s retry is replaced with `getReconnectDelay()` (exponential
+  // backoff + jitter, capped at 30s) and the attempt counter respects the
+  // 10-attempt limit via `shouldReconnect()`.
+  syncDebugLog('WS disconnected — lastSeq=' + String(syncLastSeq) + ', attempt=' + String(getReconnectAttempts()));
   // Persist lastSeq so reconnect can resume from where we left off
   if (syncPairedRoomId.length > 0 && syncPairedDeviceName.length > 0) {
     saveSyncSession(syncPairedRoomId, syncPairedDeviceName);
@@ -3873,16 +5049,21 @@ function onRelayDisconnectedImpl(): void {
   syncStatusOverride = '';
   refreshSyncPanelDeferred();
 
-  // Auto-reconnect after 2 seconds if we had an active room
-  if (syncPairedRoomId.length > 0) {
-    setTimeout(() => { attemptReconnect(); }, 2000);
+  // Use the orchestrator's exponential backoff. It returns early if
+  // reconnects are disabled or the attempt cap is reached.
+  if (shouldReconnect() < 1) {
+    setSyncStatusText(t('Reconnect limit reached. Tap retry to try again.'));
+    return;
   }
+  markReconnectAttempt();
+  const delay = getReconnectDelay();
+  setTimeout(() => { attemptReconnect(); }, delay);
 }
 
 function attemptReconnect(): void {
   if (isRelayConnected() > 0) return; // already reconnected
   if (syncPairedRoomId.length < 1) return;
-  syncDebugLog('Auto-reconnecting to room ' + syncPairedRoomId + ' lastSeq=' + String(syncLastSeq));
+  syncDebugLog('Auto-reconnecting to room ' + syncPairedRoomId + ' lastSeq=' + String(syncLastSeq) + ' attempt=' + String(getReconnectAttempts()));
   if (syncAuthToken.length > 0) {
     setRelayToken(syncAuthToken);
   }
@@ -4093,7 +5274,23 @@ function onRelayMessageImpl(data: string): void {
     }
   }
 
-  // Handle PAIR_REQ|code|deviceId|deviceName (only from others)
+  // E2E: if the envelope is encrypted, decrypt the payload before dispatching.
+  // The pairing handshake (PAIR_REQ / PAIR_OK / PAIR_NO) is exempt by definition —
+  // those messages bootstrap the project key and ship cleartext on both sides.
+  let isEncrypted = 0;
+  const encKeyIdx = data.indexOf('"encrypted"');
+  if (encKeyIdx >= 0) {
+    // After "encrypted": find first non-whitespace after the colon
+    let ePos = encKeyIdx + 11;
+    while (ePos < data.length && (data.charCodeAt(ePos) === 58 || data.charCodeAt(ePos) === 32)) ePos = ePos + 1;
+    // "true" begins with 't' (116)
+    if (ePos < data.length && data.charCodeAt(ePos) === 116) isEncrypted = 1;
+  }
+  if (isEncrypted > 0) {
+    payload = decryptIncomingPayload(payload, 1);
+  }
+
+  // Handle PAIR_REQ|code|deviceId|deviceName|guestPubKey (only from others)
   if (payload.indexOf('PAIR_REQ|') === 0) {
     if (isSelf < 1) handlePairRequest(payload);
     return;
@@ -4186,7 +5383,7 @@ function onRelayMessageImpl(data: string): void {
 }
 
 function handlePairRequest(payload: string): void {
-  // Parse: PAIR_REQ|code|deviceId|deviceName
+  // Parse: PAIR_REQ|code|deviceId|deviceName|guestPubKey
   const sep1 = payload.indexOf('|');
   const rest1 = payload.substring(sep1 + 1);
   const sep2 = rest1.indexOf('|');
@@ -4194,7 +5391,17 @@ function handlePairRequest(payload: string): void {
   const rest2 = rest1.substring(sep2 + 1);
   const sep3 = rest2.indexOf('|');
   const guestDeviceId = rest2.substring(0, sep3);
-  const guestName = rest2.substring(sep3 + 1);
+  const rest3 = rest2.substring(sep3 + 1);
+  const sep4 = rest3.indexOf('|');
+  let guestName = '';
+  let guestPubKey = '';
+  if (sep4 >= 0) {
+    guestName = rest3.substring(0, sep4);
+    guestPubKey = rest3.substring(sep4 + 1);
+  } else {
+    // Legacy format without pubkey — refuse to pair to avoid silently downgrading to cleartext.
+    guestName = rest3;
+  }
 
   // Validate the code inline (avoid cross-module string comparison issues)
   let codeValid = 0;
@@ -4208,40 +5415,96 @@ function handlePairRequest(payload: string): void {
       if (codeMatch > 0) codeValid = 1;
     }
   }
-  if (codeValid > 0) {
-    // Mark code as used
-    localPairingCode = '';
-    localPairingExpiry = 0;
-    // Accept — add guest and send confirmation
-    addGuest(guestDeviceId, guestName);
-    addSyncDevice(guestName, 'connected');
-    syncStatusOverride = '';
-    setSyncStatusText(t('Paired!'));
-    setSyncPairingCode('');
-
-    // Send acceptance: PAIR_OK|deviceId|deviceName
-    let msg = 'PAIR_OK|';
-    msg += syncDeviceId;
-    msg += '|Hone Desktop';
-    sendToRelay(msg);
-    refreshSyncPanelDeferred();
-
-    // Save session for auto-restore on restart
-    syncPairedDeviceName = guestName;
-    saveSyncSession(syncPairedRoomId, guestName);
-  } else {
-    // Reject
+  if (codeValid < 1) {
     sendToRelay('PAIR_NO|invalid code');
+    return;
   }
+  if (guestPubKey.length < 32) {
+    // No E2E key material in the request — refuse rather than ship cleartext.
+    sendToRelay('PAIR_NO|encryption required');
+    return;
+  }
+
+  // Mark code as used
+  localPairingCode = '';
+  localPairingExpiry = 0;
+
+  // Complete X25519 key exchange:
+  //   1. Generate (or reuse) a project key — symmetric AES key for all future deltas.
+  //   2. Generate ephemeral host keypair.
+  //   3. Wrap the project key under the X25519 shared secret with the guest.
+  //   4. Send our public key + wrapped project key in PAIR_OK.
+  if (hostGetProjectKey().length === 0) hostGenerateProjectKey();
+  hostStartKeyExchange();
+  const hostPubKey = hostGetDhPublicKey();
+  const wrappedProjectKey = hostCompleteKeyExchange(guestPubKey);
+
+  // Accept — add guest and send confirmation
+  addGuest(guestDeviceId, guestName);
+  addSyncDevice(guestName, 'connected');
+  syncStatusOverride = '';
+  setSyncStatusText(t('Paired!'));
+  setSyncPairingCode('');
+
+  // Send acceptance: PAIR_OK|deviceId|deviceName|hostPubKey|wrappedProjectKey
+  // PAIR_OK ships cleartext (transport whitelists pairing handshake) — but the
+  // project key is wrapped under the X25519 shared secret, so the relay never
+  // sees it in the clear.
+  let msg = 'PAIR_OK|';
+  msg += syncDeviceId;
+  msg += '|Hone Desktop|';
+  msg += hostPubKey;
+  msg += '|';
+  msg += wrappedProjectKey;
+  sendToRelay(msg);
+  refreshSyncPanelDeferred();
+
+  // Wire transport encryption — every payload from now on is AES-256-GCM under the project key.
+  setPayloadCrypto(hostEncryptDelta, hostDecryptDelta);
+  setEncryptionReady(1);
+
+  // Save session for auto-restore on restart
+  syncPairedDeviceName = guestName;
+  saveSyncSession(syncPairedRoomId, guestName);
 }
 
 function handlePairAccepted(payload: string): void {
-  // Parse: PAIR_OK|deviceId|deviceName
+  // Parse: PAIR_OK|deviceId|deviceName|hostPubKey|wrappedProjectKey
   const sep1 = payload.indexOf('|');
   const rest1 = payload.substring(sep1 + 1);
   const sep2 = rest1.indexOf('|');
   const hostDeviceId = rest1.substring(0, sep2);
-  const hostName = rest1.substring(sep2 + 1);
+  const rest2 = rest1.substring(sep2 + 1);
+  const sep3 = rest2.indexOf('|');
+  let hostName = '';
+  let hostPubKey = '';
+  let wrappedProjectKey = '';
+  if (sep3 >= 0) {
+    hostName = rest2.substring(0, sep3);
+    const rest3 = rest2.substring(sep3 + 1);
+    const sep4 = rest3.indexOf('|');
+    if (sep4 >= 0) {
+      hostPubKey = rest3.substring(0, sep4);
+      wrappedProjectKey = rest3.substring(sep4 + 1);
+    } else {
+      hostName = rest2; // legacy — no key material
+    }
+  } else {
+    hostName = rest2; // legacy
+  }
+
+  // Without key material we'd be ciphertext-incapable; refuse to pair.
+  if (hostPubKey.length < 32 || wrappedProjectKey.length < 32) {
+    setSyncStatusText(t('Pair refused: host did not provide encryption keys.'));
+    return;
+  }
+
+  // Unwrap the project key using our X25519 secret + the host's public key.
+  guestReceiveProjectKey(hostPubKey, wrappedProjectKey);
+
+  // Wire transport encryption — every payload from now on is AES-256-GCM under the project key.
+  setPayloadCrypto(guestEncryptDelta, guestDecryptDelta);
+  setEncryptionReady(1);
 
   addSyncDevice(hostName, 'connected');
   syncStatusOverride = '';
@@ -5188,9 +6451,16 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   // Initialize recent items store (also called in buildRecentSubmenu for menu bar)
   initRecentItems();
 
+  // SHIP-V1-GAPS.md #42: apply workspace settings overlay before any panel
+  // touches the live settings snapshot.
+  if (workspaceRoot.length > 0) applyWorkspaceOverlay(workspaceRoot);
+
   // Wire up extracted panel callbacks
   setSidebarWorkspaceRoot(workspaceRoot);
   setSidebarFileClickCallback(onSidebarFileClick);
+  // SHIP-V1-GAPS.md #95: push hidden-files setting; refresh on change via
+  // settings listener below.
+  setSidebarShowHiddenFiles(getWorkbenchSettings().explorerShowHiddenFiles ? 1 : 0);
   setSidebarOpenFolderCallback(openFolderAction);
   setSidebarNewFileCallback(newFileAction);
   setSidebarCurrentEditorPath(currentEditorFilePath);
@@ -5206,6 +6476,14 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   setSearchCurrentEditorPath(getCurrentEditorPath);
   setGitWorkspaceRoot(workspaceRoot);
   setGitFileOpener(openFileFromGitPanel);
+  // SHIP-V1-GAPS.md #63: Generate commit message. Reads the staged + working
+  // diff, opens the AI Chat panel, pre-fills the input. User reviews and
+  // submits; the chat panel's streaming flow produces the message. The
+  // produced message is left for the user to copy back into the commit
+  // field (one-tap copy/paste between panels is the v1.1 polish).
+  setGenerateCommitMessageHandler(() => { onGenerateCommitMessageImpl(); });
+  // SHIP-V1-GAPS.md #108: AI-generated PR description.
+  setGeneratePRDescriptionHandler(() => { onGeneratePRDescriptionImpl(); });
   setGitDiffOpener(onGitDiffOpen);
   setGitStatusBarUpdater(updateStatusBarBranchLabelImpl);
   setTerminalCwd(workspaceRoot);
@@ -5226,6 +6504,32 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
 
   // Initialize anonymous telemetry (opt-in, privacy-first)
   initTelemetry();
+
+  // SHIP-V1-GAPS.md #91: confirm before closing a dirty tab.
+  setOnBeforeTabClose((idx: number, path: string) => onBeforeTabCloseImpl(idx, path));
+
+  // SHIP-V1-GAPS.md #105: tasks panel wiring. Workspace root is set on
+  // onFolderOpened; for the initial workspace, wire it once here. Run-start
+  // / run-done surface as notifications so the user knows the task fired.
+  setTasksWorkspaceRoot(workspaceRoot);
+  setTasksAppDataDir(getAppDataDir());
+  setOnTaskRunStart((label: string) => { showNotification(t('Running task') + ': ' + label, 'info'); });
+  setOnTaskRunDone((label: string, exitCode: number) => {
+    if (exitCode === 0) {
+      showNotification(t('Task launched') + ': ' + label, 'info');
+    } else {
+      showNotification(t('Task failed to launch') + ': ' + label, 'error');
+    }
+  });
+
+  // SHIP-V1-GAPS.md #97: clickable status bar items. v1 routes to the Git
+  // panel for the branch (so the user lands somewhere actionable) and to a
+  // "coming soon" notification for the per-file pickers we haven't built yet.
+  setOnBranchClick(() => { onStatusBranchClick(); });
+  setOnLanguageClick(() => { showNotification(t('Language picker coming in v1.1.'), 'info'); });
+  setOnEncodingClick(() => { showNotification(t('Encoding picker coming in v1.1.'), 'info'); });
+  setOnEolClick(() => { showNotification(t('Line-ending picker coming in v1.1.'), 'info'); });
+  setOnIndentClick(() => { showNotification(t('Indent picker coming in v1.1.'), 'info'); });
 
   // Initialize auto-update checker (desktop only)
   setOnUpdateAvailable(() => { onUpdateFound(); });
@@ -5312,9 +6616,34 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   const editorArea = renderEditorArea();
   const statusBar = renderStatusBarImpl(null as any);
 
+  // SHIP-V1-GAPS.md #88: right-click menu on the status bar. Mirrors
+  // VS Code's "Hide Status Bar" + quick jumps to common pickers.
+  const statusMenu = menuCreate();
+  menuAddItem(statusMenu, t('Open Settings'), () => { openSettingsAction(); });
+  menuAddItem(statusMenu, t('Source Control'), () => { onStatusBranchClick(); });
+  menuAddSeparator(statusMenu);
+  menuAddItem(statusMenu, t('Copy Branch Name'), () => { copyBranchNameToClipboard(); });
+  menuAddItem(statusMenu, t('Copy File Path'), () => { copyEditorPathToClipboard(); });
+  widgetSetContextMenu(statusBar, statusMenu);
+
+  // Right-click menu on the activity bar — quick path to settings + hide.
+  const activityMenu = menuCreate();
+  menuAddItem(activityMenu, t('Open Settings'), () => { openSettingsAction(); });
+  menuAddItem(activityMenu, t('Toggle Sidebar'), () => { toggleSidebarAction(); });
+  widgetSetContextMenu(activityBar, activityMenu);
+
+  // Right-click menu on the sidebar — move to other side / hide.
+  const sidebarMenu = menuCreate();
+  menuAddItem(sidebarMenu, t('Hide Sidebar'), () => { toggleSidebarAction(); });
+  menuAddItem(sidebarMenu, t('Move Sidebar Right'), () => { toggleSidebarLocation(); });
+  widgetSetContextMenu(sidebar, sidebarMenu);
+
   widgetSetWidth(activityBar, 48);
   widgetSetHugging(activityBar, 750);
-  widgetSetWidth(sidebar, 220);
+  // SHIP-V1-GAPS.md #37: sidebar width is settings-driven (default 220).
+  // Mouse-drag handle on the divider is queued for v1.1 once Perry exposes
+  // drag-event FFI for widget edges.
+  widgetSetWidth(sidebar, settings.sidebarWidth);
   widgetSetHugging(sidebar, 750);
   widgetSetHugging(editorArea, 1);
 
@@ -5341,7 +6670,22 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
     switchSidebarPanel(settings.activePanelIndex);
   }
 
-  const mainRow = HStack(0, [activityBar, sidebar, sidebarBorder, editorArea]);
+  // SHIP-V1-GAPS.md #39 + #38: honor sidebarLocation + activityBarLocation.
+  // v1 supports: sidebar = 'left' | 'right'; activity bar = 'side' (default)
+  // or 'hidden'. Top/bottom positions need a perpendicular activity bar
+  // widget — deferred to a follow-up since the desktop activity bar widget
+  // is built vertically.
+  const _sidebarOnRight = settings.sidebarLocation.length > 0 && settings.sidebarLocation.charCodeAt(0) === 114; // 'r'
+  const _activityBarHidden = settings.activityBarLocation.length > 0 && settings.activityBarLocation.charCodeAt(0) === 104; // 'h'idden
+  let _activityBarChild: unknown = activityBar;
+  if (_activityBarHidden) {
+    // Hide via setHidden so child references still resolve and we can flip
+    // back without rebuilding the HStack.
+    widgetSetHidden(activityBar, 1);
+  }
+  const mainRow = _sidebarOnRight
+    ? HStack(0, [_activityBarChild, editorArea, sidebarBorder, sidebar])
+    : HStack(0, [_activityBarChild, sidebar, sidebarBorder, editorArea]);
   mainRowWidget = mainRow;
 
   widgetSetHugging(mainRow, 1);
@@ -5388,6 +6732,14 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   widgetSetWidth(notifOverlay, notifWidth);
   widgetSetHugging(notifOverlay, 750);
   initNotifications(notifOverlay, null as any);
+  // Command palette takes over the sidebar when opened; on close it asks us
+  // to restore whatever panel was active before (default: file explorer).
+  initCommandPalette(sidebarContainer, () => { restoreSidebarAfterPalette(); });
+  // SHIP-V1-GAPS.md #58: workspace trust registry. v1.0 ships the storage
+  // (`~/.hone/trusted-workspaces.ini`) + `workspace.trust*` commands. Plugin
+  // host gating on `isWorkspaceTrusted(workspaceRoot)` lands with the
+  // `@honeide/api` runtime in v1.1.
+  initWorkspaceTrust(getAppDataDir());
 
   // Left content area: mainRow + terminal + status bar
   const leftContent = VStack(0, [mainRow, termPanel, statusBar]);

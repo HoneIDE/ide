@@ -8,8 +8,9 @@
  */
 
 import {
-  VStack, HStack, Text, Spacer,
+  VStack, HStack, Text, Button, Spacer,
   textSetFontSize, textSetFontWeight,
+  buttonSetBordered,
   widgetAddChild, widgetClearChildren,
   widgetSetHugging, widgetSetHidden, widgetSetWidth,
   widgetMatchParentHeight,
@@ -34,12 +35,23 @@ declare function hone_editor_nsview(handle: number): number;
 
 let diffLeftEditor: Editor | null = null;
 let diffRightEditor: Editor | null = null;
+// SHIP-V1-GAPS.md #104: inline mode uses a single editor with unified content.
+let diffInlineEditor: Editor | null = null;
 let diffContainer: unknown = null;
 let diffHeaderWidget: unknown = null;
 let diffEditorsWidget: unknown = null;
 let diffActive: number = 0;
 let diffFilePath = '';
 let panelColors: ResolvedUIColors = null as any;
+
+// SHIP-V1-GAPS.md #104: view mode (0 = side-by-side, 1 = inline).
+let diffViewMode: number = 0;
+// Cached payload so a toggle can re-render without re-fetching from git.
+let lastDiffFilePath: string = '';
+let lastDiffRelPath: string = '';
+let lastDiffOldContent: string = '';
+let lastDiffNewContent: string = '';
+let lastDiffText: string = '';
 
 // Diff line background colors (RGBA 0.0–1.0)
 const DEL_R = 0.55;
@@ -158,81 +170,117 @@ interface DiffData {
 function buildDiffUI(filePath: string, relPath: string, data: DiffData): void {
   if (!diffContainer) return;
 
-  const oldContent = data.oldContent;
-  const newContent = data.newContent;
-  const diffText = data.diffText;
+  // Cache for in-place mode toggle.
+  lastDiffFilePath = filePath;
+  lastDiffRelPath = relPath;
+  lastDiffOldContent = data.oldContent;
+  lastDiffNewContent = data.newContent;
+  lastDiffText = data.diffText;
+
+  renderCurrentDiffMode();
+}
+
+/** Render the diff in the current `diffViewMode` using cached data. */
+function renderCurrentDiffMode(): void {
+  if (!diffContainer) return;
+
+  // Tear down any prior editors first.
+  if (diffEditorsWidget) widgetClearChildren(diffEditorsWidget);
+  if (diffLeftEditor !== null) { diffLeftEditor.dispose(); diffLeftEditor = null; }
+  if (diffRightEditor !== null) { diffRightEditor.dispose(); diffRightEditor = null; }
+  if (diffInlineEditor !== null) { diffInlineEditor.dispose(); diffInlineEditor = null; }
+
+  widgetClearChildren(diffContainer);
+
+  // ---- Header ----
+  const headerRow = HStack(8, []);
+  if (panelColors) setBg(headerRow, getEditorBackground());
+
+  if (diffViewMode === 0) {
+    const leftLabel = Text(lastDiffRelPath + ' (HEAD)');
+    textSetFontSize(leftLabel, 11);
+    textSetFontWeight(leftLabel, 11, 0.5);
+    if (panelColors) setFg(leftLabel, getEditorForeground());
+
+    const rightLabel = Text(lastDiffRelPath + ' (Working Copy)');
+    textSetFontSize(rightLabel, 11);
+    textSetFontWeight(rightLabel, 11, 0.5);
+    if (panelColors) setFg(rightLabel, getEditorForeground());
+
+    widgetAddChild(headerRow, leftLabel);
+    widgetAddChild(headerRow, Spacer());
+    widgetAddChild(headerRow, rightLabel);
+    widgetAddChild(headerRow, Spacer());
+  } else {
+    const inlineLabel = Text(lastDiffRelPath + ' (inline)');
+    textSetFontSize(inlineLabel, 11);
+    textSetFontWeight(inlineLabel, 11, 0.5);
+    if (panelColors) setFg(inlineLabel, getEditorForeground());
+    widgetAddChild(headerRow, inlineLabel);
+    widgetAddChild(headerRow, Spacer());
+  }
+
+  // Mode-toggle button — SHIP-V1-GAPS.md #104.
+  const toggleLabel = diffViewMode === 0 ? 'Inline' : 'Side by side';
+  const toggleBtn = Button(toggleLabel, () => { toggleDiffViewMode(); });
+  buttonSetBordered(toggleBtn, 0);
+  textSetFontSize(toggleBtn, 11);
+  widgetAddChild(headerRow, toggleBtn);
+
+  // ---- Editors ----
+  let editorsRow: unknown;
+  if (diffViewMode === 0) {
+    editorsRow = buildSideBySideEditors();
+  } else {
+    editorsRow = buildInlineEditor();
+  }
+  widgetSetHugging(editorsRow, 1);
+
+  widgetAddChild(diffContainer, headerRow);
+  widgetAddChild(diffContainer, editorsRow);
+
+  diffHeaderWidget = headerRow;
+  diffEditorsWidget = editorsRow;
+
+  diffActive = 1;
+  diffFilePath = lastDiffFilePath;
+}
+
+function buildSideBySideEditors(): unknown {
+  const oldContent = lastDiffOldContent;
+  const newContent = lastDiffNewContent;
+  const diffText = lastDiffText;
 
   const oldLineCount = countLines(oldContent);
   const newLineCount = countLines(newContent);
-
-  // Parse diff to get line types
   const parsed = parseDiffOutput(diffText, oldLineCount, newLineCount);
   const oldLineTypes = parsed.oldLineTypes;
   const newLineTypes = parsed.newLineTypes;
 
-  // Build header
-  widgetClearChildren(diffContainer);
-
-  const headerRow = HStack(8, []);
-  if (panelColors) setBg(headerRow, getEditorBackground());
-
-  const leftLabel = Text(relPath + ' (HEAD)');
-  textSetFontSize(leftLabel, 11);
-  textSetFontWeight(leftLabel, 11, 0.5);
-  if (panelColors) setFg(leftLabel, getEditorForeground());
-
-  const rightLabel = Text(relPath + ' (Working Copy)');
-  textSetFontSize(rightLabel, 11);
-  textSetFontWeight(rightLabel, 11, 0.5);
-  if (panelColors) setFg(rightLabel, getEditorForeground());
-
-  widgetAddChild(headerRow, leftLabel);
-  widgetAddChild(headerRow, Spacer());
-  widgetAddChild(headerRow, rightLabel);
-  widgetAddChild(headerRow, Spacer());
-
-  // Create two read-only editors side by side
   const leftEd = new Editor(400, 600, { readOnly: true });
   const rightEd = new Editor(400, 600, { readOnly: true });
-
   diffLeftEditor = leftEd;
   diffRightEditor = rightEd;
 
-  // Set content
   leftEd.setContent(oldContent);
   rightEd.setContent(newContent);
 
-  // Apply line backgrounds
   for (let i = 1; i <= oldLineCount; i++) {
-    if (oldLineTypes[i] === 1) {
-      leftEd.setLineBackground(i, DEL_R, DEL_G, DEL_B, DEL_A);
-    }
+    if (oldLineTypes[i] === 1) leftEd.setLineBackground(i, DEL_R, DEL_G, DEL_B, DEL_A);
   }
   for (let i = 1; i <= newLineCount; i++) {
-    if (newLineTypes[i] === 1) {
-      rightEd.setLineBackground(i, ADD_R, ADD_G, ADD_B, ADD_A);
-    }
+    if (newLineTypes[i] === 1) rightEd.setLineBackground(i, ADD_R, ADD_G, ADD_B, ADD_A);
   }
-
-  // If new file (no HEAD content), mark all new lines as added
   if (oldContent.length < 1 && newContent.length > 0) {
-    for (let i = 1; i <= newLineCount; i++) {
-      rightEd.setLineBackground(i, ADD_R, ADD_G, ADD_B, ADD_A);
-    }
+    for (let i = 1; i <= newLineCount; i++) rightEd.setLineBackground(i, ADD_R, ADD_G, ADD_B, ADD_A);
   }
-
-  // If deleted file (no working copy), mark all old lines as deleted
   if (newContent.length < 1 && oldContent.length > 0) {
-    for (let i = 1; i <= oldLineCount; i++) {
-      leftEd.setLineBackground(i, DEL_R, DEL_G, DEL_B, DEL_A);
-    }
+    for (let i = 1; i <= oldLineCount; i++) leftEd.setLineBackground(i, DEL_R, DEL_G, DEL_B, DEL_A);
   }
 
-  // Render
   leftEd.render();
   rightEd.render();
 
-  // Embed directly into HStack
   const leftNsview = hone_editor_nsview(leftEd.nativeHandle as number);
   const leftWidget = embedNSView(leftNsview);
   widgetSetHugging(leftWidget, 1);
@@ -242,17 +290,86 @@ function buildDiffUI(filePath: string, relPath: string, data: DiffData): void {
   widgetSetHugging(rightWidget, 1);
 
   const editorsRow = HStack(0, [leftWidget, rightWidget]);
-  stackSetDistribution(editorsRow, 1); // FillEqually
-  widgetSetHugging(editorsRow, 1);
-
+  stackSetDistribution(editorsRow, 1);
   widgetMatchParentHeight(leftWidget);
   widgetMatchParentHeight(rightWidget);
+  return editorsRow;
+}
 
-  diffHeaderWidget = headerRow;
-  diffEditorsWidget = editorsRow;
+function buildInlineEditor(): unknown {
+  // Build a unified-diff body: walk hunks, emitting context / deletion /
+  // addition lines. Each emitted line's index in the visible editor maps
+  // 1:1 to the entry we record so we can paint backgrounds afterwards.
+  const diffText = lastDiffText;
 
-  diffActive = 1;
-  diffFilePath = filePath;
+  let body = '';
+  const lineTypes: number[] = [0]; // index 0 unused
+  let inHunk = 0;
+  let pos = 0;
+  while (pos < diffText.length) {
+    let lineEnd = pos;
+    while (lineEnd < diffText.length && diffText.charCodeAt(lineEnd) !== 10) lineEnd = lineEnd + 1;
+    const lineLen = lineEnd - pos;
+
+    if (lineLen >= 2 && diffText.charCodeAt(pos) === 64 && diffText.charCodeAt(pos + 1) === 64) {
+      inHunk = 1;
+      // Emit the hunk header as a separator line.
+      body += diffText.slice(pos, lineEnd);
+      body += '\n';
+      lineTypes.push(2); // hunk header
+    } else if (inHunk > 0 && lineLen >= 1) {
+      const c = diffText.charCodeAt(pos);
+      if (c === 45) { // '-'
+        body += diffText.slice(pos, lineEnd);
+        body += '\n';
+        lineTypes.push(1); // deletion
+      } else if (c === 43) { // '+'
+        body += diffText.slice(pos, lineEnd);
+        body += '\n';
+        lineTypes.push(3); // addition
+      } else if (c === 32) { // ' '
+        body += diffText.slice(pos, lineEnd);
+        body += '\n';
+        lineTypes.push(0); // context
+      } else if (c === 92) {
+        // "\ No newline at end of file" — drop.
+      } else {
+        inHunk = 0;
+      }
+    }
+    pos = lineEnd + 1;
+  }
+
+  // Fall back to the raw diff if we found no hunks (e.g. binary file).
+  if (lineTypes.length <= 1) {
+    body = diffText;
+    const lc = countLines(diffText);
+    for (let i = 1; i <= lc; i++) lineTypes.push(0);
+  }
+
+  const ed = new Editor(800, 600, { readOnly: true });
+  diffInlineEditor = ed;
+  ed.setContent(body);
+  for (let i = 1; i < lineTypes.length; i++) {
+    const t = lineTypes[i];
+    if (t === 1) ed.setLineBackground(i, DEL_R, DEL_G, DEL_B, DEL_A);
+    else if (t === 3) ed.setLineBackground(i, ADD_R, ADD_G, ADD_B, ADD_A);
+  }
+  ed.render();
+
+  const nsview = hone_editor_nsview(ed.nativeHandle as number);
+  const w = embedNSView(nsview);
+  widgetSetHugging(w, 1);
+  const row = HStack(0, [w]);
+  widgetMatchParentHeight(w);
+  return row;
+}
+
+/** Public toggle so callers can wire a top-level keybinding to it. */
+export function toggleDiffViewMode(): void {
+  if (diffActive < 1) return;
+  diffViewMode = diffViewMode === 0 ? 1 : 0;
+  renderCurrentDiffMode();
 }
 
 /** Close the diff view and dispose editors. */
@@ -271,6 +388,10 @@ export function closeDiffView(): void {
   if (diffRightEditor !== null) {
     diffRightEditor.dispose();
     diffRightEditor = null;
+  }
+  if (diffInlineEditor !== null) {
+    diffInlineEditor.dispose();
+    diffInlineEditor = null;
   }
   diffHeaderWidget = null;
   diffEditorsWidget = null;

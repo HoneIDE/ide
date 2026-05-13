@@ -14,7 +14,7 @@ import {
 import { setFg, setBg, setBtnFg } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 
-// PanelElement types (mirroring @hone/sdk types inline for Perry compilation)
+// PanelElement types (mirroring @honeide/sdk types inline for Perry compilation)
 // Perry can't import from external packages in compiled mode, so we redefine.
 
 export interface TextElement { type: 'text'; value: string; bold?: number; italic?: number; color?: string; fontSize?: number; }

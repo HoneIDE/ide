@@ -901,11 +901,23 @@ export function renderDebugPanel(container: unknown, colors: ResolvedUIColors): 
   panelColors = colors;
   debugReady = 0;
 
-  const title = Text(t('RUN AND DEBUG'));
+  // SHIP-V1-GAPS.md #11: this panel ships as "Run" in v1.0. Real DAP
+  // (breakpoints, step over/in/out, variables, call stack live) is wired
+  // through `hone-core/src/protocols/dap/` in code but the IDE doesn't yet
+  // spawn an adapter or transport DAP messages. The buttons act on a local
+  // `execSync(buildRunCommand(...))` flow that runs the file without a
+  // debugger attached. The "DAP wiring" item lands in v1.1; renaming the
+  // panel header keeps the v1.0 framing honest.
+  const title = Text(t('RUN'));
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.7);
   setFg(title, colors.sideBarForeground);
   widgetAddChild(container, title);
+
+  const subtitle = Text(t('Breakpoints + step controls are v1.1. Today this runs the file.'));
+  textSetFontSize(subtitle, 10);
+  setFg(subtitle, '#9999AA');
+  widgetAddChild(container, subtitle);
 
   // Toolbar row with wired buttons
   const playBtn = Button('', () => { onPlayOrContinueClick(); });
