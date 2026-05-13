@@ -1,234 +1,168 @@
-# CLAUDE.md — Hone IDE
+# CLAUDE.md
 
-## What this repo is
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-The IDE shell for Hone — compiled from TypeScript to native UI via the Perry compiler.
-No Rust here. All Rust lives in `../perry/` (Perry compiler) and its sub-crates.
+## Project Overview
 
-## Commands
+Hone is a native, AI-powered code editor built in TypeScript and compiled to native binaries via the **Perry compiler** (a TypeScript-to-native AOT compiler written in Rust, located at `../perry/`). The project is a monorepo of independent packages — there is no top-level package.json or workspace manager.
 
-```bash
-# Compile for macOS (from hone-ide/)
-perry compile src/app.ts --output hone-ide
+## Repository Layout
 
-# Compile with geisterhand (testing/automation — bakes HTTP API into binary)
-# MUST run from the perry source dir so it finds target/geisterhand/
-cd ../perry && perry compile /path/to/hone-ide/src/app.ts --output /path/to/hone-ide/hone-ide --enable-geisterhand
-# Then just: ./hone-ide . — geisterhand API on port 7676 automatically
+| Directory | Purpose | Runtime |
+|-----------|---------|---------|
+| `hone-core/` | Headless IDE services (workspace, settings, git, search, LSP, DAP, AI, extensions) | Bun (tests only) |
+| `hone-editor/` | Embeddable code editor (`@honeide/editor`) — piece table buffer, multi-cursor, syntax highlighting, diff | Bun (tests), Perry (native) |
+| `hone-ide/` | IDE workbench shell — activity bar, sidebar, tabs, panels, theme engine | Perry (native binary) |
+| `hone-terminal/` | Terminal emulator (`@honeide/terminal`) — VT parser, PTY, cross-platform Rust FFI | Bun (tests), Perry (native) |
+| `hone-auth/` | Auth service (magic-link login, device pairing, subscriptions) — Fastify server | Perry (native binary, 2.8MB) |
+| `hone-relay/` | WebSocket sync relay (cross-device delta sync, SQLite persistence) | Bun / Perry |
+| `hone-build/` | Plugin build coordinator (submits to perry-hub for cross-platform compilation) | Perry (native binary) |
+| `hone-marketplace/` | Plugin marketplace server (`marketplace.hone.codes`) | Perry (native binary) |
+| `hone-api/` | Public extension API types (`@honeide/api`) — pure declarations, zero runtime | tsc only |
+| `hone-extensions/` | 11 built-in IDE extensions (TypeScript, Python, Rust, Go, etc.) | Perry |
+| `hone-extension/` | V2 plugin SDK (`@honeide/sdk`), Rust plugin host, marketplace client, CLI | Mixed |
+| `hone-themes/` | 11 VSCode-compatible color themes (`@honeide/themes`) — pure JSON data | Jest |
+| `hone-brand/` | Logos, colors, typography, brand guidelines | Static assets |
+| `landing/` | Landing page (`hone.codes`) — single `index.html`, no build step | Static |
+| `account.hone.codes/` | Account dashboard SPA | Static |
 
-# Compile for Windows (from hone-ide/)
-perry compile src/app.ts --target windows --output hone-ide
-mv hone-ide hone-ide.exe  # Perry outputs without .exe extension
+## Build & Test Commands
 
-# Run
-./hone-ide       # macOS
-./hone-ide.exe   # Windows
-
-# Type check only
-bun run typecheck
-```
-
-**Geisterhand build prerequisite** (one-time, from `../perry/`):
-```bash
-CARGO_PROFILE_RELEASE_LTO=off CARGO_TARGET_DIR=target/geisterhand cargo build --release \
-  -p perry-runtime --features geisterhand \
-  -p perry-ui-macos --features geisterhand \
-  -p perry-ui-geisterhand
-```
-
-## Critical Perry rules
-
-**Perry captures closure variables by VALUE, not by reference.**
-
-This means: store mutable widget handles in module-level `let` variables and access them through named functions — never from within closures.
-
-```typescript
-// ✅ CORRECT — named function reads module-level var at call time
-let myButton: unknown;
-function updateButton() { buttonSetTitle(myButton, 'new text'); }
-const btn = Button('click', () => { updateButton(); });
-myButton = btn;  // back-reference works
-
-// ❌ WRONG — closure captures myButton's value (null) at creation time
-let myButton: unknown;
-const btn = Button('click', () => { buttonSetTitle(myButton, 'new text'); });
-myButton = btn;  // too late, closure already captured null
-```
-
-## Perry import rules
-
-- `perry/ui` — all UI widgets and mutation functions
-- Relative imports (`./ ../`) — Perry compiles these natively ✅
-- `@honeide/core` — requires `--enable-js-runtime` (adds ~15MB, avoid for UI code)
-- Instead, put Perry-native runtime modules in `src/workbench/` directly
-
-## Build Perry itself
-
-Only needed when changing Perry's Rust code:
+### Tests (per-package — no monorepo test runner)
 
 ```bash
-# Perry compiler
-cd ../perry && cargo build --release -p perry
+cd hone-core && bun test                    # 649+ tests (workspace, settings, git, AI, etc.)
+cd hone-editor && bun test                  # 353 tests (buffer, cursor, viewport, search, diff, LSP, DAP)
+cd hone-terminal && bun test                # 163 tests (VT parser, buffer, input, emulator)
+cd hone-relay && bun test                   # 48 tests (auth, buffer, ws-hub, config)
+cd hone-build && bun test                   # 21 tests (artifact storage, platform normalization)
+cd hone-themes && npm test                  # 452 tests (schema validation, WCAG contrast) — uses Jest
+cd hone-extensions && npm test              # Uses Vitest
+cd hone-api && npm test                     # Type-check only (tsc --noEmit)
+```
 
-# Perry UI library — macOS (MUST disable LTO — thin LTO produces bitcode macOS linker can't read)
+**Important:** hone-core, hone-editor, hone-terminal, hone-relay, and hone-build use `bun test` (NOT vitest, NOT npx). hone-themes uses Jest. hone-extensions uses Vitest.
+
+Run a single test file: `bun test tests/buffer.test.ts`
+
+### Type checking
+
+```bash
+cd <package> && bun run typecheck   # or: npx tsc --noEmit
+```
+
+### Perry compiler (building native binaries)
+
+```bash
+# Build Perry itself (only when changing Rust code in ../perry/)
+cd ../perry && CARGO_PROFILE_RELEASE_LTO=off cargo build --release -p perry
+
+# Build Perry UI library (macOS) — MUST disable LTO
 cd ../perry && CARGO_PROFILE_RELEASE_LTO=off cargo build --release -p perry-ui-macos
 
-# Perry UI library — Windows
-cd ../perry && cargo build --release -p perry-ui-windows
+# Build Perry stdlib (needed after changing perry-runtime source)
+cd ../perry && cargo clean -p perry-runtime --release && \
+  CARGO_PROFILE_RELEASE_LTO=off cargo build --release -p perry-stdlib -p perry-ui-macos -p perry
 
-# Perry stdlib (runtime functions used by generated code)
-cd ../perry && cargo build --release -p perry-stdlib
+# Compile IDE (macOS native binary)
+cd hone-ide && perry compile src/app.ts --output hone-ide
+
+# Compile IDE (iOS simulator)
+cd hone-ide && perry compile src/app.ts --target ios-simulator --output Hone
+
+# Compile IDE (Web)
+cd hone-ide && perry compile src/app.ts --target web --output hone-ide.html
+
+# Compile auth server
+cd hone-auth && perry compile src/app.ts --output hone-auth
+
+# Compile marketplace
+cd hone-marketplace && perry compile src/app.ts --output hone-marketplace
+
+# Compile build server
+cd hone-build && perry compile src/app.ts --output hone-build
 ```
 
-After rebuilding perry-ui-windows, delete the trimmed lib cache:
-```bash
-rm perry/target/release/_perry_ui_trimmed.lib
-```
+**Critical:** Always use `CARGO_PROFILE_RELEASE_LTO=off` for all Perry Rust builds — thin LTO produces bitcode that macOS clang linker can't read.
 
-## Structure
-
-```
-src/
-├── app.ts                    # Perry App() entry point
-├── platform.ts               # Platform detection, LayoutMode
-├── commands.ts               # registerBuiltinCommands()
-├── keybindings.ts            # getDefaultKeybindings(platform)
-├── menu.ts                   # App menu setup
-├── window.ts                 # Multi-window management
-└── workbench/
-    ├── render.ts             # renderWorkbench(layoutMode) — main UI tree
-    ├── settings.ts           # Runtime settings (getWorkbenchSettings, updateSettings)
-    ├── layout/
-    │   ├── grid.ts           # GridNode — resizable panel layout
-    │   ├── tab-manager.ts    # TabManager — editor tabs
-    │   ├── panel-registry.ts # Panel registration, BUILTIN_PANELS
-    │   ├── activity-bar.ts   # Activity bar layout helpers
-    │   ├── status-bar.ts     # Status bar layout helpers
-    │   └── index.ts          # Layout barrel export
-    ├── theme/
-    │   ├── theme-loader.ts   # loadTheme, getActiveTheme, ResolvedUIColors
-    │   ├── builtin-themes.ts # HONE_DARK, HONE_LIGHT theme data
-    │   ├── token-theme.ts    # TextMate token color resolution
-    │   ├── ui-theme.ts       # UI theme types
-    │   ├── load-builtin-themes.ts
-    │   └── index.ts          # Theme barrel export
-    └── views/
-        ├── explorer/         # File explorer panel
-        │   ├── file-tree.ts
-        │   ├── file-tree-item.ts
-        │   ├── file-operations.ts
-        │   └── index.ts
-        └── quick-open/       # Quick open (Cmd+P / Ctrl+P)
-            └── quick-open.ts
-```
-
-## Perry UI API cheatsheet
-
-```typescript
-import {
-  App, VStack, HStack, VStackWithInsets, HStackWithInsets,
-  Text, Button, Spacer,
-  textSetColor, textSetFontSize, textSetFontWeight,
-  buttonSetBordered, buttonSetTextColor, buttonSetTitle,
-  widgetSetBackgroundColor, widgetAddChild,
-  widgetSetWidth, widgetSetHugging,
-} from 'perry/ui';
-
-// Create widgets
-const stack = VStack(spacing, [child1, child2]);
-const btn = Button('label', () => { /* callback */ });
-const txt = Text('hello');
-
-// Mutate after creation
-textSetColor(txt, r, g, b, a);       // 0.0–1.0 per channel
-buttonSetTextColor(btn, r, g, b, a); // uses NSAttributedString internally
-widgetSetBackgroundColor(w, r, g, b, a);
-buttonSetTitle(btn, 'new label');
-widgetSetWidth(w, 220);              // fixed width (Auto Layout constraint)
-widgetSetHugging(w, 750);           // content hugging priority
-```
-
-## Layout architecture
-
-- **Activity bar**: 48px wide, left edge, VStack with icon buttons
-- **Sidebar**: 220px wide, configurable left or right via `settings.sidebarLocation`
-- **Editor**: fills remaining space (low hugging priority)
-- **Status bar**: HStack at bottom
-- Window content pinned to `contentLayoutGuide` (not superview) to avoid title bar overlap (macOS)
-- On Windows, layout uses Win32 child HWNDs with manual positioning in WM_SIZE
-
-## Workbench settings
-
-Runtime settings in `src/workbench/settings.ts`:
-
-```typescript
-import { getWorkbenchSettings, updateSettings } from './workbench/settings';
-
-const s = getWorkbenchSettings();
-// s.sidebarLocation: 'left' | 'right'
-// s.activityBarLocation: 'side' | 'top' | 'bottom' | 'hidden'
-// s.colorTheme, s.editorFontSize, etc.
-
-updateSettings({ sidebarLocation: 'right' });
-```
-
-## Testing
-
-### Manual (geisterhand CLI)
+### UI testing (macOS)
 
 ```bash
 geisterhand screenshot --output /tmp/shot.png   # Take screenshot
 geisterhand click x y                            # Click at coordinates
 ```
 
-### Agentic UI tests (Claude Code)
+For iOS Simulator, use AppleScript (`osascript`) instead of geisterhand.
 
-LLM-driven visual testing in `tests/agentic/`. A single Claude Code sub-agent runs all scenarios sequentially against the live IDE, using geisterhand's HTTP API for interaction and Claude's vision to evaluate screenshots.
+## Architecture
 
-```bash
-# 1. Build the IDE with geisterhand baked in (run from ../perry/)
-cd ../perry && perry compile ../hone/hone-ide/src/app.ts --output ../hone/hone-ide/hone-ide --enable-geisterhand
+### Compilation model
 
-# 2. Run — geisterhand API is available automatically on port 7676
-./hone-ide /path/to/project
+TypeScript → Perry AOT compiler → native binary (no V8, no Node.js at runtime). Perry compiles TS directly to machine code via Rust codegen. The generated binaries link against `libperry_stdlib.a` (runtime) and platform UI libraries (`perry-ui-macos`, `perry-ui-ios`, `perry-ui-windows`).
 
-# 3. Run all 10 scenarios (from any Claude Code session)
-#    Spawn a single agent following tests/agentic/run-all.md
-#    Or run one scenario:
-#    "Run the scenario in tests/agentic/scenarios/05-git.md against port 7676"
-```
+### Editor architecture
 
-**Key rules:**
-- **Single agent, sequential** — multiple agents on one IDE instance will conflict
-- **Screenshots are proof** — agent must `Read` every screenshot it captures (Claude vision evaluates it)
-- **Fresh widgets before each click** — handles change after UI updates (`GET /widgets`)
+`hone-editor/` is the embeddable editor component:
+- **core/** — Platform-independent: piece table buffer, multi-cursor, undo/redo, viewport, tokenizer, search, folding, diff, LSP client, DAP client
+- **view-model/** — Reactive state bridge: EditorViewModel orchestrates core → rendering
+- **native/** — Rust FFI crates per platform (macOS/iOS/Windows/Linux/Android/Web)
 
-Scenarios: startup, explorer, editor tabs, search, git, terminal, settings, AI chat, sidebar toggle, multi-step workflows. See `tests/agentic/run-all.md` for full orchestrator instructions.
+The editor uses a TS-authoritative model: TypeScript is the single source of truth for document state; Rust is a rendering cache that receives cached lines and viewport state via FFI.
 
-## Slice plan
+### IDE architecture
 
-See `../INTEGRATED_PLAN.md` for the full roadmap (audited 2026-03-04).
+`hone-ide/` is the workbench shell:
+- `src/app.ts` — Perry `App()` entry point
+- `src/workbench/render.ts` — Main UI tree (activity bar, sidebar, editor, status bar, panels)
+- `src/workbench/views/` — Panel views (explorer, search, git, debug, extensions, AI chat, terminal, settings, etc.)
+- `src/workbench/theme/` — Multi-theme engine with VS Code-compatible JSON themes
 
-**Done:**
-- Slice 0: Shell + theme ✅ (`render.ts`, `theme/`, `layout/`)
-- Slice 1: File explorer ✅ (`views/explorer/`, `views/quick-open/`)
-- Slice 2: Settings runtime ✅ (`settings.ts`) — UI views still needed
-- Slice 3: Editor integration ✅ (embedded via Perry FFI, tabs, syntax highlighting)
-- Slice 4: Git panel ✅ inline in `render.ts` (stage/unstage/discard/commit/branch)
-- Slice 5: Search panel ✅ inline in `render.ts` (recursive search, replace)
-- Windows port ✅ (all UI features working)
+### Service architecture
 
-**Next up (IDE views needed for done core modules):**
-- Slice 9: AI Inline ghost text wiring → `EditorViewModel.ghostText`
-- Slice 10: AI Chat → `views/ai-chat/`
-- Slice 11: Terminal embedding → `views/terminal/`
-- Slice 2: Settings/Welcome/Notifications UI → `views/settings-ui/`, `views/welcome/`
-- Slice 6: LSP views → autocomplete popup, hover, diagnostics
-- Slice 7: Debug views → `views/debug/`
-- Slice 12: AI Agent → `views/ai-agent/`, `views/diff-view/`
-- Slice 13: PR Review → `views/pr-review/`
-- Slice 14: Extensions → `views/extensions/`
+- **Auth** (port 8445): Magic-link login, device pairing, JWT tokens, MySQL on `webserver.skelpo.net`
+- **Relay** (port 8443/8444): WebSocket rooms for cross-device sync, SQLite delta persistence
+- **Marketplace** (port 8446): Plugin search, download, publish
+- **Build** (port 8447): Plugin cross-compilation via perry-hub workers
 
-**Refactoring needed:**
-- Extract git views from `render.ts` into `views/git/` (separate files)
-- Extract search views from `render.ts` into `views/search/` (separate files)
+## Perry AOT Constraints
+
+Code compiled by Perry must avoid these broken patterns:
+
+| Pattern | Use Instead |
+|---------|-------------|
+| `obj[variable]` dynamic key access | `if/else if` per key |
+| `?.` optional chaining | Explicit null checks |
+| `??` nullish coalescing | Explicit `if (x !== undefined)` |
+| `/regex/.test()` | `indexOf` or char checks |
+| `{ key }` ES6 shorthand | `{ key: key }` explicit |
+| `array.map(fn)` on class fields | `for` loop |
+| `for...of` on arrays | `for (let i = 0; i < arr.length; i++)` |
+| `c >= 'a' && c <= 'z'` char ranges | `ALPHA_STR.indexOf(c) >= 0` |
+| Closures capturing `this` methods | Module-level functions reading module-level vars |
+| `requestAnimationFrame` | `setInterval` (RAF never fires in Perry) |
+| `setTimeout` self-recursion | `setInterval` (setTimeout inside callback only fires once) |
+| String-returning functions in async | Inline string operations (returns NaN-boxed pointer) |
+| `new Date()` in async | `Date.now()` |
+
+**Closure rule:** Perry captures closure variables by value, not by reference. Store mutable state in module-level `let` variables and access them through module-level named functions.
+
+## Perry FFI Conventions
+
+- String params are NaN-boxed `StringHeader` pointers. Rust receives `*const u8` + `str_from_header()`.
+- Perry calls `__wrapper_<function_name>` symbols (double underscore prefix).
+- All FFI functions must be listed in `package.json` `perry.nativeLibrary.functions`.
+- Use `f64` for numeric FFI params, `i64` for string/pointer params. `i32` causes verifier errors.
+
+## Key Conventions
+
+- **No Rust in hone-ide** — all Rust lives in `../perry/` and its sub-crates
+- **Database schemas use camelCase** for all identifiers
+- **Tests use `bun:test`** (import from `'bun:test'`) in hone-core, hone-editor, hone-terminal
+- **Platform detection:** `__platform__` compile-time constant (0=macOS, 1=iOS, 2=Android)
+- **Config files:** KEY=VALUE format (`auth.conf`, `relay.conf`, `build.conf`)
+
+## Deployment
+
+- Landing page: `scp index.html root@webserver.skelpo.net:/var/www/hone.codes/`
+- Auth/relay/marketplace services run on `webserver.skelpo.net`
+- MySQL database: host=webserver.skelpo.net, user=hone
