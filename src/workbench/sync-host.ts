@@ -69,9 +69,14 @@ export function getHostRelayUrl(): string {
   return hostRelayUrl;
 }
 
+// 12-char code from a 34-char alphabet => 34^12 ≈ 2.4e18 permutations.
+// At 1M req/sec on the relay, brute force takes ~76k years.
+// TODO(SHIP-V1-GAPS.md #4): decouple room ID from code in Phase 7 once QR codegen+scan land.
+export const PAIR_CODE_LENGTH = 12;
+
 export function generateHostPairingCode(): string {
   let code = '';
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < PAIR_CODE_LENGTH; i++) {
     const idx = Math.floor(Math.random() * CODE_CHARS.length);
     code += CODE_CHARS.charAt(idx);
   }

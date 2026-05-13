@@ -12,6 +12,7 @@
  */
 import { extractJsonString, jsonEscape, getSSEData, parseSSEEventType, parseSSETextDelta, parseSSEToolUse, parseSSEToolId, parseSSEToolDelta, isSSEDone } from './sse-parser';
 import { executeTool, isDestructiveTool, buildToolDefinitionsJSON, buildReadOnlyToolsJSON, getToolWorkspaceRoot } from './agent-tools';
+import { spawn } from 'perry/thread';
 import { getAppDataDir } from '../../paths';
 
 // --- Module-level state ---
@@ -165,17 +166,23 @@ function onToolBlockComplete(): void {
   }
 }
 
-/** Execute the pending tool and prepare to continue the agent loop. */
+/** Execute the pending tool on a background thread, then continue the agent loop. */
 function executeAndContinue(): void {
   agentStatus = 4; // EXECUTING_TOOL
-  const result = executeTool(pendingToolName, pendingToolArgs);
+  const tn = pendingToolName;
+  const ta = pendingToolArgs;
+  const ti = pendingToolId;
+
+  spawn(() => {
+    return executeTool(tn, ta);
+  }).then((result) => { onToolExecutionComplete(result, tn, ta, ti); });
+}
+
+function onToolExecutionComplete(result: string, toolName: string, toolArgs: string, toolId: string): void {
   lastToolResult = result;
-  if (onToolResultCb) onToolResultCb(pendingToolName, result);
+  if (onToolResultCb) onToolResultCb(toolName, result);
 
   // Reset for next iteration
-  const toolName = pendingToolName;
-  const toolId = pendingToolId;
-  const toolArgs = pendingToolArgs;
   pendingToolName = '';
   pendingToolArgs = '';
   pendingToolId = '';

@@ -13,6 +13,7 @@ import {
   widgetAddChild, widgetSetWidth, widgetSetHeight,
   widgetClearChildren, widgetSetHugging, widgetMatchParentWidth,
 } from 'perry/ui';
+import { t } from 'perry/i18n';
 import { setFg, setBtnFg, setBg, hexToRGBA } from '../../ui-helpers';
 import {
   getWorkbenchSettings, setStringSetting, setNumberSetting, setBoolSetting,
@@ -201,12 +202,12 @@ function deferredAction(): void {
   if (action === 2) {
     const next = s.sidebarLocation.charCodeAt(0) === 108 ? 'right' : 'left';
     setStringSetting('sidebarLocation', next);
-    if (_hSidebarLocBtn) updateBtn(_hSidebarLocBtn, next.charCodeAt(0) === 108 ? 'Left' : 'Right');
+    if (_hSidebarLocBtn) updateBtn(_hSidebarLocBtn, next.charCodeAt(0) === 108 ? t('Left') : t('Right'));
   }
   if (action === 3) {
     const next = s.statusBarVisible ? 0 : 1;
     setBoolSetting('statusBarVisible', next);
-    if (_hStatusBarBtn) updateBtn(_hStatusBarBtn, next > 0 ? 'Visible' : 'Hidden');
+    if (_hStatusBarBtn) updateBtn(_hStatusBarBtn, next > 0 ? t('Visible') : t('Hidden'));
   }
   if (action === 4) {
     const next = cycleActivityBar(s.activityBarLocation);
@@ -249,7 +250,7 @@ function deferredAction(): void {
   if (action === 10) {
     const next = s.editorInsertSpaces ? 0 : 1;
     setBoolSetting('editorInsertSpaces', next);
-    if (_hEdInsertSpacesBtn) updateBtn(_hEdInsertSpacesBtn, next > 0 ? 'On' : 'Off');
+    if (_hEdInsertSpacesBtn) updateBtn(_hEdInsertSpacesBtn, next > 0 ? t('On') : t('Off'));
   }
   if (action === 11) {
     const next = cycleWordWrap(s.editorWordWrap);
@@ -264,12 +265,12 @@ function deferredAction(): void {
   if (action === 13) {
     const next = s.editorMinimapEnabled ? 0 : 1;
     setBoolSetting('editorMinimapEnabled', next);
-    if (_hEdMinimapBtn) updateBtn(_hEdMinimapBtn, next > 0 ? 'On' : 'Off');
+    if (_hEdMinimapBtn) updateBtn(_hEdMinimapBtn, next > 0 ? t('On') : t('Off'));
   }
   if (action === 14) {
     const next = s.editorFormatOnSave ? 0 : 1;
     setBoolSetting('editorFormatOnSave', next);
-    if (_hEdFormatOnSaveBtn) updateBtn(_hEdFormatOnSaveBtn, next > 0 ? 'On' : 'Off');
+    if (_hEdFormatOnSaveBtn) updateBtn(_hEdFormatOnSaveBtn, next > 0 ? t('On') : t('Off'));
   }
   if (action === 15) {
     const next = cycleAutoSave(s.filesAutoSave);
@@ -291,7 +292,7 @@ function deferredAction(): void {
   if (action === 18) {
     const next = s.filesTrimTrailingWhitespace ? 0 : 1;
     setBoolSetting('filesTrimTrailingWhitespace', next);
-    if (_hTrimWsBtn) updateBtn(_hTrimWsBtn, next > 0 ? 'On' : 'Off');
+    if (_hTrimWsBtn) updateBtn(_hTrimWsBtn, next > 0 ? t('On') : t('Off'));
   }
   if (action === 19) {
     const next = s.terminalFontSize + 1;
@@ -315,7 +316,7 @@ function deferredAction(): void {
   if (action === 22) {
     const next = s.aiInlineCompletionEnabled ? 0 : 1;
     setBoolSetting('aiInlineCompletionEnabled', next);
-    if (_hAiInlineBtn) updateBtn(_hAiInlineBtn, next > 0 ? 'On' : 'Off');
+    if (_hAiInlineBtn) updateBtn(_hAiInlineBtn, next > 0 ? t('On') : t('Off'));
   }
   if (action === 23) {
     const next = s.aiInlineCompletionDelay + 50;
@@ -334,32 +335,32 @@ function deferredAction(): void {
   if (action === 25) {
     const next = s.searchUseIgnoreFiles ? 0 : 1;
     setBoolSetting('searchUseIgnoreFiles', next);
-    if (_hSearchIgnoreBtn) updateBtn(_hSearchIgnoreBtn, next > 0 ? 'On' : 'Off');
+    if (_hSearchIgnoreBtn) updateBtn(_hSearchIgnoreBtn, next > 0 ? t('On') : t('Off'));
   }
   if (action === 26) {
     const next = s.searchFollowSymlinks ? 0 : 1;
     setBoolSetting('searchFollowSymlinks', next);
-    if (_hSearchSymlinksBtn) updateBtn(_hSearchSymlinksBtn, next > 0 ? 'On' : 'Off');
+    if (_hSearchSymlinksBtn) updateBtn(_hSearchSymlinksBtn, next > 0 ? t('On') : t('Off'));
   }
   if (action === 27) {
     const next = s.telemetryEnabled ? 0 : 1;
     setBoolSetting('telemetryEnabled', next);
-    if (_hTelemetryBtn) updateBtn(_hTelemetryBtn, next > 0 ? 'On' : 'Off');
+    if (_hTelemetryBtn) updateBtn(_hTelemetryBtn, next > 0 ? t('On') : t('Off'));
   }
   if (action === 28) {
     const next = s.editorInsertFinalNewline ? 0 : 1;
     setBoolSetting('editorInsertFinalNewline', next);
-    if (_hEdInsertFinalNewlineBtn) updateBtn(_hEdInsertFinalNewlineBtn, next > 0 ? 'On' : 'Off');
+    if (_hEdInsertFinalNewlineBtn) updateBtn(_hEdInsertFinalNewlineBtn, next > 0 ? t('On') : t('Off'));
   }
   if (action === 29) {
     const next = s.editorTrimFinalNewlines ? 0 : 1;
     setBoolSetting('editorTrimFinalNewlines', next);
-    if (_hEdTrimFinalNewlinesBtn) updateBtn(_hEdTrimFinalNewlinesBtn, next > 0 ? 'On' : 'Off');
+    if (_hEdTrimFinalNewlinesBtn) updateBtn(_hEdTrimFinalNewlinesBtn, next > 0 ? t('On') : t('Off'));
   }
   if (action === 30) {
     const next = s.editorFormatNormalizeIndent ? 0 : 1;
     setBoolSetting('editorFormatNormalizeIndent', next);
-    if (_hEdFormatNormalizeIndentBtn) updateBtn(_hEdFormatNormalizeIndentBtn, next > 0 ? 'On' : 'Off');
+    if (_hEdFormatNormalizeIndentBtn) updateBtn(_hEdFormatNormalizeIndentBtn, next > 0 ? t('On') : t('Off'));
   }
 }
 
@@ -492,7 +493,7 @@ function makeToggleRow(
   label: string, desc: string, currentOn: number,
   onClick: () => void,
 ): unknown {
-  const btn = Button(currentOn > 0 ? 'On' : 'Off', onClick);
+  const btn = Button(currentOn > 0 ? t('On') : t('Off'), onClick);
   buttonSetBordered(btn, 0);
   textSetFontSize(btn, 12);
   setBtnFg(btn, getButtonBackground());
@@ -629,191 +630,191 @@ function buildContent(ctr: unknown, colors: ResolvedUIColors): void {
   let hasSearch = 0;
 
   // ---- Editor ----
-  if (matchesSearch('Font Size', 'Controls the font size in pixels') > 0) hasEditor = 1;
-  if (matchesSearch('Font Family', 'Controls the font family') > 0) hasEditor = 1;
-  if (matchesSearch('Tab Size', 'The number of spaces a tab is equal to') > 0) hasEditor = 1;
-  if (matchesSearch('Insert Spaces', 'Insert spaces when pressing Tab') > 0) hasEditor = 1;
-  if (matchesSearch('Word Wrap', 'Controls how lines should wrap') > 0) hasEditor = 1;
-  if (matchesSearch('Line Numbers', 'Controls the display of line numbers') > 0) hasEditor = 1;
-  if (matchesSearch('Cursor Style', 'Controls the cursor style in the editor') > 0) hasEditor = 1;
-  if (matchesSearch('Minimap', 'Controls whether the minimap is shown') > 0) hasEditor = 1;
-  if (matchesSearch('Format on Save', 'Format the file on save') > 0) hasEditor = 1;
-  if (matchesSearch('Insert Final Newline', 'Insert a final newline at end of file on save') > 0) hasEditor = 1;
-  if (matchesSearch('Trim Final Newlines', 'Trim trailing blank lines on save') > 0) hasEditor = 1;
-  if (matchesSearch('Normalize Indentation', 'Normalize indentation on format') > 0) hasEditor = 1;
+  if (matchesSearch(t('Font Size'), t('Controls the font size in pixels')) > 0) hasEditor = 1;
+  if (matchesSearch(t('Font Family'), t('Controls the font family')) > 0) hasEditor = 1;
+  if (matchesSearch(t('Tab Size'), t('The number of spaces a tab is equal to')) > 0) hasEditor = 1;
+  if (matchesSearch(t('Insert Spaces'), t('Insert spaces when pressing Tab')) > 0) hasEditor = 1;
+  if (matchesSearch(t('Word Wrap'), t('Controls how lines should wrap')) > 0) hasEditor = 1;
+  if (matchesSearch(t('Line Numbers'), t('Controls the display of line numbers')) > 0) hasEditor = 1;
+  if (matchesSearch(t('Cursor Style'), t('Controls the cursor style in the editor')) > 0) hasEditor = 1;
+  if (matchesSearch(t('Minimap'), t('Controls whether the minimap is shown')) > 0) hasEditor = 1;
+  if (matchesSearch(t('Format on Save'), t('Format the file on save')) > 0) hasEditor = 1;
+  if (matchesSearch(t('Insert Final Newline'), t('Insert a final newline at end of file on save')) > 0) hasEditor = 1;
+  if (matchesSearch(t('Trim Final Newlines'), t('Trim trailing blank lines on save')) > 0) hasEditor = 1;
+  if (matchesSearch(t('Normalize Indentation'), t('Normalize indentation on format')) > 0) hasEditor = 1;
 
   if (hasEditor > 0) {
-    makeSection(ctr, colors, 'Editor');
-    if (matchesSearch('Font Size', 'Controls the font size in pixels') > 0)
-      _hEdFontSizeVal = makeStepperRow(ctr, colors, 'Font Size', 'Controls the font size in pixels', s.editorFontSize, () => { onEdFontSizeDown(); }, () => { onEdFontSizeUp(); });
-    if (matchesSearch('Font Family', 'Controls the font family') > 0)
-      makeTextRow(ctr, colors, 'Font Family', 'Controls the font family', s.editorFontFamily, onFontFamilyChange);
-    if (matchesSearch('Tab Size', 'The number of spaces a tab is equal to') > 0)
-      _hEdTabSizeVal = makeStepperRow(ctr, colors, 'Tab Size', 'The number of spaces a tab is equal to', s.editorTabSize, () => { onEdTabSizeDown(); }, () => { onEdTabSizeUp(); });
-    if (matchesSearch('Insert Spaces', 'Insert spaces when pressing Tab') > 0)
-      _hEdInsertSpacesBtn = makeToggleRow(ctr, colors, 'Insert Spaces', 'Insert spaces when pressing Tab', s.editorInsertSpaces ? 1 : 0, () => { onInsertSpacesToggle(); });
-    if (matchesSearch('Word Wrap', 'Controls how lines should wrap') > 0)
-      _hEdWordWrapBtn = makeCycleRow(ctr, colors, 'Word Wrap', 'Controls how lines should wrap', s.editorWordWrap, () => { onWordWrapCycle(); });
-    if (matchesSearch('Line Numbers', 'Controls the display of line numbers') > 0)
-      _hEdLineNumBtn = makeCycleRow(ctr, colors, 'Line Numbers', 'Controls the display of line numbers', s.editorLineNumbers, () => { onLineNumCycle(); });
-    if (matchesSearch('Cursor Style', 'Controls the cursor style in the editor') > 0)
-      _hEdCursorStyleBtn = makeCycleRow(ctr, colors, 'Cursor Style', 'Controls the cursor style in the editor', s.editorCursorStyle, () => { onCursorStyleCycle(); });
-    if (matchesSearch('Minimap', 'Controls whether the minimap is shown') > 0)
-      _hEdMinimapBtn = makeToggleRow(ctr, colors, 'Minimap', 'Controls whether the minimap is shown', s.editorMinimapEnabled ? 1 : 0, () => { onMinimapToggle(); });
-    if (matchesSearch('Format on Save', 'Format the file on save') > 0)
-      _hEdFormatOnSaveBtn = makeToggleRow(ctr, colors, 'Format on Save', 'Format the file on save', s.editorFormatOnSave ? 1 : 0, () => { onFormatOnSaveToggle(); });
-    if (matchesSearch('Insert Final Newline', 'Insert a final newline at end of file on save') > 0)
-      _hEdInsertFinalNewlineBtn = makeToggleRow(ctr, colors, 'Insert Final Newline', 'Insert a final newline at end of file on save', s.editorInsertFinalNewline ? 1 : 0, () => { onInsertFinalNewlineToggle(); });
-    if (matchesSearch('Trim Final Newlines', 'Trim trailing blank lines on save') > 0)
-      _hEdTrimFinalNewlinesBtn = makeToggleRow(ctr, colors, 'Trim Final Newlines', 'Trim trailing blank lines on save', s.editorTrimFinalNewlines ? 1 : 0, () => { onTrimFinalNewlinesToggle(); });
-    if (matchesSearch('Normalize Indentation', 'Normalize indentation on format') > 0)
-      _hEdFormatNormalizeIndentBtn = makeToggleRow(ctr, colors, 'Normalize Indentation', 'Normalize indentation (tabs/spaces) when formatting', s.editorFormatNormalizeIndent ? 1 : 0, () => { onFormatNormalizeIndentToggle(); });
+    makeSection(ctr, colors, t('Editor'));
+    if (matchesSearch(t('Font Size'), t('Controls the font size in pixels')) > 0)
+      _hEdFontSizeVal = makeStepperRow(ctr, colors, t('Font Size'), t('Controls the font size in pixels'), s.editorFontSize, () => { onEdFontSizeDown(); }, () => { onEdFontSizeUp(); });
+    if (matchesSearch(t('Font Family'), t('Controls the font family')) > 0)
+      makeTextRow(ctr, colors, t('Font Family'), t('Controls the font family'), s.editorFontFamily, onFontFamilyChange);
+    if (matchesSearch(t('Tab Size'), t('The number of spaces a tab is equal to')) > 0)
+      _hEdTabSizeVal = makeStepperRow(ctr, colors, t('Tab Size'), t('The number of spaces a tab is equal to'), s.editorTabSize, () => { onEdTabSizeDown(); }, () => { onEdTabSizeUp(); });
+    if (matchesSearch(t('Insert Spaces'), t('Insert spaces when pressing Tab')) > 0)
+      _hEdInsertSpacesBtn = makeToggleRow(ctr, colors, t('Insert Spaces'), t('Insert spaces when pressing Tab'), s.editorInsertSpaces ? 1 : 0, () => { onInsertSpacesToggle(); });
+    if (matchesSearch(t('Word Wrap'), t('Controls how lines should wrap')) > 0)
+      _hEdWordWrapBtn = makeCycleRow(ctr, colors, t('Word Wrap'), t('Controls how lines should wrap'), s.editorWordWrap, () => { onWordWrapCycle(); });
+    if (matchesSearch(t('Line Numbers'), t('Controls the display of line numbers')) > 0)
+      _hEdLineNumBtn = makeCycleRow(ctr, colors, t('Line Numbers'), t('Controls the display of line numbers'), s.editorLineNumbers, () => { onLineNumCycle(); });
+    if (matchesSearch(t('Cursor Style'), t('Controls the cursor style in the editor')) > 0)
+      _hEdCursorStyleBtn = makeCycleRow(ctr, colors, t('Cursor Style'), t('Controls the cursor style in the editor'), s.editorCursorStyle, () => { onCursorStyleCycle(); });
+    if (matchesSearch(t('Minimap'), t('Controls whether the minimap is shown')) > 0)
+      _hEdMinimapBtn = makeToggleRow(ctr, colors, t('Minimap'), t('Controls whether the minimap is shown'), s.editorMinimapEnabled ? 1 : 0, () => { onMinimapToggle(); });
+    if (matchesSearch(t('Format on Save'), t('Format the file on save')) > 0)
+      _hEdFormatOnSaveBtn = makeToggleRow(ctr, colors, t('Format on Save'), t('Format the file on save'), s.editorFormatOnSave ? 1 : 0, () => { onFormatOnSaveToggle(); });
+    if (matchesSearch(t('Insert Final Newline'), t('Insert a final newline at end of file on save')) > 0)
+      _hEdInsertFinalNewlineBtn = makeToggleRow(ctr, colors, t('Insert Final Newline'), t('Insert a final newline at end of file on save'), s.editorInsertFinalNewline ? 1 : 0, () => { onInsertFinalNewlineToggle(); });
+    if (matchesSearch(t('Trim Final Newlines'), t('Trim trailing blank lines on save')) > 0)
+      _hEdTrimFinalNewlinesBtn = makeToggleRow(ctr, colors, t('Trim Final Newlines'), t('Trim trailing blank lines on save'), s.editorTrimFinalNewlines ? 1 : 0, () => { onTrimFinalNewlinesToggle(); });
+    if (matchesSearch(t('Normalize Indentation'), t('Normalize indentation on format')) > 0)
+      _hEdFormatNormalizeIndentBtn = makeToggleRow(ctr, colors, t('Normalize Indentation'), t('Normalize indentation (tabs/spaces) when formatting'), s.editorFormatNormalizeIndent ? 1 : 0, () => { onFormatNormalizeIndentToggle(); });
   }
 
   // ---- Workbench ----
-  if (matchesSearch('Color Theme', 'Specifies the color theme') > 0) hasWorkbench = 1;
-  if (matchesSearch('Sidebar Location', 'Controls the location of the sidebar') > 0) hasWorkbench = 1;
-  if (matchesSearch('Status Bar', 'Controls the visibility of the status bar') > 0) hasWorkbench = 1;
-  if (matchesSearch('Activity Bar', 'Controls the position of the activity bar') > 0) hasWorkbench = 1;
+  if (matchesSearch(t('Color Theme'), t('Specifies the color theme')) > 0) hasWorkbench = 1;
+  if (matchesSearch(t('Sidebar Location'), t('Controls the location of the sidebar')) > 0) hasWorkbench = 1;
+  if (matchesSearch(t('Status Bar'), t('Controls the visibility of the status bar')) > 0) hasWorkbench = 1;
+  if (matchesSearch(t('Activity Bar'), t('Controls the position of the activity bar')) > 0) hasWorkbench = 1;
 
   if (hasWorkbench > 0) {
-    makeSection(ctr, colors, 'Workbench');
-    if (matchesSearch('Color Theme', 'Specifies the color theme') > 0)
-      _hThemeBtn = makeCycleRow(ctr, colors, 'Color Theme', 'Specifies the color theme', s.colorTheme, () => { onThemeCycle(); });
-    if (matchesSearch('Sidebar Location', 'Controls the location of the sidebar') > 0)
-      _hSidebarLocBtn = makeCycleRow(ctr, colors, 'Sidebar Location', 'Controls the location of the sidebar', s.sidebarLocation.charCodeAt(0) === 108 ? 'Left' : 'Right', () => { onSidebarLocCycle(); });
-    if (matchesSearch('Status Bar', 'Controls the visibility of the status bar') > 0)
-      _hStatusBarBtn = makeToggleRowAlt(ctr, colors, 'Status Bar', 'Controls the visibility of the status bar', 'Visible', 'Hidden', s.statusBarVisible ? 1 : 0, () => { onStatusBarToggle(); });
-    if (matchesSearch('Activity Bar', 'Controls the position of the activity bar') > 0)
-      _hActivityBarBtn = makeCycleRow(ctr, colors, 'Activity Bar', 'Controls the position of the activity bar', s.activityBarLocation, () => { onActivityBarCycle(); });
+    makeSection(ctr, colors, t('Workbench'));
+    if (matchesSearch(t('Color Theme'), t('Specifies the color theme')) > 0)
+      _hThemeBtn = makeCycleRow(ctr, colors, t('Color Theme'), t('Specifies the color theme'), s.colorTheme, () => { onThemeCycle(); });
+    if (matchesSearch(t('Sidebar Location'), t('Controls the location of the sidebar')) > 0)
+      _hSidebarLocBtn = makeCycleRow(ctr, colors, t('Sidebar Location'), t('Controls the location of the sidebar'), s.sidebarLocation.charCodeAt(0) === 108 ? t('Left') : t('Right'), () => { onSidebarLocCycle(); });
+    if (matchesSearch(t('Status Bar'), t('Controls the visibility of the status bar')) > 0)
+      _hStatusBarBtn = makeToggleRowAlt(ctr, colors, t('Status Bar'), t('Controls the visibility of the status bar'), t('Visible'), t('Hidden'), s.statusBarVisible ? 1 : 0, () => { onStatusBarToggle(); });
+    if (matchesSearch(t('Activity Bar'), t('Controls the position of the activity bar')) > 0)
+      _hActivityBarBtn = makeCycleRow(ctr, colors, t('Activity Bar'), t('Controls the position of the activity bar'), s.activityBarLocation, () => { onActivityBarCycle(); });
   }
 
   // ---- Files ----
-  if (matchesSearch('Auto Save', 'Controls auto save of editors') > 0) hasFiles = 1;
-  if (matchesSearch('Auto Save Delay', 'Delay in ms after which a file is auto saved') > 0) hasFiles = 1;
-  if (matchesSearch('Trim Trailing Whitespace', 'Remove trailing whitespace on save') > 0) hasFiles = 1;
+  if (matchesSearch(t('Auto Save'), t('Controls auto save of editors')) > 0) hasFiles = 1;
+  if (matchesSearch(t('Auto Save Delay'), t('Delay in ms after which a file is auto saved')) > 0) hasFiles = 1;
+  if (matchesSearch(t('Trim Trailing Whitespace'), t('Remove trailing whitespace on save')) > 0) hasFiles = 1;
 
   if (hasFiles > 0) {
-    makeSection(ctr, colors, 'Files');
-    if (matchesSearch('Auto Save', 'Controls auto save of editors') > 0)
-      _hAutoSaveBtn = makeCycleRow(ctr, colors, 'Auto Save', 'Controls auto save of editors', s.filesAutoSave, () => { onAutoSaveCycle(); });
-    if (matchesSearch('Auto Save Delay', 'Delay in ms after which a file is auto saved') > 0)
-      _hAutoSaveDelayVal = makeStepperRow(ctr, colors, 'Auto Save Delay', 'Delay in ms after which a file is auto saved', s.filesAutoSaveDelay, () => { onAutoSaveDelayDown(); }, () => { onAutoSaveDelayUp(); });
-    if (matchesSearch('Trim Trailing Whitespace', 'Remove trailing whitespace on save') > 0)
-      _hTrimWsBtn = makeToggleRow(ctr, colors, 'Trim Trailing Whitespace', 'Remove trailing whitespace on save', s.filesTrimTrailingWhitespace ? 1 : 0, () => { onTrimWsToggle(); });
+    makeSection(ctr, colors, t('Files'));
+    if (matchesSearch(t('Auto Save'), t('Controls auto save of editors')) > 0)
+      _hAutoSaveBtn = makeCycleRow(ctr, colors, t('Auto Save'), t('Controls auto save of editors'), s.filesAutoSave, () => { onAutoSaveCycle(); });
+    if (matchesSearch(t('Auto Save Delay'), t('Delay in ms after which a file is auto saved')) > 0)
+      _hAutoSaveDelayVal = makeStepperRow(ctr, colors, t('Auto Save Delay'), t('Delay in ms after which a file is auto saved'), s.filesAutoSaveDelay, () => { onAutoSaveDelayDown(); }, () => { onAutoSaveDelayUp(); });
+    if (matchesSearch(t('Trim Trailing Whitespace'), t('Remove trailing whitespace on save')) > 0)
+      _hTrimWsBtn = makeToggleRow(ctr, colors, t('Trim Trailing Whitespace'), t('Remove trailing whitespace on save'), s.filesTrimTrailingWhitespace ? 1 : 0, () => { onTrimWsToggle(); });
   }
 
   // ---- Terminal ----
-  if (matchesSearch('Terminal Font Size', 'Controls the font size of the terminal') > 0) hasTerminal = 1;
-  if (matchesSearch('Terminal Cursor Style', 'Controls the cursor style of the terminal') > 0) hasTerminal = 1;
+  if (matchesSearch(t('Terminal Font Size'), t('Controls the font size of the terminal')) > 0) hasTerminal = 1;
+  if (matchesSearch(t('Terminal Cursor Style'), t('Controls the cursor style of the terminal')) > 0) hasTerminal = 1;
 
   if (hasTerminal > 0) {
-    makeSection(ctr, colors, 'Terminal');
-    if (matchesSearch('Terminal Font Size', 'Controls the font size of the terminal') > 0)
-      _hTermFontSizeVal = makeStepperRow(ctr, colors, 'Terminal Font Size', 'Controls the font size of the terminal', s.terminalFontSize, () => { onTermFontSizeDown(); }, () => { onTermFontSizeUp(); });
-    if (matchesSearch('Terminal Cursor Style', 'Controls the cursor style of the terminal') > 0)
-      _hTermCursorBtn = makeCycleRow(ctr, colors, 'Terminal Cursor Style', 'Controls the cursor style of the terminal', s.terminalCursorStyle, () => { onTermCursorCycle(); });
+    makeSection(ctr, colors, t('Terminal'));
+    if (matchesSearch(t('Terminal Font Size'), t('Controls the font size of the terminal')) > 0)
+      _hTermFontSizeVal = makeStepperRow(ctr, colors, t('Terminal Font Size'), t('Controls the font size of the terminal'), s.terminalFontSize, () => { onTermFontSizeDown(); }, () => { onTermFontSizeUp(); });
+    if (matchesSearch(t('Terminal Cursor Style'), t('Controls the cursor style of the terminal')) > 0)
+      _hTermCursorBtn = makeCycleRow(ctr, colors, t('Terminal Cursor Style'), t('Controls the cursor style of the terminal'), s.terminalCursorStyle, () => { onTermCursorCycle(); });
   }
 
   // ---- AI ----
-  if (matchesSearch('Anthropic', 'API key for Anthropic Claude models') > 0) hasAi = 1;
-  if (matchesSearch('OpenAI', 'API key for OpenAI GPT models') > 0) hasAi = 1;
-  if (matchesSearch('Google', 'API key for Google Gemini models') > 0) hasAi = 1;
-  if (matchesSearch('DeepSeek', 'API key for DeepSeek models') > 0) hasAi = 1;
-  if (matchesSearch('xAI', 'API key for xAI Grok models') > 0) hasAi = 1;
-  if (matchesSearch('Ollama', 'Local Ollama server') > 0) hasAi = 1;
-  if (matchesSearch('Custom', 'Custom OpenAI-compatible endpoint') > 0) hasAi = 1;
-  if (matchesSearch('Inline Completion', 'Enable AI inline code completions') > 0) hasAi = 1;
-  if (matchesSearch('Inline Completion Delay', 'Delay in ms before showing completions') > 0) hasAi = 1;
+  if (matchesSearch(t('Anthropic'), t('API key for Anthropic Claude models')) > 0) hasAi = 1;
+  if (matchesSearch(t('OpenAI'), t('API key for OpenAI GPT models')) > 0) hasAi = 1;
+  if (matchesSearch(t('Google'), t('API key for Google Gemini models')) > 0) hasAi = 1;
+  if (matchesSearch(t('DeepSeek'), t('API key for DeepSeek models')) > 0) hasAi = 1;
+  if (matchesSearch(t('xAI'), t('API key for xAI Grok models')) > 0) hasAi = 1;
+  if (matchesSearch(t('Ollama'), t('Local Ollama server')) > 0) hasAi = 1;
+  if (matchesSearch(t('Custom'), t('Custom OpenAI-compatible endpoint')) > 0) hasAi = 1;
+  if (matchesSearch(t('Snippet Hints'), t('Suggest closing braces and block bodies after the cursor (local heuristics).')) > 0) hasAi = 1;
+  if (matchesSearch(t('Snippet Hints Delay'), t('Delay in ms before showing snippet hints')) > 0) hasAi = 1;
 
   if (hasAi > 0) {
-    makeSection(ctr, colors, 'AI Provider Keys');
-    if (matchesSearch('Anthropic', 'API key for Anthropic Claude models') > 0)
-      makeTextRow(ctr, colors, 'Anthropic API Key', 'API key for Anthropic Claude models', s.aiKeyAnthropic.length > 8 ? 'sk-...set' : '', onAiKeyAnthropicChange);
-    if (matchesSearch('OpenAI', 'API key for OpenAI GPT models') > 0)
-      makeTextRow(ctr, colors, 'OpenAI API Key', 'API key for OpenAI GPT models', s.aiKeyOpenai.length > 8 ? 'sk-...set' : '', onAiKeyOpenaiChange);
-    if (matchesSearch('Google', 'API key for Google Gemini models') > 0)
-      makeTextRow(ctr, colors, 'Google AI API Key', 'API key for Google Gemini models', s.aiKeyGoogle.length > 8 ? '...set' : '', onAiKeyGoogleChange);
-    if (matchesSearch('DeepSeek', 'API key for DeepSeek models') > 0)
-      makeTextRow(ctr, colors, 'DeepSeek API Key', 'API key for DeepSeek models', s.aiKeyDeepseek.length > 8 ? '...set' : '', onAiKeyDeepseekChange);
-    if (matchesSearch('xAI', 'API key for xAI Grok models') > 0)
-      makeTextRow(ctr, colors, 'xAI API Key', 'API key for xAI Grok models', s.aiKeyXai.length > 8 ? '...set' : '', onAiKeyXaiChange);
+    makeSection(ctr, colors, t('AI Provider Keys'));
+    if (matchesSearch(t('Anthropic'), t('API key for Anthropic Claude models')) > 0)
+      makeTextRow(ctr, colors, t('Anthropic API Key'), t('API key for Anthropic Claude models'), s.aiKeyAnthropic.length > 8 ? 'sk-...set' : '', onAiKeyAnthropicChange);
+    if (matchesSearch(t('OpenAI'), t('API key for OpenAI GPT models')) > 0)
+      makeTextRow(ctr, colors, t('OpenAI API Key'), t('API key for OpenAI GPT models'), s.aiKeyOpenai.length > 8 ? 'sk-...set' : '', onAiKeyOpenaiChange);
+    if (matchesSearch(t('Google'), t('API key for Google Gemini models')) > 0)
+      makeTextRow(ctr, colors, t('Google AI API Key'), t('API key for Google Gemini models'), s.aiKeyGoogle.length > 8 ? '...set' : '', onAiKeyGoogleChange);
+    if (matchesSearch(t('DeepSeek'), t('API key for DeepSeek models')) > 0)
+      makeTextRow(ctr, colors, t('DeepSeek API Key'), t('API key for DeepSeek models'), s.aiKeyDeepseek.length > 8 ? '...set' : '', onAiKeyDeepseekChange);
+    if (matchesSearch(t('xAI'), t('API key for xAI Grok models')) > 0)
+      makeTextRow(ctr, colors, t('xAI API Key'), t('API key for xAI Grok models'), s.aiKeyXai.length > 8 ? '...set' : '', onAiKeyXaiChange);
 
-    makeSection(ctr, colors, 'Local / Custom');
-    if (matchesSearch('Ollama', 'Local Ollama server') > 0) {
-      makeTextRow(ctr, colors, 'Ollama URL', 'URL for local Ollama server', s.aiOllamaUrl, onAiOllamaUrlChange);
-      makeTextRow(ctr, colors, 'Ollama Model', 'Model name for Ollama (e.g., llama3:8b)', s.aiOllamaModel, onAiOllamaModelChange);
+    makeSection(ctr, colors, t('Local / Custom'));
+    if (matchesSearch(t('Ollama'), t('Local Ollama server')) > 0) {
+      makeTextRow(ctr, colors, t('Ollama URL'), t('URL for local Ollama server'), s.aiOllamaUrl, onAiOllamaUrlChange);
+      makeTextRow(ctr, colors, t('Ollama Model'), t('Model name for Ollama (e.g., llama3:8b)'), s.aiOllamaModel, onAiOllamaModelChange);
     }
-    if (matchesSearch('Custom', 'Custom OpenAI-compatible endpoint') > 0) {
-      makeTextRow(ctr, colors, 'Custom URL', 'Custom OpenAI-compatible API endpoint', s.aiCustomUrl, onAiCustomUrlChange);
-      makeTextRow(ctr, colors, 'Custom API Key', 'API key for custom endpoint', s.aiCustomKey.length > 5 ? '...set' : '', onAiCustomKeyChange);
-      makeTextRow(ctr, colors, 'Custom Model', 'Model name for custom endpoint', s.aiCustomModel, onAiCustomModelChange);
+    if (matchesSearch(t('Custom'), t('Custom OpenAI-compatible endpoint')) > 0) {
+      makeTextRow(ctr, colors, t('Custom URL'), t('Custom OpenAI-compatible API endpoint'), s.aiCustomUrl, onAiCustomUrlChange);
+      makeTextRow(ctr, colors, t('Custom API Key'), t('API key for custom endpoint'), s.aiCustomKey.length > 5 ? '...set' : '', onAiCustomKeyChange);
+      makeTextRow(ctr, colors, t('Custom Model'), t('Model name for custom endpoint'), s.aiCustomModel, onAiCustomModelChange);
     }
 
-    makeSection(ctr, colors, 'AI Features');
-    if (matchesSearch('Inline Completion', 'Enable AI inline code completions') > 0)
-      _hAiInlineBtn = makeToggleRow(ctr, colors, 'Inline Completion', 'Enable AI inline code completions', s.aiInlineCompletionEnabled ? 1 : 0, () => { onAiInlineToggle(); });
-    if (matchesSearch('Inline Completion Delay', 'Delay in ms before showing completions') > 0)
-      _hAiInlineDelayVal = makeStepperRow(ctr, colors, 'Inline Completion Delay', 'Delay in ms before showing completions', s.aiInlineCompletionDelay, () => { onAiInlineDelayDown(); }, () => { onAiInlineDelayUp(); });
+    makeSection(ctr, colors, t('Editor Features'));
+    if (matchesSearch(t('Snippet Hints'), t('Suggest closing braces and block bodies after the cursor (local heuristics).')) > 0)
+      _hAiInlineBtn = makeToggleRow(ctr, colors, t('Snippet Hints'), t('Suggest closing braces and block bodies after the cursor. Local heuristics only — no AI provider call. Model-backed completion in v1.1.'), s.aiInlineCompletionEnabled ? 1 : 0, () => { onAiInlineToggle(); });
+    if (matchesSearch(t('Snippet Hints Delay'), t('Delay in ms before showing snippet hints')) > 0)
+      _hAiInlineDelayVal = makeStepperRow(ctr, colors, t('Snippet Hints Delay'), t('Delay in ms before showing snippet hints'), s.aiInlineCompletionDelay, () => { onAiInlineDelayDown(); }, () => { onAiInlineDelayUp(); });
   }
 
   // ---- Search ----
-  if (matchesSearch('Use Ignore Files', 'Use .gitignore files when searching') > 0) hasSearch = 1;
-  if (matchesSearch('Follow Symlinks', 'Follow symbolic links while searching') > 0) hasSearch = 1;
+  if (matchesSearch(t('Use Ignore Files'), t('Use .gitignore files when searching')) > 0) hasSearch = 1;
+  if (matchesSearch(t('Follow Symlinks'), t('Follow symbolic links while searching')) > 0) hasSearch = 1;
 
   if (hasSearch > 0) {
-    makeSection(ctr, colors, 'Search');
-    if (matchesSearch('Use Ignore Files', 'Use .gitignore files when searching') > 0)
-      _hSearchIgnoreBtn = makeToggleRow(ctr, colors, 'Use Ignore Files', 'Use .gitignore files when searching', s.searchUseIgnoreFiles ? 1 : 0, () => { onSearchIgnoreToggle(); });
-    if (matchesSearch('Follow Symlinks', 'Follow symbolic links while searching') > 0)
-      _hSearchSymlinksBtn = makeToggleRow(ctr, colors, 'Follow Symlinks', 'Follow symbolic links while searching', s.searchFollowSymlinks ? 1 : 0, () => { onSearchSymlinksToggle(); });
+    makeSection(ctr, colors, t('Search'));
+    if (matchesSearch(t('Use Ignore Files'), t('Use .gitignore files when searching')) > 0)
+      _hSearchIgnoreBtn = makeToggleRow(ctr, colors, t('Use Ignore Files'), t('Use .gitignore files when searching'), s.searchUseIgnoreFiles ? 1 : 0, () => { onSearchIgnoreToggle(); });
+    if (matchesSearch(t('Follow Symlinks'), t('Follow symbolic links while searching')) > 0)
+      _hSearchSymlinksBtn = makeToggleRow(ctr, colors, t('Follow Symlinks'), t('Follow symbolic links while searching'), s.searchFollowSymlinks ? 1 : 0, () => { onSearchSymlinksToggle(); });
   }
 
   // ---- Privacy ----
   let hasPrivacy = 0;
-  if (matchesSearch('Anonymous Statistics', 'Share anonymous usage statistics to help improve Hone') > 0) hasPrivacy = 1;
+  if (matchesSearch(t('Anonymous Statistics'), t('Share anonymous usage statistics to help improve Hone')) > 0) hasPrivacy = 1;
 
   if (hasPrivacy > 0) {
-    makeSection(ctr, colors, 'Privacy');
-    if (matchesSearch('Anonymous Statistics', 'Share anonymous usage statistics to help improve Hone') > 0)
-      _hTelemetryBtn = makeToggleRow(ctr, colors, 'Anonymous Statistics', 'Share anonymous usage statistics to help improve Hone. No file content, paths, or personal data is ever collected.', s.telemetryEnabled ? 1 : 0, () => { onTelemetryToggle(); });
+    makeSection(ctr, colors, t('Privacy'));
+    if (matchesSearch(t('Anonymous Statistics'), t('Share anonymous usage statistics to help improve Hone')) > 0)
+      _hTelemetryBtn = makeToggleRow(ctr, colors, t('Anonymous Statistics'), t('Share anonymous usage statistics to help improve Hone. No file content, paths, or personal data is ever collected.'), s.telemetryEnabled ? 1 : 0, () => { onTelemetryToggle(); });
   }
 
   // ---- Account ----
   let hasAccount = 0;
-  if (matchesSearch('Account', 'Plan tier projects devices email') > 0) hasAccount = 1;
+  if (matchesSearch(t('Account'), t('Plan tier projects devices email')) > 0) hasAccount = 1;
 
   if (hasAccount > 0) {
-    makeSection(ctr, colors, 'Account');
+    makeSection(ctr, colors, t('Account'));
 
     // Plan
-    const planVal = Button('Free', () => { _labelClick(); });
+    const planVal = Button(t('Free'), () => { _labelClick(); });
     buttonSetBordered(planVal, 0);
     setBtnFg(planVal, getInputPlaceholderForeground());
     textSetFontSize(planVal, 12);
-    const planLbl = makeSettingLabel('Plan', ''); widgetSetWidth(planLbl, 200);
+    const planLbl = makeSettingLabel(t('Plan'), ''); widgetSetWidth(planLbl, 200);
     const planRow = HStack(12, [planLbl, planVal]);
     widgetSetHeight(planRow, 26);
     widgetAddChild(ctr, planRow);
     _hAccountTierLabel = planVal;
 
     // Synced projects
-    const projVal = Button('0 of 1', () => { _labelClick(); });
+    const projVal = Button(t('0 of 1'), () => { _labelClick(); });
     buttonSetBordered(projVal, 0);
     setBtnFg(projVal, getInputPlaceholderForeground());
     textSetFontSize(projVal, 12);
-    const projLbl = makeSettingLabel('Synced Projects', ''); widgetSetWidth(projLbl, 200);
+    const projLbl = makeSettingLabel(t('Synced Projects'), ''); widgetSetWidth(projLbl, 200);
     const projRow = HStack(12, [projLbl, projVal]);
     widgetSetHeight(projRow, 26);
     widgetAddChild(ctr, projRow);
     _hAccountProjectsLabel = projVal;
 
     // Email
-    const emailVal = Button('Not linked', () => { _labelClick(); });
+    const emailVal = Button(t('Not linked'), () => { _labelClick(); });
     buttonSetBordered(emailVal, 0);
     setBtnFg(emailVal, getInputPlaceholderForeground());
     textSetFontSize(emailVal, 12);
-    const emailLbl = makeSettingLabel('Email', ''); widgetSetWidth(emailLbl, 200);
+    const emailLbl = makeSettingLabel(t('Email'), ''); widgetSetWidth(emailLbl, 200);
     const emailRow = HStack(12, [emailLbl, emailVal]);
     widgetSetHeight(emailRow, 26);
     widgetAddChild(ctr, emailRow);
@@ -830,13 +831,13 @@ export function renderSettingsTab(container: unknown, colors: ResolvedUIColors):
   _searchText = '';
 
   // Header
-  const titleText = Button('Settings', () => { _labelClick(); });
+  const titleText = Button(t('Settings'), () => { _labelClick(); });
   buttonSetBordered(titleText, 0);
   textSetFontSize(titleText, 20);
   textSetFontWeight(titleText, 20, 0.6);
   setBtnFg(titleText, getEditorForeground());
 
-  const searchField = TextField('Search settings...', onSearchChange);
+  const searchField = TextField(t('Search settings...'), onSearchChange);
   widgetSetWidth(searchField, 220);
 
   const header = HStackWithInsets(8, 16, 16, 16, 16);
@@ -871,7 +872,7 @@ export function updateAccountTier(tier: string): void {
 export function updateAccountProjects(current: number, max: number): void {
   if (_hAccountProjectsLabel !== null) {
     let txt = String(current);
-    txt += ' of ';
+    txt += t(' of ');
     txt += String(max);
     textSetString(_hAccountProjectsLabel, txt);
   }
@@ -882,7 +883,7 @@ export function updateAccountEmail(email: string): void {
     if (email.length > 0 && email.indexOf('@hone.local') < 0) {
       textSetString(_hAccountEmailLabel, email);
     } else {
-      textSetString(_hAccountEmailLabel, 'Not linked');
+      textSetString(_hAccountEmailLabel, t('Not linked'));
     }
   }
 }

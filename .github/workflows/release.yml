@@ -1,0 +1,341 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+env:
+  PERRY_LICENSE_KEY: ${{ secrets.PERRY_LICENSE_KEY }}
+  PERRY_API_TOKEN: ${{ secrets.PERRY_API_TOKEN }}
+
+jobs:
+  build-macos:
+    name: macOS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone dependencies
+        run: |
+          git clone --depth 1 "$HONE_CORE_REPO" ../hone-core
+          git clone --depth 1 "$HONE_EDITOR_REPO" ../hone-editor
+          git clone --depth 1 "$HONE_TERMINAL_REPO" ../hone-terminal
+          rm -rf ../hone-core/.git ../hone-editor/.git ../hone-terminal/.git
+        env:
+          HONE_CORE_REPO: ${{ secrets.HONE_CORE_REPO }}
+          HONE_EDITOR_REPO: ${{ secrets.HONE_EDITOR_REPO }}
+          HONE_TERMINAL_REPO: ${{ secrets.HONE_TERMINAL_REPO }}
+
+      - name: Install perry
+        run: |
+          mkdir -p /tmp/perry-install
+          gh release download --repo PerryTS/perry --pattern 'perry-linux-x86_64.tar.gz' --dir /tmp/perry-install
+          tar xzf /tmp/perry-install/perry-linux-x86_64.tar.gz -C /tmp/perry-install
+          sudo mv /tmp/perry-install/perry /usr/local/bin/
+          rm -rf /tmp/perry-install
+          perry --version
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Configure perry
+        run: |
+          mkdir -p ~/.perry
+          printf 'license_key = "%s"\nserver = "https://hub.perryts.com"\napi_token = "%s"\n' \
+            "$PERRY_LICENSE_KEY" "$PERRY_API_TOKEN" > ~/.perry/config.toml
+
+      - name: Set version and build number
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version = .*/version = \"$VERSION\"/" perry.toml
+          BUILD_NUM=$(( ${{ github.run_number }} + 100 ))
+          sed -i "s/^build_number = .*/build_number = $BUILD_NUM/" perry.toml
+
+      - name: Decode signing credentials
+        run: |
+          echo "${{ secrets.APPLE_APPSTORE_P12 }}" | base64 -d > /tmp/macos_appstore.p12
+          echo "${{ secrets.APPLE_INSTALLER_P12 }}" | base64 -d > /tmp/macos_installer.p12
+          echo "${{ secrets.APPLE_DEVID_P12 }}" | base64 -d > /tmp/macos_devid.p12
+          echo "${{ secrets.APPLE_P8_KEY }}" | base64 -d > /tmp/appstore_connect.p8
+          echo "${{ secrets.APPLE_MACOS_PROVISION_PROFILE }}" | base64 -d > /tmp/macos.provisionprofile
+
+      - name: Inject macOS credential paths into perry.toml
+        run: |
+          sed -i '/^\[macos\]/a certificate = "/tmp/macos_appstore.p12"' perry.toml
+          sed -i '/^\[macos\]/a installer_certificate = "/tmp/macos_installer.p12"' perry.toml
+          sed -i '/^\[macos\]/a notarize_certificate = "/tmp/macos_devid.p12"' perry.toml
+          sed -i '/^\[macos\]/a provisioning_profile = "/tmp/macos.provisionprofile"' perry.toml
+
+      - name: Publish macOS
+        run: |
+          perry publish macos --skip-audit \
+            --certificate /tmp/macos_appstore.p12 \
+            --provisioning-profile /tmp/macos.provisionprofile \
+            --apple-p8-key /tmp/appstore_connect.p8 \
+            --apple-key-id "$PERRY_APPLE_KEY_ID" \
+            --apple-issuer-id "$PERRY_APPLE_ISSUER_ID" \
+            --apple-team-id "$PERRY_APPLE_TEAM_ID"
+        env:
+          PERRY_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          PERRY_APPLE_NOTARIZE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          PERRY_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          PERRY_APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
+          PERRY_APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+
+      - name: Rename and upload artifact
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ls -la dist/
+          DMG=$(find dist -name "Hone-*.dmg" -size +0c | head -1)
+          if [ -z "$DMG" ]; then
+            echo "ERROR: No DMG artifact found in dist/"
+            exit 1
+          fi
+          mv "$DMG" "dist/Hone-${VERSION}-macos.dmg"
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Hone-*-macos.dmg
+
+  build-linux:
+    name: Linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone dependencies
+        run: |
+          git clone --depth 1 "$HONE_CORE_REPO" ../hone-core
+          git clone --depth 1 "$HONE_EDITOR_REPO" ../hone-editor
+          git clone --depth 1 "$HONE_TERMINAL_REPO" ../hone-terminal
+          rm -rf ../hone-core/.git ../hone-editor/.git ../hone-terminal/.git
+        env:
+          HONE_CORE_REPO: ${{ secrets.HONE_CORE_REPO }}
+          HONE_EDITOR_REPO: ${{ secrets.HONE_EDITOR_REPO }}
+          HONE_TERMINAL_REPO: ${{ secrets.HONE_TERMINAL_REPO }}
+
+      - name: Install perry
+        run: |
+          mkdir -p /tmp/perry-install
+          gh release download --repo PerryTS/perry --pattern 'perry-linux-x86_64.tar.gz' --dir /tmp/perry-install
+          tar xzf /tmp/perry-install/perry-linux-x86_64.tar.gz -C /tmp/perry-install
+          sudo mv /tmp/perry-install/perry /usr/local/bin/
+          rm -rf /tmp/perry-install
+          perry --version
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Configure perry
+        run: |
+          mkdir -p ~/.perry
+          printf 'license_key = "%s"\nserver = "https://hub.perryts.com"\napi_token = "%s"\n' \
+            "$PERRY_LICENSE_KEY" "$PERRY_API_TOKEN" > ~/.perry/config.toml
+
+      - name: Set version and build number
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version = .*/version = \"$VERSION\"/" perry.toml
+          BUILD_NUM=$(( ${{ github.run_number }} + 100 ))
+          sed -i "s/^build_number = .*/build_number = $BUILD_NUM/" perry.toml
+
+      - name: Publish Linux
+        run: perry publish linux --skip-audit
+
+      - name: Rename and upload artifact
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mv dist/Hone-*.tar.gz "dist/Hone-${VERSION}-linux-x86_64.tar.gz"
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Hone-*-linux-x86_64.tar.gz
+
+  build-windows:
+    name: Windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone dependencies
+        run: |
+          git clone --depth 1 "$HONE_CORE_REPO" ../hone-core
+          git clone --depth 1 "$HONE_EDITOR_REPO" ../hone-editor
+          git clone --depth 1 "$HONE_TERMINAL_REPO" ../hone-terminal
+          rm -rf ../hone-core/.git ../hone-editor/.git ../hone-terminal/.git
+        env:
+          HONE_CORE_REPO: ${{ secrets.HONE_CORE_REPO }}
+          HONE_EDITOR_REPO: ${{ secrets.HONE_EDITOR_REPO }}
+          HONE_TERMINAL_REPO: ${{ secrets.HONE_TERMINAL_REPO }}
+
+      - name: Install perry
+        run: |
+          mkdir -p /tmp/perry-install
+          gh release download --repo PerryTS/perry --pattern 'perry-linux-x86_64.tar.gz' --dir /tmp/perry-install
+          tar xzf /tmp/perry-install/perry-linux-x86_64.tar.gz -C /tmp/perry-install
+          sudo mv /tmp/perry-install/perry /usr/local/bin/
+          rm -rf /tmp/perry-install
+          perry --version
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Configure perry
+        run: |
+          mkdir -p ~/.perry
+          printf 'license_key = "%s"\nserver = "https://hub.perryts.com"\napi_token = "%s"\n' \
+            "$PERRY_LICENSE_KEY" "$PERRY_API_TOKEN" > ~/.perry/config.toml
+
+      - name: Set version and build number
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version = .*/version = \"$VERSION\"/" perry.toml
+          BUILD_NUM=$(( ${{ github.run_number }} + 100 ))
+          sed -i "s/^build_number = .*/build_number = $BUILD_NUM/" perry.toml
+
+      - name: Decode signing credentials
+        run: |
+          echo "${{ secrets.GCLOUD_KMS_CERT }}" | base64 -d > /tmp/skelpo_codesign.crt
+          echo "${{ secrets.GCLOUD_SERVICE_ACCOUNT }}" | base64 -d > /tmp/gcloud-codesign.json
+
+      - name: Rewrite credential paths in perry.toml
+        run: |
+          sed -i 's|gcloud_kms_key = .*|gcloud_kms_key = "projects/skelpo/locations/europe-west3/keyRings/code-signing-eu/cryptoKeys/skelpo-codesign/cryptoKeyVersions/1"\ngcloud_kms_cert = "/tmp/skelpo_codesign.crt"\ngcloud_service_account = "/tmp/gcloud-codesign.json"|' perry.toml
+
+      - name: Publish Windows
+        run: perry publish windows --skip-audit
+
+      - name: Rename and upload artifact
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mv dist/Hone-*.exe "dist/Hone-${VERSION}-windows-setup.exe"
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Hone-*-windows-setup.exe
+
+  build-ios:
+    name: iOS (TestFlight)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone dependencies
+        run: |
+          git clone --depth 1 "$HONE_CORE_REPO" ../hone-core
+          git clone --depth 1 "$HONE_EDITOR_REPO" ../hone-editor
+          git clone --depth 1 "$HONE_TERMINAL_REPO" ../hone-terminal
+          rm -rf ../hone-core/.git ../hone-editor/.git ../hone-terminal/.git
+        env:
+          HONE_CORE_REPO: ${{ secrets.HONE_CORE_REPO }}
+          HONE_EDITOR_REPO: ${{ secrets.HONE_EDITOR_REPO }}
+          HONE_TERMINAL_REPO: ${{ secrets.HONE_TERMINAL_REPO }}
+
+      - name: Install perry
+        run: |
+          mkdir -p /tmp/perry-install
+          gh release download --repo PerryTS/perry --pattern 'perry-linux-x86_64.tar.gz' --dir /tmp/perry-install
+          tar xzf /tmp/perry-install/perry-linux-x86_64.tar.gz -C /tmp/perry-install
+          sudo mv /tmp/perry-install/perry /usr/local/bin/
+          rm -rf /tmp/perry-install
+          perry --version
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Configure perry
+        run: |
+          mkdir -p ~/.perry
+          printf 'license_key = "%s"\nserver = "https://hub.perryts.com"\napi_token = "%s"\n' \
+            "$PERRY_LICENSE_KEY" "$PERRY_API_TOKEN" > ~/.perry/config.toml
+
+      - name: Set version and build number
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version = .*/version = \"$VERSION\"/" perry.toml
+          BUILD_NUM=$(( ${{ github.run_number }} + 100 ))
+          sed -i "s/^build_number = .*/build_number = $BUILD_NUM/" perry.toml
+
+      - name: Decode signing credentials
+        run: |
+          echo "${{ secrets.APPLE_IOS_P12 }}" | base64 -d > /tmp/ios_distribution.p12
+          echo "${{ secrets.APPLE_PROVISIONING_PROFILE }}" | base64 -d > /tmp/hone.mobileprovision
+          echo "${{ secrets.APPLE_P8_KEY }}" | base64 -d > /tmp/appstore_connect.p8
+
+      - name: Rewrite credential paths in perry.toml
+        run: |
+          sed -i 's|^certificate = .*|certificate = "/tmp/ios_distribution.p12"|' perry.toml
+          sed -i 's|^provisioning_profile = .*|provisioning_profile = "/tmp/hone.mobileprovision"|' perry.toml
+
+      - name: Publish iOS to TestFlight
+        run: |
+          perry publish ios --skip-audit \
+            --certificate /tmp/ios_distribution.p12 \
+            --provisioning-profile /tmp/hone.mobileprovision \
+            --apple-p8-key /tmp/appstore_connect.p8 \
+            --apple-key-id "$PERRY_APPLE_KEY_ID" \
+            --apple-issuer-id "$PERRY_APPLE_ISSUER_ID" \
+            --apple-team-id "$PERRY_APPLE_TEAM_ID"
+        env:
+          PERRY_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          PERRY_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          PERRY_APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
+          PERRY_APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+
+  build-android:
+    name: Android (Play Store)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone dependencies
+        run: |
+          git clone --depth 1 "$HONE_CORE_REPO" ../hone-core
+          git clone --depth 1 "$HONE_EDITOR_REPO" ../hone-editor
+          git clone --depth 1 "$HONE_TERMINAL_REPO" ../hone-terminal
+          rm -rf ../hone-core/.git ../hone-editor/.git ../hone-terminal/.git
+        env:
+          HONE_CORE_REPO: ${{ secrets.HONE_CORE_REPO }}
+          HONE_EDITOR_REPO: ${{ secrets.HONE_EDITOR_REPO }}
+          HONE_TERMINAL_REPO: ${{ secrets.HONE_TERMINAL_REPO }}
+
+      - name: Install perry
+        run: |
+          mkdir -p /tmp/perry-install
+          gh release download --repo PerryTS/perry --pattern 'perry-linux-x86_64.tar.gz' --dir /tmp/perry-install
+          tar xzf /tmp/perry-install/perry-linux-x86_64.tar.gz -C /tmp/perry-install
+          sudo mv /tmp/perry-install/perry /usr/local/bin/
+          rm -rf /tmp/perry-install
+          perry --version
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Configure perry
+        run: |
+          mkdir -p ~/.perry
+          printf 'license_key = "%s"\nserver = "https://hub.perryts.com"\napi_token = "%s"\n' \
+            "$PERRY_LICENSE_KEY" "$PERRY_API_TOKEN" > ~/.perry/config.toml
+
+      - name: Set version and build number
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version = .*/version = \"$VERSION\"/" perry.toml
+          BUILD_NUM=$(( ${{ github.run_number }} + 100 ))
+          sed -i "s/^build_number = .*/build_number = $BUILD_NUM/" perry.toml
+
+      - name: Decode signing credentials
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE }}" | base64 -d > /tmp/hone.keystore
+          echo "${{ secrets.GOOGLE_PLAY_KEY_JSON }}" | base64 -d > /tmp/googleplay.json
+
+      - name: Rewrite credential paths in perry.toml
+        run: |
+          sed -i 's|^keystore = .*|keystore = "/tmp/hone.keystore"|' perry.toml
+          sed -i 's|^google_play_key = .*|google_play_key = "/tmp/googleplay.json"|' perry.toml
+
+      - name: Publish Android to Play Store
+        run: perry publish android --skip-audit
+        env:
+          PERRY_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}

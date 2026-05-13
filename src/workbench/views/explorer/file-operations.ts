@@ -12,6 +12,7 @@
 
 import { mkdir, writeFile, rename as fsRename, rm, cp, stat } from 'node:fs/promises';
 import { join, dirname, basename } from 'node:path';
+import { t } from 'perry/i18n';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -60,7 +61,7 @@ export async function createFile(parentDir: string, fileName: string): Promise<F
     // Check if already exists
     try {
       await stat(filePath);
-      return { success: false, type: 'create-file', sourcePath: filePath, destinationPath: filePath, error: `File already exists: ${fileName}` };
+      return { success: false, type: 'create-file', sourcePath: filePath, destinationPath: filePath, error: t('File already exists:') + ' ' + fileName };
     } catch {
       // Does not exist — good
     }
@@ -133,7 +134,7 @@ export async function renameFile(oldPath: string, newName: string): Promise<File
     // Check target doesn't already exist
     try {
       await stat(newPath);
-      return { success: false, type: 'rename', sourcePath: oldPath, destinationPath: newPath, error: `A file with name '${newName}' already exists` };
+      return { success: false, type: 'rename', sourcePath: oldPath, destinationPath: newPath, error: t('A file with name already exists:') + ' ' + newName };
     } catch {
       // Good — doesn't exist
     }
@@ -266,19 +267,19 @@ const INVALID_FILENAME_CHARS = /[<>:"/\\|?*\x00-\x1f]/;
  */
 export function validateFileName(name: string): string | null {
   if (!name || name.trim().length === 0) {
-    return 'File name cannot be empty';
+    return t('File name cannot be empty');
   }
   if (name.startsWith('.') && name.length === 1) {
-    return 'File name cannot be just a dot';
+    return t('File name cannot be just a dot');
   }
   if (name === '..') {
-    return 'File name cannot be ".."';
+    return t('File name cannot be ".."');
   }
   if (INVALID_FILENAME_CHARS.test(name)) {
-    return 'File name contains invalid characters';
+    return t('File name contains invalid characters');
   }
   if (name.endsWith(' ') || name.endsWith('.')) {
-    return 'File name cannot end with a space or period';
+    return t('File name cannot end with a space or period');
   }
   return null; // Valid
 }

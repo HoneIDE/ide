@@ -11,6 +11,7 @@
 import { LSP_BRIDGE_LIVE } from '@honeide/lsp-bridge/perry/live';
 import { readFileSync, existsSync, unlinkSync } from 'fs';
 import { spawnBackground, execSync } from 'child_process';
+import { spawn } from 'perry/thread';
 import { updateDiagnostics } from './diagnostics-panel';
 import { getTempDir, canRunShellCommands } from '../../paths';
 
@@ -268,6 +269,222 @@ export function lspSignatureHelp(filePath: string, line: number, character: numb
   hone_lsp_send(lspServerHandle, json as any);
 }
 
+// ---------------------------------------------------------------------------
+// Phase 2 (SHIP-V1-GAPS.md #27–#35): references, rename, document/workspace
+// symbols, code actions, inlay hints. Each follows the same pattern as the
+// existing hover/definition/signature requests: build the JSON-RPC envelope,
+// track pending by id, route the response in handleLspMessage.
+// ---------------------------------------------------------------------------
+
+let _referencesCallback: ((locationsJson: string) => void) | null = null;
+let _renameCallback: ((workspaceEditJson: string) => void) | null = null;
+let _docSymbolsCallback: ((symbolsJson: string) => void) | null = null;
+let _workspaceSymbolsCallback: ((symbolsJson: string) => void) | null = null;
+let _codeActionsCallback: ((actionsJson: string) => void) | null = null;
+let _inlayHintsCallback: ((hintsJson: string) => void) | null = null;
+
+export function setReferencesCallback(fn: (locationsJson: string) => void): void {
+  _referencesCallback = fn;
+}
+export function setRenameCallback(fn: (workspaceEditJson: string) => void): void {
+  _renameCallback = fn;
+}
+export function setDocumentSymbolsCallback(fn: (symbolsJson: string) => void): void {
+  _docSymbolsCallback = fn;
+}
+export function setWorkspaceSymbolsCallback(fn: (symbolsJson: string) => void): void {
+  _workspaceSymbolsCallback = fn;
+}
+export function setCodeActionsCallback(fn: (actionsJson: string) => void): void {
+  _codeActionsCallback = fn;
+}
+export function setInlayHintsCallback(fn: (hintsJson: string) => void): void {
+  _inlayHintsCallback = fn;
+}
+
+/** Find all references to the symbol at (line, character). */
+export function lspReferences(filePath: string, line: number, character: number, includeDeclaration: number): void {
+  if (lspServerHandle < 0 || lspInitialized < 1) return;
+  const id = lspNextRequestId;
+  lspNextRequestId = lspNextRequestId + 1;
+  let uri = 'file://';
+  uri += filePath;
+  let json = '{"jsonrpc":"2.0","id":';
+  json += String(id);
+  json += ',"method":"textDocument/references","params":{"textDocument":{"uri":"';
+  json += uri;
+  json += '"},"position":{"line":';
+  json += String(line);
+  json += ',"character":';
+  json += String(character);
+  json += '},"context":{"includeDeclaration":';
+  json += includeDeclaration > 0 ? 'true' : 'false';
+  json += '}}}';
+  trackPendingRequest(id, 'textDocument/references');
+  hone_lsp_send(lspServerHandle, json as any);
+}
+
+/** Rename the symbol at (line, character) to newName. Returns a WorkspaceEdit. */
+export function lspRename(filePath: string, line: number, character: number, newName: string): void {
+  if (lspServerHandle < 0 || lspInitialized < 1) return;
+  const id = lspNextRequestId;
+  lspNextRequestId = lspNextRequestId + 1;
+  let uri = 'file://';
+  uri += filePath;
+  // Escape " and \ in newName so the JSON-RPC payload stays valid.
+  let escaped = '';
+  for (let i = 0; i < newName.length; i++) {
+    const c = newName.charCodeAt(i);
+    if (c === 34) escaped += '\\"';
+    else if (c === 92) escaped += '\\\\';
+    else if (c === 10) escaped += '\\n';
+    else escaped += newName.charAt(i);
+  }
+  let json = '{"jsonrpc":"2.0","id":';
+  json += String(id);
+  json += ',"method":"textDocument/rename","params":{"textDocument":{"uri":"';
+  json += uri;
+  json += '"},"position":{"line":';
+  json += String(line);
+  json += ',"character":';
+  json += String(character);
+  json += '},"newName":"';
+  json += escaped;
+  json += '"}}';
+  trackPendingRequest(id, 'textDocument/rename');
+  hone_lsp_send(lspServerHandle, json as any);
+}
+
+/** Get all symbols defined in this document (for the outline view). */
+export function lspDocumentSymbols(filePath: string): void {
+  if (lspServerHandle < 0 || lspInitialized < 1) return;
+  const id = lspNextRequestId;
+  lspNextRequestId = lspNextRequestId + 1;
+  let uri = 'file://';
+  uri += filePath;
+  let json = '{"jsonrpc":"2.0","id":';
+  json += String(id);
+  json += ',"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":"';
+  json += uri;
+  json += '"}}}';
+  trackPendingRequest(id, 'textDocument/documentSymbol');
+  hone_lsp_send(lspServerHandle, json as any);
+}
+
+/** Find workspace-wide symbols matching `query` (powers Cmd+T / '#' prefix in Quick Open). */
+export function lspWorkspaceSymbols(query: string): void {
+  if (lspServerHandle < 0 || lspInitialized < 1) return;
+  const id = lspNextRequestId;
+  lspNextRequestId = lspNextRequestId + 1;
+  // Escape query
+  let escaped = '';
+  for (let i = 0; i < query.length; i++) {
+    const c = query.charCodeAt(i);
+    if (c === 34) escaped += '\\"';
+    else if (c === 92) escaped += '\\\\';
+    else escaped += query.charAt(i);
+  }
+  let json = '{"jsonrpc":"2.0","id":';
+  json += String(id);
+  json += ',"method":"workspace/symbol","params":{"query":"';
+  json += escaped;
+  json += '"}}';
+  trackPendingRequest(id, 'workspace/symbol');
+  hone_lsp_send(lspServerHandle, json as any);
+}
+
+/**
+ * Request code actions (quick fixes + refactors) for a range. The context
+ * carries diagnostics so the server can surface fix-this-error actions.
+ * `diagnosticsJson` is the verbatim JSON array of LSP Diagnostic objects.
+ */
+export function lspCodeActions(
+  filePath: string,
+  startLine: number,
+  startCol: number,
+  endLine: number,
+  endCol: number,
+  diagnosticsJson: string,
+): void {
+  if (lspServerHandle < 0 || lspInitialized < 1) return;
+  const id = lspNextRequestId;
+  lspNextRequestId = lspNextRequestId + 1;
+  let uri = 'file://';
+  uri += filePath;
+  let json = '{"jsonrpc":"2.0","id":';
+  json += String(id);
+  json += ',"method":"textDocument/codeAction","params":{"textDocument":{"uri":"';
+  json += uri;
+  json += '"},"range":{"start":{"line":';
+  json += String(startLine);
+  json += ',"character":';
+  json += String(startCol);
+  json += '},"end":{"line":';
+  json += String(endLine);
+  json += ',"character":';
+  json += String(endCol);
+  json += '}},"context":{"diagnostics":';
+  json += diagnosticsJson.length > 0 ? diagnosticsJson : '[]';
+  json += '}}}';
+  trackPendingRequest(id, 'textDocument/codeAction');
+  hone_lsp_send(lspServerHandle, json as any);
+}
+
+let _semanticTokensCallback: ((tokensJson: string) => void) | null = null;
+export function setSemanticTokensCallback(fn: (tokensJson: string) => void): void {
+  _semanticTokensCallback = fn;
+}
+
+/**
+ * Request full semantic tokens for a file. SHIP-V1-GAPS.md #32.
+ * Result delivered as LSP SemanticTokens JSON (`{ data: number[], resultId? }`).
+ * Editor overlay rendering of the deltas is v1.1.
+ */
+export function lspSemanticTokens(filePath: string): void {
+  if (lspServerHandle < 0 || lspInitialized < 1) return;
+  const id = lspNextRequestId;
+  lspNextRequestId = lspNextRequestId + 1;
+  let uri = 'file://';
+  uri += filePath;
+  let json = '{"jsonrpc":"2.0","id":';
+  json += String(id);
+  json += ',"method":"textDocument/semanticTokens/full","params":{"textDocument":{"uri":"';
+  json += uri;
+  json += '"}}}';
+  trackPendingRequest(id, 'textDocument/semanticTokens/full');
+  hone_lsp_send(lspServerHandle, json as any);
+}
+
+/** Get inlay hints (parameter names, inferred types) for a range. */
+export function lspInlayHints(
+  filePath: string,
+  startLine: number,
+  startCol: number,
+  endLine: number,
+  endCol: number,
+): void {
+  if (lspServerHandle < 0 || lspInitialized < 1) return;
+  const id = lspNextRequestId;
+  lspNextRequestId = lspNextRequestId + 1;
+  let uri = 'file://';
+  uri += filePath;
+  let json = '{"jsonrpc":"2.0","id":';
+  json += String(id);
+  json += ',"method":"textDocument/inlayHint","params":{"textDocument":{"uri":"';
+  json += uri;
+  json += '"},"range":{"start":{"line":';
+  json += String(startLine);
+  json += ',"character":';
+  json += String(startCol);
+  json += '},"end":{"line":';
+  json += String(endLine);
+  json += ',"character":';
+  json += String(endCol);
+  json += '}}}}';
+  trackPendingRequest(id, 'textDocument/inlayHint');
+  hone_lsp_send(lspServerHandle, json as any);
+}
+
 // Trigger immediate diagnostics (called on file save)
 export function triggerDiagnostics(): void {
   if (lspReady < 1) return;
@@ -324,79 +541,71 @@ function tryStartServer(): void {
 }
 
 function startTypeScriptServer(): void {
-  // Find TypeScript LSP server. Priority:
-  // 1. tsgo --lsp (Microsoft's Go-native TS compiler — single binary, no Node.js)
-  // 2. typescript-language-server --stdio (Node.js-based, legacy fallback)
-  let serverCmd = '';
-  let serverArgs = '';
+  // Discover LSP server on a background thread (which commands can be slow)
+  const wsRoot = lspWorkspaceRoot;
 
-  // Check for tsgo (bundled with Hone or on PATH)
-  // tsgo is a single Go binary (~30-40MB) with built-in LSP server.
-  // Covers: diagnostics, completions, hover, go-to-def, references, formatting.
+  // First check local paths synchronously (fast — just existsSync)
   const tsgoLocations = [
-    lspWorkspaceRoot + '/node_modules/.bin/tsgo',
+    wsRoot + '/node_modules/.bin/tsgo',
     '/usr/local/bin/tsgo',
   ];
   for (let i = 0; i < tsgoLocations.length; i = i + 1) {
     if (fileExistsSafe(tsgoLocations[i])) {
-      serverCmd = tsgoLocations[i];
-      serverArgs = '--lsp';
-      break;
+      launchLspServer(tsgoLocations[i], '--lsp');
+      return;
     }
   }
 
-  // Try which tsgo
-  if (serverCmd.length < 1) {
-    try {
-      const which = execSync('which tsgo');
-      if (which.length > 0) {
-        serverCmd = which.trim();
-        serverArgs = '--lsp';
-      }
-    } catch (e: any) { /* not found */ }
-  }
-
-  // Fallback: typescript-language-server (requires Node.js)
-  if (serverCmd.length < 1) {
-    const tslsLocations = [
-      lspWorkspaceRoot + '/node_modules/.bin/typescript-language-server',
-    ];
-    for (let i = 0; i < tslsLocations.length; i = i + 1) {
-      if (fileExistsSafe(tslsLocations[i])) {
-        serverCmd = tslsLocations[i];
-        serverArgs = '--stdio';
-        break;
-      }
+  const tslsLocations = [
+    wsRoot + '/node_modules/.bin/typescript-language-server',
+  ];
+  for (let i = 0; i < tslsLocations.length; i = i + 1) {
+    if (fileExistsSafe(tslsLocations[i])) {
+      launchLspServer(tslsLocations[i], '--stdio');
+      return;
     }
   }
 
-  if (serverCmd.length < 1) {
+  // Fallback: run `which` commands on a background thread
+  spawn(() => {
+    let cmd = '';
+    let args = '';
     try {
-      const which = execSync('which typescript-language-server');
+      const which = execSync('which tsgo') as unknown as string;
       if (which.length > 0) {
-        serverCmd = which.trim();
-        serverArgs = '--stdio';
+        cmd = which.trim();
+        args = '--lsp';
       }
-    } catch (e: any) { /* not found */ }
-  }
+    } catch (e) {}
+    if (cmd.length < 1) {
+      try {
+        const which = execSync('which typescript-language-server') as unknown as string;
+        if (which.length > 0) {
+          cmd = which.trim();
+          args = '--stdio';
+        }
+      } catch (e) {}
+    }
+    return { cmd: cmd, args: args };
+  }).then((result) => { onLspDiscoveryResult(result); });
+}
 
-  if (serverCmd.length < 1) {
-    // No server found — fall back to tsc diagnostics
+function onLspDiscoveryResult(r: { cmd: string; args: string }): void {
+  if (r.cmd.length < 1) {
     useFallbackDiag = 1;
     return;
   }
+  launchLspServer(r.cmd, r.args);
+}
 
-  // Start the LSP server via native FFI
+function launchLspServer(serverCmd: string, serverArgs: string): void {
   const handle = hone_lsp_start(serverCmd as any, serverArgs as any, lspWorkspaceRoot as any);
   if (handle < 0) {
     useFallbackDiag = 1;
     return;
   }
-
   lspServerHandle = handle;
   lspServerLanguage = 'typescript';
-
-  // Send initialize request
   sendInitialize();
 }
 
@@ -411,7 +620,8 @@ function sendInitialize(): void {
   json += String(id);
   json += ',"method":"initialize","params":{"processId":null,"rootUri":"';
   json += rootUri;
-  json += '","capabilities":{"textDocument":{"synchronization":{"didSave":true},"completion":{"completionItem":{"snippetSupport":false}},"hover":{"contentFormat":["plaintext"]},"definition":{},"formatting":{},"publishDiagnostics":{"relatedInformation":true}}}}}';
+  // SHIP-V1-GAPS.md #34/#32: advertise markdown hover + semantic tokens.
+  json += '","capabilities":{"textDocument":{"synchronization":{"didSave":true},"completion":{"completionItem":{"snippetSupport":false}},"hover":{"contentFormat":["markdown","plaintext"]},"definition":{},"references":{},"documentSymbol":{"hierarchicalDocumentSymbolSupport":true},"rename":{"prepareSupport":false},"codeAction":{"codeActionLiteralSupport":{"codeActionKind":{"valueSet":["quickfix","refactor","source"]}}},"formatting":{},"rangeFormatting":{},"onTypeFormatting":{},"inlayHint":{"dynamicRegistration":false},"semanticTokens":{"requests":{"full":true},"tokenTypes":["namespace","type","class","enum","interface","struct","typeParameter","parameter","variable","property","enumMember","event","function","method","macro","keyword","modifier","comment","string","number","regexp","operator"],"tokenModifiers":["declaration","definition","readonly","static","deprecated","abstract","async","modification","documentation","defaultLibrary"],"formats":["relative"]},"publishDiagnostics":{"relatedInformation":true}},"workspace":{"symbol":{}}}}}';
 
   trackPendingRequest(id, 'initialize');
   hone_lsp_send(lspServerHandle, json as any);
@@ -509,6 +719,120 @@ function handleLspMessage(json: string): void {
     handleFormattingResponse(json);
     return;
   }
+
+  // Phase 2 LSP responses — string-contains routing keeps Perry happy.
+  if (method.indexOf('references') > 0) {
+    handleReferencesResponse(json);
+    return;
+  }
+  if (method.indexOf('rename') > 0) {
+    handleRenameResponse(json);
+    return;
+  }
+  if (method.indexOf('documentSymbol') > 0) {
+    handleDocumentSymbolsResponse(json);
+    return;
+  }
+  if (method.indexOf('workspace/symbol') >= 0) {
+    handleWorkspaceSymbolsResponse(json);
+    return;
+  }
+  if (method.indexOf('codeAction') > 0) {
+    handleCodeActionsResponse(json);
+    return;
+  }
+  if (method.indexOf('inlayHint') > 0) {
+    handleInlayHintsResponse(json);
+    return;
+  }
+  if (method.indexOf('semanticTokens') > 0) {
+    handleSemanticTokensResponse(json);
+    return;
+  }
+}
+
+function handleSemanticTokensResponse(json: string): void {
+  if (_semanticTokensCallback === null) return;
+  const payload = extractResultPayload(json);
+  _semanticTokensCallback(payload);
+}
+
+/** Extract the "result" JSON sub-payload from an LSP response envelope. */
+function extractResultPayload(json: string): string {
+  const idx = json.indexOf('"result"');
+  if (idx < 0) return '';
+  // Skip "result" : 8 chars + colon + ws
+  let p = idx + 8;
+  while (p < json.length && (json.charCodeAt(p) === 58 || json.charCodeAt(p) === 32)) p = p + 1;
+  // Find matching end of value (object, array, string, null, etc).
+  const startCh = json.charCodeAt(p);
+  if (startCh === 110) { // 'n'ull
+    return 'null';
+  }
+  if (startCh === 91) { // '['
+    return sliceBalanced(json, p, 91, 93);
+  }
+  if (startCh === 123) { // '{'
+    return sliceBalanced(json, p, 123, 125);
+  }
+  return '';
+}
+
+/** Slice a balanced-delimited substring starting at `start` (which must point at `open`). */
+function sliceBalanced(s: string, start: number, open: number, close: number): string {
+  let depth = 0;
+  let inStr = 0;
+  for (let i = start; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (inStr === 1) {
+      if (c === 92) { i = i + 1; continue; } // skip escaped char
+      if (c === 34) inStr = 0;
+      continue;
+    }
+    if (c === 34) { inStr = 1; continue; }
+    if (c === open) depth = depth + 1;
+    else if (c === close) {
+      depth = depth - 1;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
+  }
+  return '';
+}
+
+function handleReferencesResponse(json: string): void {
+  if (_referencesCallback === null) return;
+  const payload = extractResultPayload(json);
+  _referencesCallback(payload);
+}
+
+function handleRenameResponse(json: string): void {
+  if (_renameCallback === null) return;
+  const payload = extractResultPayload(json);
+  _renameCallback(payload);
+}
+
+function handleDocumentSymbolsResponse(json: string): void {
+  if (_docSymbolsCallback === null) return;
+  const payload = extractResultPayload(json);
+  _docSymbolsCallback(payload);
+}
+
+function handleWorkspaceSymbolsResponse(json: string): void {
+  if (_workspaceSymbolsCallback === null) return;
+  const payload = extractResultPayload(json);
+  _workspaceSymbolsCallback(payload);
+}
+
+function handleCodeActionsResponse(json: string): void {
+  if (_codeActionsCallback === null) return;
+  const payload = extractResultPayload(json);
+  _codeActionsCallback(payload);
+}
+
+function handleInlayHintsResponse(json: string): void {
+  if (_inlayHintsCallback === null) return;
+  const payload = extractResultPayload(json);
+  _inlayHintsCallback(payload);
 }
 
 function handleHoverResponse(json: string): void {

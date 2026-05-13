@@ -10,6 +10,7 @@
   "license": "MIT",
   "perry": {
     "nativeLibrary": {
+      "abiVersion": "0.5",
       "module": "@honeide/lsp-bridge",
       "functions": [
         { "name": "hone_lsp_start", "params": ["i64", "i64", "i64"], "returns": "f64" },

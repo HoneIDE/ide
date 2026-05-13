@@ -7,6 +7,7 @@ import {
   buttonSetBordered, buttonSetImage, buttonSetImagePosition,
   widgetAddChild,
 } from 'perry/ui';
+import { t } from 'perry/i18n';
 import { setFg, setBtnFg, setBg, setBtnTint } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getEditorForeground, getEditorBackground } from '../../theme/theme-colors';
@@ -66,51 +67,51 @@ function getDisplayName(path: string): string {
 }
 
 export function createWelcomeContent(colors: ResolvedUIColors): unknown {
-  const titleText = Text('Hone IDE');
+  const titleText = Text(t('Hone IDE'));
   textSetFontSize(titleText, 24);
   textSetFontWeight(titleText, 24, 0.7);
   setFg(titleText, getEditorForeground());
 
-  const subtitle = Text('A lightweight, native code editor');
+  const subtitle = Text(t('A lightweight, native code editor'));
   textSetFontSize(subtitle, 14);
   setFg(subtitle, getEditorForeground());
 
   // Quick actions
-  const actionsTitle = Text('Quick Actions');
+  const actionsTitle = Text(t('Quick Actions'));
   textSetFontSize(actionsTitle, 14);
   textSetFontWeight(actionsTitle, 14, 0.6);
   setFg(actionsTitle, getEditorForeground());
 
-  const openFolderBtn = Button('Open Folder', () => { onOpenFolderClick(); });
+  const openFolderBtn = Button(t('Open Folder'), () => { onOpenFolderClick(); });
   buttonSetBordered(openFolderBtn, 0);
   textSetFontSize(openFolderBtn, 13);
   setBtnFg(openFolderBtn, getEditorForeground());
 
-  const openFileBtn = Button('Open File', () => { onOpenFileClick(); });
+  const openFileBtn = Button(t('Open File'), () => { onOpenFileClick(); });
   buttonSetBordered(openFileBtn, 0);
   textSetFontSize(openFileBtn, 13);
   setBtnFg(openFileBtn, getEditorForeground());
 
-  const newFileBtn = Button('New File', () => { onNewFileClick(); });
+  const newFileBtn = Button(t('New File'), () => { onNewFileClick(); });
   buttonSetBordered(newFileBtn, 0);
   textSetFontSize(newFileBtn, 13);
   setBtnFg(newFileBtn, getEditorForeground());
 
   // Tips
-  const tipsTitle = Text('Tips');
+  const tipsTitle = Text(t('Tips'));
   textSetFontSize(tipsTitle, 14);
   textSetFontWeight(tipsTitle, 14, 0.6);
   setFg(tipsTitle, getEditorForeground());
 
-  const tip1 = Text('Cmd+P to quick open files');
+  const tip1 = Text(t('Cmd+P to quick open files'));
   textSetFontSize(tip1, 12);
   setFg(tip1, getEditorForeground());
 
-  const tip2 = Text('Cmd+Shift+P for command palette');
+  const tip2 = Text(t('Cmd+Shift+P for command palette'));
   textSetFontSize(tip2, 12);
   setFg(tip2, getEditorForeground());
 
-  const tip3 = Text('Cmd+B to toggle sidebar');
+  const tip3 = Text(t('Cmd+B to toggle sidebar'));
   textSetFontSize(tip3, 12);
   setFg(tip3, getEditorForeground());
 
@@ -127,7 +128,7 @@ export function createWelcomeContent(colors: ResolvedUIColors): unknown {
   // Recent items section
   const recentCount = getRecentCount();
   if (recentCount > 0) {
-    const recentTitle = Text('Recent');
+    const recentTitle = Text(t('Recent'));
     textSetFontSize(recentTitle, 14);
     textSetFontWeight(recentTitle, 14, 0.6);
     setFg(recentTitle, getEditorForeground());

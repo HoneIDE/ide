@@ -1,10 +1,16 @@
 #!/bin/bash
-# Create temp project with realistic git state, launch IDE with geisterhand
+# Create temp project with realistic git state, launch IDE with dual geisterhand
+#
+# Two geisterhand modes run simultaneously:
+#   Port 7676 — Baked-in API (widget callbacks, handles, screenshot)
+#   Port 7677 — External CLI server (accessibility tree, /key, /scroll, /wait)
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HONE_IDE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TMPDIR="/tmp/hone-agentic-$(date +%s)"
+BAKED_IN_PORT=7676
+EXTERNAL_PORT=7677
 
 echo "=== Hone Agentic Test Setup ==="
 echo "Creating temp project at: $TMPDIR"
@@ -40,23 +46,51 @@ pkill -f "hone-ide" 2>/dev/null || true
 pkill -f "geisterhand" 2>/dev/null || true
 sleep 0.5
 
-# Launch IDE with geisterhand
-echo ""
-echo "Launching IDE..."
-cd "$HONE_IDE_DIR"
-geisterhand ./hone-ide "$TMPDIR" &
-GEISTERHAND_PID=$!
+# Verify IDE binary was built with --enable-geisterhand
+IDE_BIN="$HONE_IDE_DIR/hone-ide"
+if [ ! -f "$IDE_BIN" ]; then
+  echo "ERROR: IDE binary not found at $IDE_BIN"
+  echo "Build it with: cd ../perry && perry compile ../hone/hone-ide/src/app.ts --output ../hone/hone-ide/hone-ide --enable-geisterhand"
+  exit 1
+fi
 
-# Wait for geisterhand health endpoint
-echo "Waiting for geisterhand API..."
+# --- Launch IDE (baked-in geisterhand on port $BAKED_IN_PORT) ---
+echo ""
+echo "Launching IDE (baked-in API on port $BAKED_IN_PORT)..."
+cd "$HONE_IDE_DIR"
+./hone-ide "$TMPDIR" &
+IDE_PID=$!
+
+# Wait for baked-in API
+echo "Waiting for baked-in API..."
 for i in $(seq 1 30); do
-  if curl -s http://127.0.0.1:7676/health > /dev/null 2>&1; then
-    echo "Geisterhand ready on port 7676"
+  if curl -sf http://127.0.0.1:$BAKED_IN_PORT/health > /dev/null 2>&1; then
+    echo "Baked-in API ready on port $BAKED_IN_PORT"
     break
   fi
   if [ "$i" -eq 30 ]; then
-    echo "ERROR: Geisterhand did not start within 15 seconds"
+    echo "ERROR: Baked-in API did not start within 15 seconds"
+    echo "Was the binary built with --enable-geisterhand?"
+    kill "$IDE_PID" 2>/dev/null || true
     exit 1
+  fi
+  sleep 0.5
+done
+
+# --- Launch external geisterhand CLI server (port $EXTERNAL_PORT) ---
+echo "Launching external geisterhand server on port $EXTERNAL_PORT..."
+geisterhand server --port $EXTERNAL_PORT &
+EXTERNAL_PID=$!
+
+# Wait for external API
+for i in $(seq 1 30); do
+  if curl -sf http://127.0.0.1:$EXTERNAL_PORT/health > /dev/null 2>&1; then
+    echo "External CLI server ready on port $EXTERNAL_PORT"
+    break
+  fi
+  if [ "$i" -eq 30 ]; then
+    echo "WARNING: External CLI server did not start (non-fatal, baked-in still works)"
+    EXTERNAL_PID=""
   fi
   sleep 0.5
 done
@@ -66,16 +100,21 @@ sleep 2
 
 # Write state file for teardown and scenarios
 cat > "$SCRIPT_DIR/.test-state" << EOF
-GEISTERHAND_PID=$GEISTERHAND_PID
+IDE_PID=$IDE_PID
+EXTERNAL_PID=$EXTERNAL_PID
 PROJECT_DIR=$TMPDIR
 RESULTS_DIR=$RESULTS_DIR
 TIMESTAMP=$TIMESTAMP
+BAKED_IN_PORT=$BAKED_IN_PORT
+EXTERNAL_PORT=$EXTERNAL_PORT
 EOF
 
 echo ""
 echo "=== Setup Complete ==="
 echo "  Project:     $TMPDIR"
 echo "  Results:     $RESULTS_DIR"
-echo "  Geisterhand: PID $GEISTERHAND_PID"
+echo "  IDE:         PID $IDE_PID (baked-in API on :$BAKED_IN_PORT)"
+echo "  External:    PID $EXTERNAL_PID (CLI server on :$EXTERNAL_PORT)"
 echo ""
+echo "See tests/agentic/API.md for endpoint routing guide."
 echo "State saved to $SCRIPT_DIR/.test-state"

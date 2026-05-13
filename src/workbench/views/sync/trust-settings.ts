@@ -14,6 +14,7 @@ import {
   widgetAddChild, widgetClearChildren,
   widgetSetBackgroundColor, widgetSetWidth,
 } from 'perry/ui';
+import { t } from 'perry/i18n';
 import { setFg, setBtnFg } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 
@@ -40,19 +41,19 @@ function _noopTrust(id: string, level: string): void {}
 function _noopDefault(level: string): void {}
 
 const TRUST_LABELS: string[] = ['review', 'auto-accept-clean', 'auto-accept-all', 'block'];
-const TRUST_DISPLAY: string[] = ['Review', 'Auto (clean)', 'Auto (all)', 'Block'];
+const TRUST_DISPLAY: string[] = [t('Review'), t('Auto (clean)'), t('Auto (all)'), t('Block')];
 
 // --- Public API ---
 
 export function buildTrustSettings(colors: ResolvedUIColors): unknown {
   trustColors = colors;
 
-  const title = Text('Trust Settings');
+  const title = Text(t('Trust Settings'));
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.6);
   setFg(title, colors.sideBarForeground);
 
-  const desc = Text('Configure how changes from each source are handled');
+  const desc = Text(t('Configure how changes from each source are handled'));
   textSetFontSize(desc, 10);
   textSetColor(desc, 0.5, 0.5, 0.5, 1.0);
 
@@ -100,7 +101,7 @@ function refreshTrustPanel(): void {
   widgetClearChildren(trustContainer);
 
   // Default trust level row
-  const defaultLabel = Text('Default trust level:');
+  const defaultLabel = Text(t('Default trust level:'));
   textSetFontSize(defaultLabel, 11);
   if (trustColors) setFg(defaultLabel, trustColors.sideBarForeground);
 
@@ -109,7 +110,7 @@ function refreshTrustPanel(): void {
   textSetFontWeight(defaultValueLabel, 11, 0.6);
   if (trustColors) setFg(defaultValueLabel, trustColors.sideBarForeground);
 
-  const cycleDefaultBtn = Button('Change', () => { cycleDefaultTrust(); });
+  const cycleDefaultBtn = Button(t('Change'), () => { cycleDefaultTrust(); });
   buttonSetBordered(cycleDefaultBtn, 0);
   if (trustColors) setBtnFg(cycleDefaultBtn, trustColors.buttonForeground);
 
@@ -118,7 +119,7 @@ function refreshTrustPanel(): void {
 
   // Per-source entries
   if (trustCount === 0) {
-    const emptyLabel = Text('No paired devices');
+    const emptyLabel = Text(t('No paired devices'));
     textSetFontSize(emptyLabel, 12);
     textSetColor(emptyLabel, 0.5, 0.5, 0.5, 1.0);
     widgetAddChild(trustContainer, emptyLabel);
@@ -143,7 +144,7 @@ function buildTrustRow(idx: number): unknown {
   textSetFontSize(levelLabel, 10);
   applyLevelColor(levelLabel, level);
 
-  const cycleBtn = Button('Change', () => { cycleTrustLevel(idx); });
+  const cycleBtn = Button(t('Change'), () => { cycleTrustLevel(idx); });
   buttonSetBordered(cycleBtn, 0);
   if (trustColors) setBtnFg(cycleBtn, trustColors.buttonForeground);
 
@@ -186,7 +187,7 @@ function getDisplayForLevel(level: string): string {
   for (let i = 0; i < TRUST_LABELS.length; i++) {
     if (TRUST_LABELS[i] === level) return TRUST_DISPLAY[i];
   }
-  return 'Review';
+  return t('Review');
 }
 
 function applyLevelColor(widget: unknown, level: string): void {

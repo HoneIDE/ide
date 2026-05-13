@@ -13,11 +13,12 @@ import {
   widgetAddChild, widgetClearChildren, widgetSetWidth, widgetSetHeight,
   widgetSetContextMenu,
 } from 'perry/ui';
+import { t } from 'perry/i18n';
 import { readdirSync, isDirectory } from 'fs';
 import { join } from 'path';
 import { setBg, setFg, setBtnFg, setBtnTint, pathId, getFileName, getFileIcon, getFileIconColor, truncateName } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
-import { getSideBarBackground, getSideBarForeground, getListActiveSelectionBackground, getListActiveSelectionForeground, getStatusAddedColor, getStatusModifiedColor, getStatusDeletedColor } from '../../theme/theme-colors';
+import { getSideBarBackground, getSideBarForeground, getListActiveSelectionBackground, getListActiveSelectionForeground, getStatusAddedColor, getStatusModifiedColor, getStatusDeletedColor, getStatusConflictColor, getStatusRenamedColor, getStatusIgnoredColor } from '../../theme/theme-colors';
 import { getGitFileStatus, getGitDirStatus } from '../git/git-panel';
 import { buildFileContextMenu, buildDirContextMenu, buildEmptySpaceContextMenu } from './context-menu';
 
@@ -62,6 +63,16 @@ function _noopVoid(): void {}
 
 export function setSidebarWorkspaceRoot(root: string): void {
   sidebarWorkspaceRoot = root;
+}
+
+// SHIP-V1-GAPS.md #95: explorer hidden-file toggle. 0 = hide dotfiles (default),
+// 1 = show them. The host pushes the setting on init + when the user toggles.
+let _showHiddenFiles: number = 0;
+export function setSidebarShowHiddenFiles(show: number): void {
+  _showHiddenFiles = show > 0 ? 1 : 0;
+}
+export function getSidebarShowHiddenFiles(): number {
+  return _showHiddenFiles;
 }
 
 export function setSidebarFileClickCallback(cb: (path: string, name: string) => void): void {
@@ -246,7 +257,7 @@ function refreshSidebar(): void {
   // Remote mode (sync guest) — use same tree rendering with remote data source
   if (isRemoteMode > 0 && remoteEntryCount > 0) {
     // --- EXPLORER title ---
-    const rExplorerLabel = Text('EXPLORER');
+    const rExplorerLabel = Text(t('EXPLORER'));
     textSetFontSize(rExplorerLabel, 11);
     textSetFontWeight(rExplorerLabel, 11, 0.4);
     setFg(rExplorerLabel, getSideBarForeground());
@@ -266,7 +277,7 @@ function refreshSidebar(): void {
         rootDisplay += remoteRootName.charAt(ci);
       }
     }
-    const syncBadge = Text('SYNCED');
+    const syncBadge = Text(t('SYNCED'));
     textSetFontSize(syncBadge, 9);
     textSetFontWeight(syncBadge, 9, 0.6);
     setFg(syncBadge, getStatusAddedColor());
@@ -295,11 +306,11 @@ function refreshSidebar(): void {
   }
 
   if (sidebarWorkspaceRoot.length < 1) {
-    const hint = Text('Open a folder to start');
+    const hint = Text(t('Open a folder to start'));
     textSetFontSize(hint, 12);
     setFg(hint, getSideBarForeground());
     widgetAddChild(sidebarContainer, hint);
-    const openBtn = Button('Open Folder', () => { openFolderAction(); });
+    const openBtn = Button(t('Open Folder'), () => { openFolderAction(); });
     buttonSetBordered(openBtn, 0);
     textSetFontSize(openBtn, 13);
     setBtnFg(openBtn, getSideBarForeground());
@@ -309,7 +320,7 @@ function refreshSidebar(): void {
   }
 
   // --- 1. EXPLORER title row (22px, thin text, left-padded 4px) ---
-  const explorerLabel = Text('EXPLORER');
+  const explorerLabel = Text(t('EXPLORER'));
   textSetFontSize(explorerLabel, 11);
   textSetFontWeight(explorerLabel, 11, 0.4);
   setFg(explorerLabel, getSideBarForeground());
@@ -320,7 +331,7 @@ function refreshSidebar(): void {
   widgetAddChild(sidebarContainer, explorerRow);
 
   // --- 2. FOLDERS section header (22px, bold, translucent bg) ---
-  const foldersLabel = Text('FOLDERS');
+  const foldersLabel = Text(t('FOLDERS'));
   textSetFontSize(foldersLabel, 11);
   textSetFontWeight(foldersLabel, 11, 0.7);
   setFg(foldersLabel, getSideBarForeground());
@@ -503,7 +514,7 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     try { names = readdirSync(dirPath); } catch (e) { return; }
     for (let i = 0; i < names.length; i++) {
       const n = names[i];
-      if (n.charCodeAt(0) === 46) continue; // skip hidden
+      if (_showHiddenFiles < 1 && n.charCodeAt(0) === 46) continue; // skip dotfiles unless toggled on
       const full = join(dirPath, n);
       if (isDirectory(full)) {
         dirNames.push(n);
@@ -594,6 +605,10 @@ function renderTreeLevel(dirPath: string, depth: number): void {
       if (gStatus === 2) { fileColor = getStatusAddedColor(); }
       if (gStatus === 3) { fileColor = getStatusAddedColor(); }
       if (gStatus === 4) { fileColor = getStatusDeletedColor(); }
+      // SHIP-V1-GAPS.md #99: surface the remaining status codes with distinct colors.
+      if (gStatus === 5) { fileColor = getStatusConflictColor(); }  // U — unmerged
+      if (gStatus === 6) { fileColor = getStatusRenamedColor(); }   // R / C
+      if (gStatus === 7) { fileColor = getStatusIgnoredColor(); }   // ignored
     }
     if (fileColor.length > 0) setBtnFg(nameBtn, fileColor);
     widgetAddChild(row, nameBtn);

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Kill IDE and clean up temp project
+# Kill IDE, external geisterhand server, and clean up temp project
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -14,12 +14,18 @@ source "$STATE_FILE"
 
 echo "=== Hone Agentic Test Teardown ==="
 
-# Kill geisterhand (which also kills the IDE child process)
-if [ -n "$GEISTERHAND_PID" ] && kill -0 "$GEISTERHAND_PID" 2>/dev/null; then
-  echo "Killing geisterhand (PID $GEISTERHAND_PID)..."
-  kill "$GEISTERHAND_PID" 2>/dev/null || true
+# Kill external geisterhand CLI server
+if [ -n "$EXTERNAL_PID" ] && kill -0 "$EXTERNAL_PID" 2>/dev/null; then
+  echo "Killing external geisterhand server (PID $EXTERNAL_PID)..."
+  kill "$EXTERNAL_PID" 2>/dev/null || true
+fi
+
+# Kill IDE process (baked-in geisterhand dies with it)
+if [ -n "$IDE_PID" ] && kill -0 "$IDE_PID" 2>/dev/null; then
+  echo "Killing IDE (PID $IDE_PID)..."
+  kill "$IDE_PID" 2>/dev/null || true
   sleep 0.5
-  kill -9 "$GEISTERHAND_PID" 2>/dev/null || true
+  kill -9 "$IDE_PID" 2>/dev/null || true
 fi
 
 # Also kill any stray processes

@@ -16,8 +16,10 @@ import {
   widgetSetHidden, widgetSetHeight, widgetRemoveChild, stackSetDetachesHidden,
   textfieldSetString, textfieldFocus, textfieldGetString, textfieldSetOnSubmit,
   textfieldSetOnFocus, textfieldBlurAll,
+  saveFileDialog,
 } from 'perry/ui';
-import { execSync } from 'child_process';
+import { t } from 'perry/i18n';
+import { execSync, spawnSync } from 'child_process';
 import { readFileSync, writeFileSync } from 'fs';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
 import { telemetryTrackAiChat, telemetryTrackAiAgent } from '../../telemetry';
@@ -423,7 +425,7 @@ export function handleClaudeRelayEvent(operation: string, data: string): void {
 
     // Show cost
     if (chatMessagesContainer && costVal >= 0) {
-      let costLabel = 'Cost: $';
+      let costLabel = t('Cost') + ': $';
       let costInt = Math.floor(costVal * 10000);
       let costMain = Math.floor(costInt / 10000);
       let costFrac = costInt % 10000;
@@ -434,7 +436,7 @@ export function handleClaudeRelayEvent(operation: string, data: string): void {
       if (costFrac < 10) costLabel += '0';
       costLabel += String(costFrac);
       if (turnsVal >= 0) {
-        costLabel += ' | Turns: ';
+        costLabel += ' | ' + t('Turns') + ': ';
         costLabel += String(turnsVal);
       }
       claudeCostLabel = Text(costLabel);
@@ -451,7 +453,7 @@ export function handleClaudeRelayEvent(operation: string, data: string): void {
   // claudeError: charCodeAt(6) === 69 'E' (length 11)
   if (operation.length === 11 && operation.charCodeAt(6) === 69) {
     let errMsg = inlineExtractRelayField(data, '"error":');
-    if (errMsg.length < 1) errMsg = 'Claude Code error from host.';
+    if (errMsg.length < 1) errMsg = t('Claude Code error from host.');
 
     stopThinking();
     claudeModeActive = 0;
@@ -764,7 +766,7 @@ function startStream(requestBody: string): void {
   // Load the right API key
   const apiKey = loadProviderApiKey(providerIdx);
   if (apiKey.length < 2 && providerIdx !== 5) {
-    appendMessage(0, 'No API key for this provider. Add one in Settings.');
+    appendMessage(0, t('No API key for this provider. Add one in Settings.'));
     updateMessages();
     return;
   }
@@ -1313,7 +1315,7 @@ function pollTitleStream(): void {
 function startThinking(): void {
   thinkingDots = 0;
   if (chatMessagesContainer) {
-    thinkingLabel = Text('Thinking');
+    thinkingLabel = Text(t('Thinking'));
     textSetFontSize(thinkingLabel, 12);
     setFg(thinkingLabel, getSideBarForeground());
     widgetAddChild(chatMessagesContainer, thinkingLabel);
@@ -1327,7 +1329,7 @@ function updateThinkingDots(): void {
   thinkingDots += 1;
   if (thinkingDots > 3) thinkingDots = 0;
   if (!thinkingLabel) return;
-  let txt = 'Thinking';
+  let txt = t('Thinking');
   for (let d = 0; d < thinkingDots; d++) {
     txt += '.';
   }
@@ -1358,7 +1360,7 @@ function onAgentToolStart(name: string, id: string): void {
   // Show tool execution indicator
   if (!chatMessagesContainer) return;
 
-  let toolLabel = '\u2699 Using tool: ';
+  let toolLabel = '\u2699 ' + t('Using tool') + ': ';
   toolLabel += name;
   const toolText = Text(toolLabel);
   textSetFontSize(toolText, 11);
@@ -1405,9 +1407,9 @@ function onAgentApprovalNeeded(name: string, args: string): void {
   approvalContainer = VStackWithInsets(4, 8, 8, 8, 8);
   if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(approvalContainer, 0.25, 0.18, 0.12, 1.0); } else { widgetSetBackgroundColor(approvalContainer, 1.0, 0.95, 0.88, 1.0); };
 
-  let warnText = '\u26A0 Tool "';
+  let warnText = '\u26A0 ' + t('Tool') + ' "';
   warnText += name;
-  warnText += '" requires approval';
+  warnText += '" ' + t('requires approval');
   const warnLabel = Text(warnText);
   textSetFontSize(warnLabel, 12);
   textSetFontWeight(warnLabel, 12, 0.5);
@@ -1423,12 +1425,12 @@ function onAgentApprovalNeeded(name: string, args: string): void {
   setFg(argsText, getSideBarForeground());
   widgetAddChild(approvalContainer, argsText);
 
-  const allowBtn = Button('Allow', () => { onAllowClick(); });
+  const allowBtn = Button(t('Allow'), () => { onAllowClick(); });
   buttonSetBordered(allowBtn, 0);
   textSetFontSize(allowBtn, 12);
   setBtnFg(allowBtn, getSideBarForeground());
 
-  const denyBtn = Button('Deny', () => { onDenyClick(); });
+  const denyBtn = Button(t('Deny'), () => { onDenyClick(); });
   buttonSetBordered(denyBtn, 0);
   textSetFontSize(denyBtn, 12);
   setBtnFg(denyBtn, getSideBarForeground());
@@ -1521,7 +1523,7 @@ function onClaudeToolActivity(name: string, status: string, inputDetail: string)
   } else {
     // Tool done — mark container
     if (claudeToolContainer) {
-      const doneText = Text('\u2713 done');
+      const doneText = Text('\u2713 ' + t('done'));
       textSetFontSize(doneText, 10);
       textSetFontFamily(doneText, 10, 'Menlo');
       setFg(doneText, getSideBarForeground());
@@ -1838,6 +1840,147 @@ function getDelSessionFn(idx: number): () => void {
   return onDelSession15;
 }
 
+// SHIP-V1-GAPS.md #110: rename a chat session via the history dropdown.
+// AppleScript prompt — same pattern as render.ts promptForRename().
+function promptForSessionTitle(currentTitle: string): string {
+  let script = 'try\n';
+  script += '  set result to text returned of (display dialog "Rename chat:" default answer "';
+  // Escape backslashes and double-quotes for AppleScript string literal.
+  for (let i = 0; i < currentTitle.length; i++) {
+    const c = currentTitle.charCodeAt(i);
+    if (c === 92) script += '\\\\';
+    else if (c === 34) script += '\\"';
+    else script += currentTitle.charAt(i);
+  }
+  script += '" buttons {"Cancel", "Rename"} default button "Rename" cancel button "Cancel")\n';
+  script += '  return result\n';
+  script += 'on error number -128\n';
+  script += '  return ""\n';
+  script += 'end try\n';
+  try {
+    const r = spawnSync('osascript', ['-e', script]);
+    if (r.status !== 0) return '';
+    let out = r.stdout;
+    let end = out.length;
+    while (end > 0 && (out.charCodeAt(end - 1) === 10 || out.charCodeAt(end - 1) === 13)) end--;
+    return out.slice(0, end);
+  } catch (_e: any) {
+    return '';
+  }
+}
+
+function renameSlot(idx: number): void {
+  const id = getSlotId(idx);
+  if (id.length < 1) return;
+  // Pull the current displayed title for the prompt default.
+  loadSessionMeta(id);
+  let current = getParsedTitle();
+  if (current.length < 1) current = '';
+  const fresh = promptForSessionTitle(current);
+  if (fresh.length < 1) return;
+  updateSessionTitle(id, fresh);
+  refreshSessionList();
+}
+
+function onRenameSession0(): void { renameSlot(0); }
+function onRenameSession1(): void { renameSlot(1); }
+function onRenameSession2(): void { renameSlot(2); }
+function onRenameSession3(): void { renameSlot(3); }
+function onRenameSession4(): void { renameSlot(4); }
+function onRenameSession5(): void { renameSlot(5); }
+function onRenameSession6(): void { renameSlot(6); }
+function onRenameSession7(): void { renameSlot(7); }
+function onRenameSession8(): void { renameSlot(8); }
+function onRenameSession9(): void { renameSlot(9); }
+function onRenameSession10(): void { renameSlot(10); }
+function onRenameSession11(): void { renameSlot(11); }
+function onRenameSession12(): void { renameSlot(12); }
+function onRenameSession13(): void { renameSlot(13); }
+function onRenameSession14(): void { renameSlot(14); }
+function onRenameSession15(): void { renameSlot(15); }
+
+function getRenameSessionFn(idx: number): () => void {
+  if (idx === 0) return onRenameSession0;
+  if (idx === 1) return onRenameSession1;
+  if (idx === 2) return onRenameSession2;
+  if (idx === 3) return onRenameSession3;
+  if (idx === 4) return onRenameSession4;
+  if (idx === 5) return onRenameSession5;
+  if (idx === 6) return onRenameSession6;
+  if (idx === 7) return onRenameSession7;
+  if (idx === 8) return onRenameSession8;
+  if (idx === 9) return onRenameSession9;
+  if (idx === 10) return onRenameSession10;
+  if (idx === 11) return onRenameSession11;
+  if (idx === 12) return onRenameSession12;
+  if (idx === 13) return onRenameSession13;
+  if (idx === 14) return onRenameSession14;
+  return onRenameSession15;
+}
+
+// SHIP-V1-GAPS.md #111: export the currently active chat as Markdown.
+// Format: ## User / ## Assistant pairs. Stored on disk as `U|...` / `A|...` lines
+// (one per line) — we read the session file directly and translate the role
+// prefix into a Markdown heading.
+function buildSessionMarkdown(): string {
+  const id = getActiveSessionId();
+  if (id.length < 1) return '';
+  let title = 'Chat';
+  loadSessionMeta(id);
+  const parsed = getParsedTitle();
+  if (parsed.length > 0) title = parsed;
+
+  const fp = getSessionFilePath(id);
+  let content = '';
+  try { content = readFileSync(fp); } catch (_e) { content = ''; }
+
+  let out = '# ';
+  out += title;
+  out += '\n\n';
+
+  let lineStart = 0;
+  for (let i = 0; i <= content.length; i++) {
+    if (i === content.length || content.charCodeAt(i) === 10) {
+      if (i > lineStart) {
+        const line = content.slice(lineStart, i);
+        if (line.length > 2 && line.charCodeAt(1) === 124) {
+          const role = line.charCodeAt(0);
+          const body = line.slice(2);
+          if (role === 85) {
+            out += '## User\n\n';
+            out += body;
+            out += '\n\n';
+          } else if (role === 65) {
+            out += '## Assistant\n\n';
+            out += body;
+            out += '\n\n';
+          } else {
+            out += body;
+            out += '\n\n';
+          }
+        }
+      }
+      lineStart = i + 1;
+    }
+  }
+  return out;
+}
+
+function exportActiveSession(): void {
+  const md = buildSessionMarkdown();
+  if (md.length < 1) return;
+  const id = getActiveSessionId();
+  let suggested = 'chat-';
+  // 8 chars of id as a slug.
+  const slugLen = id.length < 8 ? id.length : 8;
+  for (let i = 0; i < slugLen; i++) suggested += id.charAt(i);
+  suggested += '.md';
+  saveFileDialog((path: string) => {
+    if (path.length < 1) return;
+    try { writeFileSync(path, md); } catch (_e) {}
+  }, suggested, '');
+}
+
 // ---------------------------------------------------------------------------
 // Session list rendering
 // ---------------------------------------------------------------------------
@@ -1860,7 +2003,7 @@ function formatTimestamp(tsStr: string): string {
   const diffHr = Math.floor(diffMs / 3600000);
   const diffDay = Math.floor(diffMs / 86400000);
 
-  if (diffMin < 1) return 'just now';
+  if (diffMin < 1) return t('just now');
   if (diffMin < 60) {
     let r = '';
     r += String(diffMin);
@@ -1935,7 +2078,7 @@ function refreshSessionList(): void {
 
     // Filter by search query
     let displayTitle = stitle;
-    if (displayTitle.length < 1) displayTitle = 'New chat';
+    if (displayTitle.length < 1) displayTitle = t('New chat');
     if (query.length > 0 && titleMatchesSearch(displayTitle, query) < 1) continue;
 
     setSlotId(displayed, sid);
@@ -1963,6 +2106,13 @@ function refreshSessionList(): void {
     textSetFontSize(timeLabel, 9);
     setFg(timeLabel, getSecondaryTextColor());
 
+    // Rename button (pencil)
+    const renameFn = getRenameSessionFn(displayed);
+    const renameBtn = Button('\u270E', () => { renameFn(); });
+    buttonSetBordered(renameBtn, 0);
+    textSetFontSize(renameBtn, 10);
+    setBtnFg(renameBtn, getSideBarForeground());
+
     // Delete button
     const delFn = getDelSessionFn(displayed);
     const delBtn = Button('\u00D7', () => { delFn(); });
@@ -1980,7 +2130,7 @@ function refreshSessionList(): void {
     }
 
     // Two-line layout: title on top, badge + time on bottom
-    const titleRow = HStack(4, [rowBtn, Spacer(), delBtn]);
+    const titleRow = HStack(4, [rowBtn, Spacer(), renameBtn, delBtn]);
     const metaRow = HStack(4, [badgeLabel, timeLabel, Spacer()]);
     const cell = VStackWithInsets(1, 4, 4, 4, 4);
     widgetAddChild(cell, titleRow);
@@ -2044,8 +2194,74 @@ function onChatInput(text: string): void {
 
 /** Called when user presses Enter/Return in the text field. */
 function onSubmitFromField(text: string): void {
-  chatInputText = text;
+  // SHIP-V1-GAPS.md #62: slash commands. If the message begins with one of
+  // the known slash commands, expand it into a fully-formed prompt with the
+  // current file's context. Anything else falls through to `onSend()`.
+  const expanded = expandSlashCommand(text);
+  chatInputText = expanded;
   onSend();
+}
+
+/**
+ * Expand `/fix`, `/explain`, `/test`, `/refactor`, `/doc` into prompts that
+ * the AI provider sees. The user can still type a regular message that
+ * starts with `/`-something — only the known commands are intercepted, and
+ * each one explicitly carries the slash so the model knows it was a command.
+ */
+function expandSlashCommand(text: string): string {
+  if (text.length === 0 || text.charCodeAt(0) !== 47) return text;
+  // Find the end of the first word.
+  let wordEnd = 1;
+  while (wordEnd < text.length && text.charCodeAt(wordEnd) !== 32) wordEnd++;
+  const cmd = text.slice(0, wordEnd).toLowerCase();
+  const remainder = wordEnd < text.length ? text.slice(wordEnd + 1) : '';
+  const filePath = getCurrentFilePath ? getCurrentFilePath() : '';
+  const fileName = shortFileNameForSlash(filePath);
+
+  if (cmd === '/fix') {
+    let out = 'Fix the bug in ';
+    out += fileName.length > 0 ? fileName : 'the open file';
+    out += '. ';
+    out += 'Identify what is broken and supply a minimal change that addresses the root cause. Return a diff or the corrected snippet.';
+    if (remainder.length > 0) { out += ' '; out += remainder; }
+    return out;
+  }
+  if (cmd === '/explain') {
+    let out = 'Explain ';
+    if (remainder.length > 0) out += remainder; else out += fileName.length > 0 ? fileName : 'the selection';
+    out += '. Focus on intent, not syntax. Mention non-obvious invariants or edge cases.';
+    return out;
+  }
+  if (cmd === '/test') {
+    let out = 'Write tests for ';
+    out += fileName.length > 0 ? fileName : 'the open file';
+    out += '. Cover the happy path and at least two edge cases. Match the existing test framework.';
+    if (remainder.length > 0) { out += ' Focus area: '; out += remainder; }
+    return out;
+  }
+  if (cmd === '/refactor') {
+    let out = 'Refactor ';
+    out += fileName.length > 0 ? fileName : 'the open file';
+    out += ' for readability. Preserve behavior. Highlight what changed and why in one paragraph after the diff.';
+    if (remainder.length > 0) { out += ' '; out += remainder; }
+    return out;
+  }
+  if (cmd === '/doc') {
+    let out = 'Write or improve doc comments for ';
+    out += fileName.length > 0 ? fileName : 'the open file';
+    out += '. Cover purpose, parameters, returns, and one usage example. Match the file\'s existing comment style.';
+    return out;
+  }
+  return text; // not a recognized command — pass through
+}
+
+function shortFileNameForSlash(path: string): string {
+  let lastSlash = -1;
+  for (let i = 0; i < path.length; i++) {
+    const c = path.charCodeAt(i);
+    if (c === 47 || c === 92) lastSlash = i;
+  }
+  return lastSlash >= 0 ? path.slice(lastSlash + 1) : path;
 }
 
 /**
@@ -2236,7 +2452,7 @@ function handleClaudeLine(line: string): void {
       if (chatMessagesContainer) {
         let rlBlock = VStackWithInsets(4, 8, 8, 8, 8);
         if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(rlBlock, 0.35, 0.25, 0.05, 1.0); } else { widgetSetBackgroundColor(rlBlock, 1.0, 0.95, 0.85, 1.0); };
-        claudeRateLimitLabel = Text('Rate limited. Waiting...');
+        claudeRateLimitLabel = Text(t('Rate limited. Waiting...'));
         textSetFontSize(claudeRateLimitLabel, 12);
         textSetFontFamily(claudeRateLimitLabel, 12, 'Menlo');
         setFg(claudeRateLimitLabel, getSideBarForeground());
@@ -2256,7 +2472,7 @@ function handleClaudeLine(line: string): void {
         claudeRateLimitTimer = 0;
       }
       if (claudeRateLimitLabel) {
-        textSetString(claudeRateLimitLabel, 'Rate limit cleared');
+        textSetString(claudeRateLimitLabel, t('Rate limit cleared'));
       }
     }
     return;
@@ -2324,7 +2540,7 @@ function handleClaudeLine(line: string): void {
 
     if (isError > 0) {
       let errMsg = resultText;
-      if (errMsg.length < 1) errMsg = 'Claude Code returned an error.';
+      if (errMsg.length < 1) errMsg = t('Claude Code returned an error.');
       if (chatMessagesContainer) {
         const errBlock = VStackWithInsets(4, 8, 8, 8, 8);
         if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(errBlock, 0.3, 0.12, 0.12, 1.0); } else { widgetSetBackgroundColor(errBlock, 1.0, 0.9, 0.9, 1.0); };
@@ -2356,7 +2572,7 @@ function handleClaudeLine(line: string): void {
     if (chatMessagesContainer) {
       let statsStr = '';
       if (costVal >= 0) {
-        statsStr += 'Cost: $';
+        statsStr += t('Cost') + ': $';
         let costInt = Math.floor(costVal * 10000);
         let costMain = Math.floor(costVal);
         let costFrac = costInt % 10000;
@@ -2369,7 +2585,7 @@ function handleClaudeLine(line: string): void {
       }
       if (turnsVal >= 0) {
         if (statsStr.length > 0) statsStr += ' | ';
-        statsStr += 'Turns: ';
+        statsStr += t('Turns') + ': ';
         statsStr += String(turnsVal);
       }
       if (claudeTotalDurationMs > 0) {
@@ -2382,11 +2598,11 @@ function handleClaudeLine(line: string): void {
       // "max_turns" — m(0)a(1)x(2)_(3)t(4)
       if (stopReason.length > 5 && stopReason.charCodeAt(0) === 109 && stopReason.charCodeAt(3) === 95) {
         if (statsStr.length > 0) statsStr += ' | ';
-        statsStr += 'INCOMPLETE (max turns reached)';
+        statsStr += t('INCOMPLETE (max turns reached)');
       }
       if (claudeTotalInputTokens > 0 || claudeTotalOutputTokens > 0) {
         if (statsStr.length > 0) statsStr += ' | ';
-        statsStr += 'Tokens: ';
+        statsStr += t('Tokens') + ': ';
         statsStr += String(claudeTotalInputTokens);
         statsStr += ' in / ';
         statsStr += String(claudeTotalOutputTokens);
@@ -2603,13 +2819,13 @@ function updateRateLimitCountdown(): void {
       claudeRateLimitTimer = 0;
     }
     if (claudeRateLimitLabel) {
-      textSetString(claudeRateLimitLabel, 'Rate limit cleared');
+      textSetString(claudeRateLimitLabel, t('Rate limit cleared'));
     }
     return;
   }
   let mins = Math.floor(remaining / 60);
   let secs = remaining % 60;
-  let text = 'Rate limited. Resets in ';
+  let text = t('Rate limited. Resets in') + ' ';
   text += String(mins);
   text += 'm ';
   text += String(secs);
@@ -2652,7 +2868,7 @@ function showPermissionDenials(line: string): void {
 
   let warnBlock = VStackWithInsets(4, 8, 8, 8, 8);
   if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(warnBlock, 0.35, 0.25, 0.05, 1.0); } else { widgetSetBackgroundColor(warnBlock, 1.0, 0.95, 0.85, 1.0); };
-  let warnStr = '\u26A0 Permission denied for: ';
+  let warnStr = '\u26A0 ' + t('Permission denied for') + ': ';
   warnStr += toolNames;
   let warnLabel = Text(warnStr);
   textSetFontSize(warnLabel, 11);
@@ -2673,7 +2889,7 @@ function showThinkingBlock(text: string): void {
   setChatBgDeep(container);
 
   // Header — click toggles content
-  let headerBtn = Button('\u{1F4AD} Thinking...', () => { toggleThinkingExpand(); });
+  let headerBtn = Button('\u{1F4AD} ' + t('Thinking...'), () => { toggleThinkingExpand(); });
   buttonSetBordered(headerBtn, 0);
   textSetFontSize(headerBtn, 10);
   setBtnFg(headerBtn, getSecondaryTextColor());
@@ -3238,10 +3454,10 @@ function updateMessages(): void {
   try { fileContent = readFileSync(fp); } catch (e) {}
 
   if (fileContent.length < 2) {
-    let hintText = 'Ask a question about your code';
-    if (panelMode === 1) hintText = 'Describe a task for the AI agent';
-    if (panelMode === 2) hintText = 'Describe what you want to plan';
-    if (panelMode === 3) hintText = 'Ask Claude Code (uses your Claude.ai subscription)';
+    let hintText = t('Ask a question about your code');
+    if (panelMode === 1) hintText = t('Describe a task for the AI agent');
+    if (panelMode === 2) hintText = t('Describe what you want to plan');
+    if (panelMode === 3) hintText = t('Ask Claude Code (uses your Claude.ai subscription)');
     const hint = Text(hintText);
     textSetFontSize(hint, 12);
     setFg(hint, getSideBarForeground());
@@ -3266,7 +3482,7 @@ function updateMessages(): void {
   if (skipCount > 0 && chatMessagesContainer) {
     let hiddenText = '... ';
     hiddenText += String(skipCount);
-    hiddenText += ' older messages hidden';
+    hiddenText += ' ' + t('older messages hidden');
     const hiddenLabel = Text(hiddenText);
     textSetFontSize(hiddenLabel, 10);
     setFg(hiddenLabel, getSideBarForeground());
@@ -3314,7 +3530,7 @@ function updateMessages(): void {
           // Tool result message — show compact
           const toolBlock = VStackWithInsets(2, 4, 8, 4, 8);
           setChatBgCode(toolBlock);
-          const toolLabel = Text('\u2699 Tool result');
+          const toolLabel = Text('\u2699 ' + t('Tool result'));
           textSetFontSize(toolLabel, 10);
           textSetFontFamily(toolLabel, 10, 'Menlo');
           setFg(toolLabel, getSideBarForeground());
@@ -3340,7 +3556,7 @@ function updateMessages(): void {
           lastAddedWidget = toolBlock;
         } else {
           // User or assistant message
-          const roleLabel = Text(isUser > 0 ? 'You' : 'Hone');
+          const roleLabel = Text(isUser > 0 ? t('You') : t('Hone'));
           textSetFontSize(roleLabel, 10);
           textSetFontWeight(roleLabel, 10, 0.7);
           setFg(roleLabel, getSideBarForeground());
@@ -3383,6 +3599,18 @@ export function focusChatInput(): void {
 
 export function getChatInputHandle(): unknown {
   return chatInput;
+}
+
+/**
+ * Pre-fill the chat input with `text` and focus it. The user can review
+ * and press Enter to submit. SHIP-V1-GAPS.md #63 (generate commit message)
+ * uses this to seed the prompt with the diff.
+ */
+export function prefillChatInput(text: string): void {
+  if (chatInput) {
+    textfieldSetString(chatInput, text);
+  }
+  chatFocusCountdown = 5;
 }
 
 // ---------------------------------------------------------------------------
@@ -3434,8 +3662,8 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
   // Claude Code: no cross-module callbacks — polling + line processing all inline
   setChipsRenderCallback(() => { renderChipsArea(); });
 
-  // --- Header row: New Chat + History search ---
-  const newChatBtn = Button('+ New', () => { onNewChat(); });
+  // --- Header row: New Chat + History search + Export ---
+  const newChatBtn = Button(t('+ New'), () => { onNewChat(); });
   buttonSetBordered(newChatBtn, 0);
   textSetFontSize(newChatBtn, 11);
   setBtnFg(newChatBtn, getSideBarForeground());
@@ -3445,7 +3673,12 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
   textfieldSetOnFocus(historySearchField, () => { onHistorySearchFocus(); });
   widgetSetWidth(historySearchField, 140);
 
-  const headerRow = HStack(4, [newChatBtn, historySearchField, Spacer()]);
+  const exportBtn = Button(t('Export'), () => { exportActiveSession(); });
+  buttonSetBordered(exportBtn, 0);
+  textSetFontSize(exportBtn, 11);
+  setBtnFg(exportBtn, getSideBarForeground());
+
+  const headerRow = HStack(4, [newChatBtn, historySearchField, Spacer(), exportBtn]);
   widgetAddChild(container, headerRow);
 
   // --- History dropdown (overlay, hidden by default) ---
@@ -3459,25 +3692,25 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
   historyDropdownVisible = 0;
 
   // --- Mode tabs ---
-  modeChatBtn = Button('Chat', () => { onModeChat(); });
+  modeChatBtn = Button(t('Chat'), () => { onModeChat(); });
   buttonSetBordered(modeChatBtn, 0);
   textSetFontSize(modeChatBtn, 11);
   modeChatWrap = HStackWithInsets(0, 6, 3, 6, 3);
   widgetAddChild(modeChatWrap, modeChatBtn);
 
-  modeAgentBtn = Button('Agent', () => { onModeAgent(); });
+  modeAgentBtn = Button(t('Agent'), () => { onModeAgent(); });
   buttonSetBordered(modeAgentBtn, 0);
   textSetFontSize(modeAgentBtn, 11);
   modeAgentWrap = HStackWithInsets(0, 6, 3, 6, 3);
   widgetAddChild(modeAgentWrap, modeAgentBtn);
 
-  modePlanBtn = Button('Plan', () => { onModePlan(); });
+  modePlanBtn = Button(t('Plan'), () => { onModePlan(); });
   buttonSetBordered(modePlanBtn, 0);
   textSetFontSize(modePlanBtn, 11);
   modePlanWrap = HStackWithInsets(0, 6, 3, 6, 3);
   widgetAddChild(modePlanWrap, modePlanBtn);
 
-  modeClaudeBtn = Button('Claude Code', () => { onModeClaude(); });
+  modeClaudeBtn = Button(t('Claude Code'), () => { onModeClaude(); });
   buttonSetBordered(modeClaudeBtn, 0);
   textSetFontSize(modeClaudeBtn, 11);
   modeClaudeWrap = HStackWithInsets(0, 6, 3, 6, 3);
@@ -3515,13 +3748,13 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
       const hintBlock = VStackWithInsets(4, 8, 8, 8, 8);
       if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(hintBlock, 0.15, 0.18, 0.25, 1.0); } else { widgetSetBackgroundColor(hintBlock, 0.90, 0.93, 0.98, 1.0); };
 
-      const hintTitle = Text('Claude Code Required');
+      const hintTitle = Text(t('Claude Code Required'));
       textSetFontSize(hintTitle, 12);
       textSetFontWeight(hintTitle, 12, 0.7);
       setFg(hintTitle, getSideBarForeground());
       widgetAddChild(hintBlock, hintTitle);
 
-      const hint1 = Text('Install Claude Code: npm install -g @anthropic-ai/claude-code');
+      const hint1 = Text(t('Install Claude Code: npm install -g @anthropic-ai/claude-code'));
       textSetFontSize(hint1, 11);
       setFg(hint1, getSideBarForeground());
       widgetAddChild(hintBlock, hint1);
@@ -3533,13 +3766,13 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
         const hintBlock = VStackWithInsets(4, 8, 8, 8, 8);
         if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(hintBlock, 0.15, 0.18, 0.25, 1.0); } else { widgetSetBackgroundColor(hintBlock, 0.90, 0.93, 0.98, 1.0); };
 
-        const hintTitle = Text('Sign In Required');
+        const hintTitle = Text(t('Sign In Required'));
         textSetFontSize(hintTitle, 12);
         textSetFontWeight(hintTitle, 12, 0.7);
         setFg(hintTitle, getSideBarForeground());
         widgetAddChild(hintBlock, hintTitle);
 
-        const hint1 = Text('Run "claude auth login" in your terminal to sign in.');
+        const hint1 = Text(t('Run "claude auth login" in your terminal to sign in.'));
         textSetFontSize(hint1, 11);
         setFg(hint1, getSideBarForeground());
         widgetAddChild(hintBlock, hint1);
@@ -3557,13 +3790,13 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
       const hintBlock = VStackWithInsets(4, 8, 8, 8, 8);
       if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(hintBlock, 0.15, 0.18, 0.25, 1.0); } else { widgetSetBackgroundColor(hintBlock, 0.90, 0.93, 0.98, 1.0); };
 
-      const hintTitle = Text('API Key Required');
+      const hintTitle = Text(t('API Key Required'));
       textSetFontSize(hintTitle, 12);
       textSetFontWeight(hintTitle, 12, 0.7);
       setFg(hintTitle, getSideBarForeground());
       widgetAddChild(hintBlock, hintTitle);
 
-      const hint1 = Text('Open Settings to configure your provider API key.');
+      const hint1 = Text(t('Open Settings to configure your provider API key.'));
       textSetFontSize(hint1, 11);
       setFg(hint1, getSideBarForeground());
       widgetAddChild(hintBlock, hint1);
@@ -3593,12 +3826,12 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
   textSetFontSize(modelBtn, 10);
   setBtnFg(modelBtn, getSideBarForeground());
 
-  const attachFileBtn = Button('+ File', () => { onAttachFile(); });
+  const attachFileBtn = Button(t('+ File'), () => { onAttachFile(); });
   buttonSetBordered(attachFileBtn, 0);
   textSetFontSize(attachFileBtn, 10);
   setBtnFg(attachFileBtn, getSideBarForeground());
 
-  const attachSelBtn = Button('+ Selection', () => { onAttachSelection(); });
+  const attachSelBtn = Button(t('+ Selection'), () => { onAttachSelection(); });
   buttonSetBordered(attachSelBtn, 0);
   textSetFontSize(attachSelBtn, 10);
   setBtnFg(attachSelBtn, getSideBarForeground());
@@ -3613,7 +3846,7 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
   textfieldSetOnFocus(chatInput, () => { hideHistoryDropdown(); });
   widgetAddChild(container, chatInput);
 
-  const sendBtn = Button('Send', () => { onSend(); });
+  const sendBtn = Button(t('Send'), () => { onSend(); });
   buttonSetBordered(sendBtn, 0);
   textSetFontSize(sendBtn, 12);
   setBtnFg(sendBtn, getSideBarForeground());

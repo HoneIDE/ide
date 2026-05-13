@@ -247,6 +247,24 @@ export function getStatusDeletedColor(): string {
   return '#D73737';
 }
 
+/** Git conflicting (U) — bright red, distinct from "deleted". SHIP-V1-GAPS.md #99. */
+export function getStatusConflictColor(): string {
+  if (_isDark > 0) return '#FF6E6E';
+  return '#CB2431';
+}
+
+/** Git renamed (R) / copied (C) — purple-ish to differ from add/modify. */
+export function getStatusRenamedColor(): string {
+  if (_isDark > 0) return '#C586C0';
+  return '#8B5CF6';
+}
+
+/** Git ignored (!) — heavily dimmed. */
+export function getStatusIgnoredColor(): string {
+  if (_isDark > 0) return '#555555';
+  return '#A0A0A0';
+}
+
 /** Muted/secondary text */
 export function getSecondaryTextColor(): string {
   if (_isDark > 0) return '#707070';

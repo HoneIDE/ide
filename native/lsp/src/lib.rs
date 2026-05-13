@@ -35,28 +35,26 @@ static SERVERS: Mutex<[Option<LspProcess>; 4]> = Mutex::new([
 ]);
 
 // ---------------------------------------------------------------------------
-// String helpers for Perry FFI
+// String helpers for Perry FFI — go through `perry-ffi` so we stay on the
+// stable wrapper surface. Earlier versions of this crate hand-rolled an
+// `[len:u32][cap:u32][data...]` 8-byte header, which silently broke when
+// Perry v0.5.213 expanded `StringHeader` to 5 fields (20 bytes). The
+// perry-ffi shim hides that layout entirely.
 // ---------------------------------------------------------------------------
 
-unsafe fn str_from_header(ptr: *const u8) -> &'static str {
-    if ptr.is_null() { return ""; }
-    let len = *(ptr as *const u32) as usize;
-    let data = ptr.add(8);
-    let slice = std::slice::from_raw_parts(data, len);
-    std::str::from_utf8_unchecked(slice)
+fn str_from_header(ptr: *const u8) -> &'static str {
+    if ptr.is_null() || (ptr as usize) < 0x1000 {
+        return "";
+    }
+    let handle = unsafe { perry_ffi::JsString::from_raw(ptr as *mut perry_ffi::StringHeader) };
+    perry_ffi::read_string(handle).unwrap_or("")
 }
 
-/// Build a Perry StringHeader on the heap. Returns raw pointer as i64.
+/// Allocate a Perry-arena string and return the header pointer as `i64`.
+/// The runtime's GC reclaims the allocation once the JS-side reference
+/// goes out of scope — no manual free.
 fn make_perry_string(s: &str) -> i64 {
-    let bytes = s.as_bytes();
-    let len = bytes.len() as u32;
-    let total = 8 + bytes.len();
-    let mut buf = Vec::with_capacity(total);
-    buf.extend_from_slice(&len.to_ne_bytes());
-    buf.extend_from_slice(&len.to_ne_bytes());
-    buf.extend_from_slice(bytes);
-    let leaked = Box::leak(buf.into_boxed_slice());
-    leaked.as_ptr() as i64
+    perry_ffi::alloc_string(s).as_raw() as i64
 }
 
 // ---------------------------------------------------------------------------

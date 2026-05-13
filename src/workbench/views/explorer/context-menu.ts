@@ -5,6 +5,7 @@
  * Closures capture path/name by value and pass to module-level action functions.
  */
 import { menuCreate, menuAddItem, menuAddSeparator } from 'perry/ui';
+import { t } from 'perry/i18n';
 import { execSync } from 'child_process';
 import { writeFileSync, unlinkSync, mkdirSync } from 'fs';
 
@@ -190,7 +191,7 @@ function doOpenTerminal(): void {
 function doNewFile(): void {
   let result = '';
   try {
-    result = execSync("osascript -e 'display dialog \"Enter file name:\" default answer \"untitled.ts\" buttons {\"Cancel\",\"Create\"} default button \"Create\"'") as unknown as string;
+    result = execSync("osascript -e 'display dialog \"" + t('Enter file name:') + "\" default answer \"untitled.ts\" buttons {\"" + t('Cancel') + "\",\"" + t('Create') + "\"} default button \"" + t('Create') + "\"'") as unknown as string;
   } catch (e) {
     return;
   }
@@ -212,7 +213,7 @@ function doNewFile(): void {
 function doNewFolder(): void {
   let result = '';
   try {
-    result = execSync("osascript -e 'display dialog \"Enter folder name:\" default answer \"new-folder\" buttons {\"Cancel\",\"Create\"} default button \"Create\"'") as unknown as string;
+    result = execSync("osascript -e 'display dialog \"" + t('Enter folder name:') + "\" default answer \"new-folder\" buttons {\"" + t('Cancel') + "\",\"" + t('Create') + "\"} default button \"" + t('Create') + "\"'") as unknown as string;
   } catch (e) {
     return;
   }
@@ -231,9 +232,9 @@ function doNewFolder(): void {
 }
 
 function doRename(): void {
-  let prompt = "osascript -e 'display dialog \"Rename to:\" default answer \"";
+  let prompt = "osascript -e 'display dialog \"" + t('Rename to:') + "\" default answer \"";
   prompt += _pendingName;
-  prompt += "\" buttons {\"Cancel\",\"Rename\"} default button \"Rename\"'";
+  prompt += "\" buttons {\"" + t('Cancel') + "\",\"" + t('Rename') + "\"} default button \"" + t('Rename') + "\"'";
   let result = '';
   try {
     result = execSync(prompt) as unknown as string;
@@ -262,9 +263,9 @@ function doRename(): void {
 }
 
 function doDeleteItem(): void {
-  let prompt = "osascript -e 'display alert \"Delete\" message \"Move \\\"";
+  let prompt = "osascript -e 'display alert \"" + t('Delete') + "\" message \"" + t('Move to Trash?') + " \\\"";
   prompt += _pendingName;
-  prompt += "\\\" to Trash?\" buttons {\"Cancel\",\"Move to Trash\"} cancel button \"Cancel\" default button \"Cancel\"'";
+  prompt += "\\\"\" buttons {\"" + t('Cancel') + "\",\"" + t('Move to Trash') + "\"} cancel button \"" + t('Cancel') + "\" default button \"" + t('Cancel') + "\"'";
   try {
     execSync(prompt);
   } catch (e) {
@@ -305,17 +306,17 @@ export function buildFileContextMenu(filePath: string, fileName: string): unknow
   const parentDir = getParentDir(filePath);
 
   const menu = menuCreate();
-  menuAddItem(menu, 'New File...', () => { onNewFile(parentDir); });
-  menuAddItem(menu, 'New Folder...', () => { onNewFolder(parentDir); });
+  menuAddItem(menu, t('New File...'), () => { onNewFile(parentDir); });
+  menuAddItem(menu, t('New Folder...'), () => { onNewFolder(parentDir); });
   menuAddSeparator(menu);
-  menuAddItem(menu, 'Copy Path', () => { onCopyPath(fPath); });
-  menuAddItem(menu, 'Copy Relative Path', () => { onCopyRelPath(fPath); });
+  menuAddItem(menu, t('Copy Path'), () => { onCopyPath(fPath); });
+  menuAddItem(menu, t('Copy Relative Path'), () => { onCopyRelPath(fPath); });
   menuAddSeparator(menu);
-  menuAddItem(menu, 'Rename...', () => { onRename(fPath, fName); });
-  menuAddItem(menu, 'Delete', () => { onDeleteItem(fPath, fName); });
+  menuAddItem(menu, t('Rename...'), () => { onRename(fPath, fName); });
+  menuAddItem(menu, t('Delete'), () => { onDeleteItem(fPath, fName); });
   menuAddSeparator(menu);
-  menuAddItem(menu, 'Reveal in Finder', () => { onReveal(fPath); });
-  menuAddItem(menu, 'Open in Integrated Terminal', () => { onOpenTerminal(parentDir); });
+  menuAddItem(menu, t('Reveal in Finder'), () => { onReveal(fPath); });
+  menuAddItem(menu, t('Open in Integrated Terminal'), () => { onOpenTerminal(parentDir); });
   return menu;
 }
 
@@ -327,17 +328,17 @@ export function buildDirContextMenu(dirPath: string, dirName: string): unknown {
   const dName = dirName;
 
   const menu = menuCreate();
-  menuAddItem(menu, 'New File...', () => { onNewFile(dPath); });
-  menuAddItem(menu, 'New Folder...', () => { onNewFolder(dPath); });
+  menuAddItem(menu, t('New File...'), () => { onNewFile(dPath); });
+  menuAddItem(menu, t('New Folder...'), () => { onNewFolder(dPath); });
   menuAddSeparator(menu);
-  menuAddItem(menu, 'Copy Path', () => { onCopyPath(dPath); });
-  menuAddItem(menu, 'Copy Relative Path', () => { onCopyRelPath(dPath); });
+  menuAddItem(menu, t('Copy Path'), () => { onCopyPath(dPath); });
+  menuAddItem(menu, t('Copy Relative Path'), () => { onCopyRelPath(dPath); });
   menuAddSeparator(menu);
-  menuAddItem(menu, 'Rename...', () => { onRename(dPath, dName); });
-  menuAddItem(menu, 'Delete', () => { onDeleteItem(dPath, dName); });
+  menuAddItem(menu, t('Rename...'), () => { onRename(dPath, dName); });
+  menuAddItem(menu, t('Delete'), () => { onDeleteItem(dPath, dName); });
   menuAddSeparator(menu);
-  menuAddItem(menu, 'Reveal in Finder', () => { onReveal(dPath); });
-  menuAddItem(menu, 'Open in Integrated Terminal', () => { onOpenTerminal(dPath); });
+  menuAddItem(menu, t('Reveal in Finder'), () => { onReveal(dPath); });
+  menuAddItem(menu, t('Open in Integrated Terminal'), () => { onOpenTerminal(dPath); });
   return menu;
 }
 
@@ -347,7 +348,7 @@ export function buildDirContextMenu(dirPath: string, dirName: string): unknown {
 export function buildEmptySpaceContextMenu(): unknown {
   const root = _workspaceRoot;
   const menu = menuCreate();
-  menuAddItem(menu, 'New File...', () => { onNewFile(root); });
-  menuAddItem(menu, 'New Folder...', () => { onNewFolder(root); });
+  menuAddItem(menu, t('New File...'), () => { onNewFile(root); });
+  menuAddItem(menu, t('New Folder...'), () => { onNewFolder(root); });
   return menu;
 }

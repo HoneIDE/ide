@@ -9,6 +9,7 @@ import {
   buttonSetBordered,
   widgetAddChild, widgetClearChildren,
 } from 'perry/ui';
+import { t } from 'perry/i18n';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 
@@ -26,7 +27,7 @@ function onLoadPRs(): void {
   if (tokenValue.length < 1) return;
   widgetClearChildren(prContainer);
 
-  const loading = Text('Loading pull requests...');
+  const loading = Text(t('Loading pull requests...'));
   textSetFontSize(loading, 12);
   setFg(loading, prColors.sideBarForeground);
   widgetAddChild(prContainer, loading);
@@ -34,7 +35,7 @@ function onLoadPRs(): void {
   // Actual API call would go here via execSync('curl ...')
   // For now, show placeholder
   widgetClearChildren(prContainer);
-  const hint = Text('PR list will appear when GitHub API is connected');
+  const hint = Text(t('PR list will appear when GitHub API is connected'));
   textSetFontSize(hint, 12);
   setFg(hint, prColors.sideBarForeground);
   widgetAddChild(prContainer, hint);
@@ -43,14 +44,14 @@ function onLoadPRs(): void {
 export function renderPRReviewPanel(container: unknown, colors: ResolvedUIColors): void {
   prColors = colors;
 
-  const title = Text('PULL REQUESTS');
+  const title = Text(t('PULL REQUESTS'));
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.7);
   setFg(title, colors.sideBarForeground);
   widgetAddChild(container, title);
 
   // Token input
-  const tokenLabel = Text('GitHub Token');
+  const tokenLabel = Text(t('GitHub Token'));
   textSetFontSize(tokenLabel, 12);
   setFg(tokenLabel, colors.sideBarForeground);
   widgetAddChild(container, tokenLabel);
@@ -58,7 +59,7 @@ export function renderPRReviewPanel(container: unknown, colors: ResolvedUIColors
   tokenField = TextField('ghp_...', (text: string) => { onTokenInput(text); });
   widgetAddChild(container, tokenField);
 
-  const loadBtn = Button('Load PRs', () => { onLoadPRs(); });
+  const loadBtn = Button(t('Load PRs'), () => { onLoadPRs(); });
   buttonSetBordered(loadBtn, 0);
   textSetFontSize(loadBtn, 12);
   setBtnFg(loadBtn, colors.sideBarForeground);
@@ -68,7 +69,7 @@ export function renderPRReviewPanel(container: unknown, colors: ResolvedUIColors
   prContainer = VStack(4, []);
   widgetAddChild(container, prContainer);
 
-  const hint = Text('Configure GitHub token to view pull requests');
+  const hint = Text(t('Configure GitHub token to view pull requests'));
   textSetFontSize(hint, 12);
   setFg(hint, colors.sideBarForeground);
   widgetAddChild(prContainer, hint);

@@ -298,6 +298,18 @@ function installNativeListeners(): void {
       notifyListeners();
     });
   }
+  // SHIP-V1-GAPS.md #69: iOS / iPad orientation change. Bridges to the same
+  // `perry_on_layout_change` hook the web target uses. When perry-ui-ios
+  // implements the callback (currently a no-op stub per memory.md), rotating
+  // an iPad will already trigger a relayout — no further TS-side change
+  // required. Using the same FFI symbol keeps the iOS bridge work isolated
+  // to the Perry side.
+  if (__platform__ === 1) {
+    perry_on_layout_change(() => {
+      _current = buildContext();
+      notifyListeners();
+    });
+  }
   // perry_on_resize / perry_on_orientation_change FFI not available on Windows yet.
   // TODO: Implement via Win32 WM_SIZE / WM_DISPLAYCHANGE messages.
 }

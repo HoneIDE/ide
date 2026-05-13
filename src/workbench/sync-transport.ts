@@ -35,8 +35,16 @@ let _onRelayDisconnected: () => void = _noopVoid;
 let _onRelayMessage: (data: string) => void = _noopData;
 let _onDebug: (msg: string) => void = _noopData;
 
+// Payload encryption (E2E) — set by render.ts after key exchange completes.
+// While `_encryptReady === 0`, payloads ship in cleartext (pairing handshake only).
+// Once set, every outbound payload is encrypted and the envelope's "encrypted":true flag is asserted.
+let _encryptPayload: (s: string) => string = _identityString;
+let _decryptPayload: (s: string) => string = _identityString;
+let _encryptReady: number = 0;
+
 function _noopVoid(): void {}
 function _noopData(d: string): void {}
+function _identityString(s: string): string { return s; }
 
 // --- Public API ---
 
@@ -99,6 +107,17 @@ export function sendToRelayTarget(to: string, payload: string): void {
   _onDebug('sendToRelayTarget: wsConn=' + String(wsConnected) + ' handle=' + String(wsHandle) + ' payloadLen=' + String(payload.length));
   if (wsConnected < 1 || wsHandle < 1) return;
   seqCounter = seqCounter + 1;
+
+  // E2E: encrypt payload once the key exchange has completed.
+  // Pairing handshake messages (PAIR_REQ / PAIR_OK / PAIR_NO) ship cleartext —
+  // they're the channel that bootstraps the project key.
+  let txPayload = payload;
+  let encryptedFlag = 'false';
+  if (_encryptReady > 0 && !isPairingHandshake(payload)) {
+    txPayload = _encryptPayload(payload);
+    encryptedFlag = 'true';
+  }
+
   let msg = '{"from":"';
   msg += relayDeviceId;
   msg += '","to":"';
@@ -109,11 +128,13 @@ export function sendToRelayTarget(to: string, payload: string): void {
   msg += String(seqCounter);
   msg += ',"ts":';
   msg += String(Date.now());
-  msg += ',"encrypted":false,"payload":"';
-  // Check if payload needs escaping (contains " \ \n \r)
+  msg += ',"encrypted":';
+  msg += encryptedFlag;
+  msg += ',"payload":"';
+  // Check if txPayload needs escaping (contains " \ \n \r)
   let needsEscape = 0;
-  for (let i = 0; i < payload.length; i++) {
-    const ch = payload.charCodeAt(i);
+  for (let i = 0; i < txPayload.length; i++) {
+    const ch = txPayload.charCodeAt(i);
     if (ch === 34 || ch === 92 || ch === 10 || ch === 13) {
       needsEscape = 1;
       break;
@@ -121,11 +142,11 @@ export function sendToRelayTarget(to: string, payload: string): void {
   }
   if (needsEscape < 1) {
     // Fast path: no escaping needed, direct concat
-    msg += payload;
+    msg += txPayload;
   } else {
     // Slow path: escape character by character
-    for (let i = 0; i < payload.length; i++) {
-      const ch = payload.charCodeAt(i);
+    for (let i = 0; i < txPayload.length; i++) {
+      const ch = txPayload.charCodeAt(i);
       if (ch === 34) {
         msg += '\\"';
       } else if (ch === 92) {
@@ -135,7 +156,7 @@ export function sendToRelayTarget(to: string, payload: string): void {
       } else if (ch === 13) {
         msg += '\\r';
       } else {
-        msg += payload.charAt(i);
+        msg += txPayload.charAt(i);
       }
     }
   }
@@ -159,6 +180,43 @@ export function setOnRelayDisconnected(fn: () => void): void {
 
 export function setOnRelayMessage(fn: (data: string) => void): void {
   _onRelayMessage = fn;
+}
+
+/** Install the project-key encryption pair. Call once key exchange completes. */
+export function setPayloadCrypto(encrypt: (s: string) => string, decrypt: (s: string) => string): void {
+  _encryptPayload = encrypt;
+  _decryptPayload = decrypt;
+}
+
+/** Toggle whether outbound payloads should be encrypted. 1 = on, 0 = off (cleartext). */
+export function setEncryptionReady(ready: number): void {
+  _encryptReady = ready;
+}
+
+export function isEncryptionReady(): number {
+  return _encryptReady;
+}
+
+/**
+ * Decrypt an incoming payload after the consumer has parsed it out of the envelope.
+ * Pass `isEncrypted = 1` if the envelope's "encrypted" flag was `true`.
+ * Returns plaintext, or the original string if encryption isn't active or the flag was false.
+ */
+export function decryptIncomingPayload(payload: string, isEncrypted: number): string {
+  if (isEncrypted < 1) return payload;
+  return _decryptPayload(payload);
+}
+
+/**
+ * Pairing handshake messages (PAIR_REQ / PAIR_OK / PAIR_NO) are exempt from encryption —
+ * they bootstrap the project key. Once both sides have the key, everything else is encrypted.
+ */
+function isPairingHandshake(payload: string): number {
+  if (payload.length < 7) return 0;
+  if (payload.indexOf('PAIR_REQ|') === 0) return 1;
+  if (payload.indexOf('PAIR_OK|') === 0) return 1;
+  if (payload.indexOf('PAIR_NO|') === 0) return 1;
+  return 0;
 }
 
 export function setOnTransportDebug(fn: (msg: string) => void): void {

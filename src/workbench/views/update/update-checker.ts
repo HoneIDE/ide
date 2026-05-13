@@ -12,6 +12,7 @@
 import { streamStart, streamPoll, streamStatus, streamClose } from 'node-fetch';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { execSync } from 'child_process';
+import { spawn } from 'perry/thread';
 import { spawnBackground } from 'child_process';
 import { HONE_VERSION } from '../../version';
 import { getAppDataDir } from '../../paths';
@@ -497,22 +498,30 @@ export function performUpdate(): void {
 
   _updateState = 3; // downloading
 
-  try {
-    if (__platform__ === 0) {
-      performUpdateMacOS();
-    } else if (__platform__ === 4) {
-      performUpdateLinux();
-    } else if (__platform__ === 3) {
-      performUpdateWindows();
-    } else {
-      _updateState = 5;
-      _errorMessage = 'Platform not supported for auto-update';
-      return;
+  // Run the download + install on a background thread
+  const platform = __platform__;
+  spawn(() => {
+    try {
+      if (platform === 0) {
+        performUpdateMacOS();
+      } else if (platform === 4) {
+        performUpdateLinux();
+      } else if (platform === 3) {
+        performUpdateWindows();
+      } else {
+        return 'Platform not supported for auto-update';
+      }
+    } catch (e: any) {
+      return 'Update failed. The previous version has been restored.';
     }
-  } catch (e: any) {
+    return '';
+  }).then((error) => { onUpdateComplete(error); });
+}
+
+function onUpdateComplete(error: string): void {
+  if (error.length > 0) {
     _updateState = 5;
-    _errorMessage = 'Update failed. The previous version has been restored.';
-    return;
+    _errorMessage = error;
   }
 }
 

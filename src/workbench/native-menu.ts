@@ -15,6 +15,9 @@ import {
   checkForUpdatesAction, formatDocumentAction, goToDefinitionAction,
   newFileAction, findAction, replaceAction, openRecentItem,
   saveFileAction, saveFileAsAction,
+  showCommandPaletteAction, showOutlineAction,
+  showTasksAction, runBuildTaskAction,
+  undoAction, redoAction,
 } from './render';
 import {
   getRecentCount, getRecentPath, getRecentType, clearRecentItems, initRecentItems,
@@ -62,6 +65,24 @@ function dispatchCommand(command: string): void {
   } else if (command.length === 11 && command.charCodeAt(0) === 102 && command.charCodeAt(5) === 115) {
     // file.saveAs (length 11, 'f'ile.'s'aveAs)
     saveFileAsAction();
+  } else if (command.length === 19 && command.charCodeAt(0) === 118 && command.charCodeAt(5) === 99) {
+    // view.commandPalette (length 19, 'v'iew.'c'ommandPalette)
+    showCommandPaletteAction();
+  } else if (command.length === 9 && command.charCodeAt(0) === 101 && command.charCodeAt(5) === 117) {
+    // edit.undo (length 9, 'e'dit.'u'ndo)
+    undoAction();
+  } else if (command.length === 9 && command.charCodeAt(0) === 101 && command.charCodeAt(5) === 114) {
+    // edit.redo (length 9, 'e'dit.'r'edo)
+    redoAction();
+  } else if (command.length === 12 && command.charCodeAt(0) === 118 && command.charCodeAt(5) === 111) {
+    // view.outline (length 12, 'v'iew.'o'utline)
+    showOutlineAction();
+  } else if (command.length === 13 && command.charCodeAt(0) === 116 && command.charCodeAt(6) === 82) {
+    // tasks.runTask (length 13, 't'asks.'R'unTask — chr at 6 is 'R')
+    showTasksAction();
+  } else if (command.length === 18 && command.charCodeAt(0) === 116 && command.charCodeAt(6) === 82 && command.charCodeAt(9) === 66) {
+    // tasks.runBuildTask (length 18, 't'asks.'R'un'B'uildTask — 'B' = 66)
+    runBuildTaskAction();
   }
 }
 

@@ -157,6 +157,12 @@ export function openTab(filePath: string, fileName: string): number {
 // Dirty state
 // ---------------------------------------------------------------------------
 
+/** Returns 1 if the tab at `idx` is currently flagged dirty (unsaved). */
+export function isTabDirty(idx: number): number {
+  if (idx < 0 || idx >= tabDirty.length) return 0;
+  return tabDirty[idx];
+}
+
 /** Mark the active tab as saved with the given content length. */
 export function markTabSaved(contentLength: number): void {
   if (activeTabIdx >= 0 && activeTabIdx < tabDirty.length) {
@@ -363,7 +369,31 @@ function onTabClickDirect(idx: number, path: string): void {
   _displayCallback(path);
 }
 
+// SHIP-V1-GAPS.md #91: before-close hook. Host installs a function that
+// returns 1 (cancel) when the user should be prompted (e.g. unsaved edits) —
+// the host is responsible for any UI and re-invoking `forceCloseTab(idx)`
+// after the user picks Save or Discard.
+let _onBeforeTabClose: (idx: number, path: string) => number = _alwaysAllow;
+function _alwaysAllow(_idx: number, _path: string): number { return 0; }
+
+export function setOnBeforeTabClose(fn: (idx: number, path: string) => number): void {
+  _onBeforeTabClose = fn;
+}
+
 function onTabClose(idx: number): void {
+  // Run the guard synchronously before deferring — that way the host has
+  // a chance to put up its confirm dialog before the close runs.
+  if (idx >= 0 && idx < openTabCount) {
+    const path = openTabs[idx];
+    if (_onBeforeTabClose(idx, path) > 0) return;
+  }
+  pendingTabCloseIdx = idx;
+  setTimeout(() => { onTabCloseDeferred(); }, 0);
+}
+
+/** Force-close a tab without invoking the beforeClose guard. Used by the
+ *  host once it has confirmed the user wants to discard or has saved. */
+export function forceCloseTab(idx: number): void {
   pendingTabCloseIdx = idx;
   setTimeout(() => { onTabCloseDeferred(); }, 0);
 }

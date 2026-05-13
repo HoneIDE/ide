@@ -16,6 +16,7 @@ import {
   widgetSetBackgroundColor,
   embedNSView,
 } from 'perry/ui';
+import { t } from 'perry/i18n';
 // Import triggers Perry to discover @honeide/terminal package.json FFI manifest
 import { TERMINAL_LIVE } from '@honeide/terminal/perry/live';
 import { hexToRGBA, setBg, setFg, setBtnFg, setBtnTint } from '../../ui-helpers';
@@ -116,7 +117,7 @@ function refreshProblemsView(): void {
 
   const count = getDiagCount();
   if (count < 1) {
-    const hint = Text('No problems detected');
+    const hint = Text(t('No problems detected'));
     textSetFontSize(hint, 12);
     setFg(hint, getSideBarForeground());
     widgetAddChild(problemsScrollContent, hint);
@@ -220,7 +221,7 @@ function onCloseClick(): void {
 }
 
 function buildTerminalHeader(colors: any): unknown {
-  const tabNames = ['PROBLEMS', 'TERMINAL'];
+  const tabNames = [t('PROBLEMS'), t('TERMINAL')];
   headerTabBtns = [];
   panelColors = colors;
 

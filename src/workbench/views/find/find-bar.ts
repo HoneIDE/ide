@@ -16,6 +16,7 @@ import {
   textfieldSetString, textfieldFocus, textfieldSetOnSubmit,
   textfieldSetBorderless, textfieldSetBackgroundColor, textfieldSetFontSize, textfieldSetTextColor,
 } from 'perry/ui';
+import { t } from 'perry/i18n';
 import { setBg, setFg, setBtnFg, setBtnTint, toLowerCode } from '../../ui-helpers';
 import {
   getEditorBackground, getEditorForeground,
@@ -208,11 +209,11 @@ function performSearch(): void {
 function updateMatchLabel(): void {
   if (!matchCountLabel) return;
   if (findMatchCount < 1) {
-    textSetString(matchCountLabel, 'No results');
+    textSetString(matchCountLabel, t('No results'));
   } else {
     let label = '';
     label += String(findCurrentMatch + 1);
-    label += ' of ';
+    label += t(' of ');
     label += String(findMatchCount);
     textSetString(matchCountLabel, label);
   }
@@ -568,7 +569,7 @@ export function createFindBar(): unknown {
   textSetFontSize(chevronBtn, 10);
   widgetSetWidth(chevronBtn, 20);
 
-  findTextField = TextField('Find', (text: string) => { onFindTextChanged(text); });
+  findTextField = TextField(t('Find'), (text: string) => { onFindTextChanged(text); });
   widgetSetWidth(findTextField, 160);
   widgetSetHeight(findTextField, 24);
   textfieldSetBorderless(findTextField, 1);
@@ -585,7 +586,7 @@ export function createFindBar(): unknown {
   textSetFontSize(wholeWordBtn, 11);
   widgetSetWidth(wholeWordBtn, 28);
 
-  matchCountLabel = Text('No results');
+  matchCountLabel = Text(t('No results'));
   textSetFontSize(matchCountLabel, 11);
 
   const prevBtn = Button('', () => { onPrevClick(); });
@@ -626,7 +627,7 @@ export function createFindBar(): unknown {
   const replaceSpacer = HStack(0, []);
   widgetSetWidth(replaceSpacer, 20);
 
-  replaceTextField = TextField('Replace', (text: string) => { onReplaceTextChanged(text); });
+  replaceTextField = TextField(t('Replace'), (text: string) => { onReplaceTextChanged(text); });
   widgetSetWidth(replaceTextField, 160);
   widgetSetHeight(replaceTextField, 24);
   textfieldSetBorderless(replaceTextField, 1);

@@ -13,8 +13,10 @@ import {
   widgetAddChild, widgetClearChildren, widgetSetHidden,
   textfieldSetString, textfieldFocus, textfieldSetBorderless, textfieldSetBackgroundColor, textfieldSetFontSize, textfieldSetOnSubmit,
 } from 'perry/ui';
+import { t } from 'perry/i18n';
 import { readFileSync, readdirSync, isDirectory, writeFileSync } from 'fs';
 import { execSync } from 'child_process';
+import { spawn, parallelMap } from 'perry/thread';
 import { join } from 'path';
 import { hexToRGBA, setBg, setFg, setBtnFg, pathId, getFileName, toLowerCode, isTextFile } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
@@ -31,6 +33,9 @@ let searchCaseSensitive: number = 0;
 let searchUseRegex: number = 0;
 let searchShowReplace: number = 0;
 let replaceQuery = '';
+// SHIP-V1-GAPS.md #82: include / exclude globs (comma-separated patterns).
+let searchInclude = '';
+let searchExclude = '';
 
 // Search results — parallel arrays
 let srFilePaths: string[] = [];
@@ -189,23 +194,234 @@ function searchDir(dirPath: string, depth: number): void {
   }
 }
 
-/** Run the search and update UI. Tries ripgrep first, falls back to manual scan. */
+/** Run the search asynchronously on a background thread. UI stays responsive. */
 function performSearch(): void {
-  srFilePaths = [];
-  srLineNums = [];
-  srLineTexts = [];
-  srCount = 0;
-  if (searchQuery.length < 1) {
-    updateSearchResultsUI();
-    return;
-  }
-  if (searchWorkspaceRoot.length < 1) {
+  const query = searchQuery;
+  const wsRoot = searchWorkspaceRoot;
+  const caseSens = searchCaseSensitive;
+
+  if (query.length < 1 || wsRoot.length < 1) {
+    srFilePaths = [];
+    srLineNums = [];
+    srLineTexts = [];
+    srCount = 0;
     updateSearchResultsUI();
     return;
   }
 
-  // Manual filesystem scan (ripgrep disabled — rg aliased to non-ripgrep binary)
-  searchDir(searchWorkspaceRoot, 0);
+  searchGeneration = searchGeneration + 1;
+  const gen = searchGeneration;
+
+  // Show "Searching..." immediately
+  if (searchPanelReady > 0) {
+    textSetString(searchResultCountLabel, t('Searching...'));
+    widgetClearChildren(searchResultsContainer);
+  }
+
+  spawn(() => {
+    // Phase 1: Collect all searchable file paths (sequential dir walk)
+    const allFiles: string[] = [];
+    let fileCount = 0;
+    collectSearchFiles(allFiles, wsRoot, 0);
+    fileCount = allFiles.length;
+
+    if (fileCount < 1) {
+      return { filePaths: [] as string[], lineNums: [] as number[], lineTexts: [] as string[], count: 0 };
+    }
+
+    // Phase 2: Search files in parallel across all CPU cores
+    const perFileResults = parallelMap(allFiles, (fp) => {
+      // Read + search a single file on a worker thread
+      let content = '';
+      try { content = readFileSync(fp); } catch (e) { return ''; }
+      if (content.length > 262144) return ''; // skip >256KB files
+
+      // Search line by line, encode matches as "lineNum\tlineText\n"
+      let encoded = '';
+      let matchCount = 0;
+      let lineStart = 0;
+      let lineNum = 1;
+      for (let ci = 0; ci <= content.length; ci++) {
+        if (ci === content.length || content.charCodeAt(ci) === 10) {
+          const line = content.slice(lineStart, ci);
+          // Inline findInLine: check if query appears in line
+          const hLen = line.length;
+          const nLen = query.length;
+          if (nLen > 0 && nLen <= hLen) {
+            const limit = hLen - nLen;
+            let found = 0;
+            for (let si = 0; si <= limit; si++) {
+              let match = 1;
+              for (let sj = 0; sj < nLen; sj++) {
+                let hc = line.charCodeAt(si + sj);
+                let nc = query.charCodeAt(sj);
+                if (caseSens < 1) {
+                  if (hc >= 65 && hc <= 90) hc = hc + 32;
+                  if (nc >= 65 && nc <= 90) nc = nc + 32;
+                }
+                if (hc !== nc) { match = 0; break; }
+              }
+              if (match > 0) { found = 1; break; }
+            }
+            if (found > 0) {
+              encoded = encoded + String(lineNum) + '\t' + line + '\n';
+              matchCount = matchCount + 1;
+              if (matchCount >= 50) break; // cap per file
+            }
+          }
+          lineStart = ci + 1;
+          lineNum = lineNum + 1;
+        }
+      }
+      return encoded;
+    });
+
+    // Phase 3: Flatten per-file results into parallel arrays
+    const rPaths: string[] = [];
+    const rNums: number[] = [];
+    const rTexts: string[] = [];
+    let rCount = 0;
+
+    for (let fi = 0; fi < perFileResults.length; fi++) {
+      if (rCount >= 500) break;
+      const encoded = perFileResults[fi];
+      if (encoded.length < 1) continue;
+      const fp = allFiles[fi];
+
+      // Parse "lineNum\tlineText\n" entries
+      let ls = 0;
+      for (let ei = 0; ei <= encoded.length; ei++) {
+        if (ei === encoded.length || encoded.charCodeAt(ei) === 10) {
+          if (ei > ls) {
+            const entry = encoded.slice(ls, ei);
+            // Find tab separator
+            let tabPos = -1;
+            for (let ti = 0; ti < entry.length; ti++) {
+              if (entry.charCodeAt(ti) === 9) { tabPos = ti; break; }
+            }
+            if (tabPos > 0) {
+              const numStr = entry.slice(0, tabPos);
+              const lineText = entry.slice(tabPos + 1);
+              rPaths[rCount] = fp;
+              rNums[rCount] = parseInt(numStr);
+              rTexts[rCount] = lineText;
+              rCount = rCount + 1;
+              if (rCount >= 500) break;
+            }
+          }
+          ls = ei + 1;
+        }
+      }
+    }
+
+    return { filePaths: rPaths, lineNums: rNums, lineTexts: rTexts, count: rCount };
+  }).then((result) => { applySearchResult(result, gen); });
+}
+
+/** Recursively collect searchable file paths (inlined in spawn — no module state access). */
+// SHIP-V1-GAPS.md #82: simple glob matcher. Supports:
+//   *.ext          → suffix match
+//   **/name        → substring match anywhere in path
+//   path/         → prefix match
+//   bare-name      → substring match
+// Pattern list is comma-separated; whitespace is trimmed.
+function matchesAnyPattern(filePath: string, patterns: string): number {
+  if (patterns.length === 0) return 0; // signals "no patterns set"
+  let start = 0;
+  for (let i = 0; i <= patterns.length; i++) {
+    if (i === patterns.length || patterns.charCodeAt(i) === 44) { // ','
+      let p = patterns.slice(start, i);
+      // Trim leading/trailing whitespace.
+      let pStart = 0; let pEnd = p.length;
+      while (pStart < pEnd && p.charCodeAt(pStart) === 32) pStart++;
+      while (pEnd > pStart && p.charCodeAt(pEnd - 1) === 32) pEnd--;
+      p = p.slice(pStart, pEnd);
+      start = i + 1;
+      if (p.length === 0) continue;
+      // Suffix match: starts with `*.`
+      if (p.length >= 2 && p.charCodeAt(0) === 42 && p.charCodeAt(1) === 46) {
+        const suf = p.slice(1);
+        if (filePath.length >= suf.length) {
+          let eq = 1;
+          const off = filePath.length - suf.length;
+          for (let k = 0; k < suf.length; k++) {
+            if (filePath.charCodeAt(off + k) !== suf.charCodeAt(k)) { eq = 0; break; }
+          }
+          if (eq > 0) return 1;
+        }
+        continue;
+      }
+      // Prefix match: ends with `/`
+      if (p.charCodeAt(p.length - 1) === 47) {
+        if (filePath.indexOf(p) >= 0) return 1;
+        continue;
+      }
+      // Substring match for everything else (including `**/foo`).
+      if (filePath.indexOf(p) >= 0) return 1;
+    }
+  }
+  return 0;
+}
+
+/** Returns 1 if the path passes the current include/exclude filters. */
+function passesGlobFilter(filePath: string): number {
+  if (searchExclude.length > 0 && matchesAnyPattern(filePath, searchExclude) > 0) return 0;
+  if (searchInclude.length > 0 && matchesAnyPattern(filePath, searchInclude) < 1) return 0;
+  return 1;
+}
+
+function collectSearchFiles(out: string[], dirPath: string, depth: number): void {
+  if (depth > 9) return;
+  if (out.length >= 10000) return; // safety cap
+  let names: string[] = [];
+  try { names = readdirSync(dirPath); } catch (e) { return; }
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    if (name.charCodeAt(0) === 46) continue; // skip hidden
+    const fullPath = join(dirPath, name);
+    if (isDirectory(fullPath)) {
+      // Inline shouldSkipDir
+      if (name !== 'node_modules' && name !== 'target' && name !== 'dist' &&
+          name !== 'build' && name !== '__pycache__' && name !== 'vendor' &&
+          name !== 'android-build' && name !== 'test-runs' && name !== 'coverage' &&
+          name !== '.git') {
+        // Skip .app bundles
+        const nLen = name.length;
+        let isApp = 0;
+        if (nLen > 4) {
+          if (name.charCodeAt(nLen - 4) === 46 &&
+              name.charCodeAt(nLen - 3) === 97 &&
+              name.charCodeAt(nLen - 2) === 112 &&
+              name.charCodeAt(nLen - 1) === 112) {
+            isApp = 1;
+          }
+        }
+        if (isApp < 1) {
+          collectSearchFiles(out, fullPath, depth + 1);
+        }
+      }
+    } else if (isTextFile(name)) {
+      // SHIP-V1-GAPS.md #82: honor include/exclude globs.
+      if (passesGlobFilter(fullPath) > 0) {
+        out.push(fullPath);
+      }
+    }
+  }
+}
+
+interface SearchResult {
+  filePaths: string[];
+  lineNums: number[];
+  lineTexts: string[];
+  count: number;
+}
+
+function applySearchResult(r: SearchResult, gen: number): void {
+  if (gen !== searchGeneration) return; // stale result
+  srFilePaths = r.filePaths;
+  srLineNums = r.lineNums;
+  srLineTexts = r.lineTexts;
+  srCount = r.count;
   updateSearchResultsUI();
   telemetryTrackSearch();
 }
@@ -348,22 +564,22 @@ function updateSearchResultsUI(): void {
   if (searchPanelReady < 1) return;
   widgetClearChildren(searchResultsContainer);
   if (searchQuery.length < 1) {
-    textSetString(searchResultCountLabel, 'Type to search');
+    textSetString(searchResultCountLabel, t('Type to search'));
     return;
   }
   if (srCount < 1) {
-    textSetString(searchResultCountLabel, 'No results');
+    textSetString(searchResultCountLabel, t('No results'));
     return;
   }
   let countText = '';
   if (srCount >= 500) {
-    countText = '500+ results';
+    countText = t('500+ results');
   } else if (srCount >= 100) {
-    countText = '100+ results';
+    countText = t('100+ results');
   } else if (srCount >= 10) {
-    countText = '10+ results';
+    countText = t('10+ results');
   } else {
-    countText = 'results found';
+    countText = t('results found');
   }
   textSetString(searchResultCountLabel, countText);
 
@@ -564,7 +780,7 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   textSetFontSize(topPad, 8);
   widgetAddChild(container, topPad);
 
-  const title = Text('SEARCH');
+  const title = Text(t('SEARCH'));
   textSetFontSize(title, 11);
   textSetFontWeight(title, 11, 0.7);
   if (colors) setFg(title, getSideBarForeground());
@@ -588,7 +804,7 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   if (colors) setBtnFg(replToggleBtn, getSideBarForeground());
 
   // Search input
-  searchTextField = TextField('Search', (text: string) => { onSearchInput(text); });
+  searchTextField = TextField(t('Search'), (text: string) => { onSearchInput(text); });
   textfieldSetOnSubmit(searchTextField, (text: string) => { onSearchSubmit(text); });
   textfieldSetBorderless(searchTextField, 1);
   textfieldSetFontSize(searchTextField, 14);
@@ -623,7 +839,7 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   textSetFontSize(replChevronSpacer, 14);
   setFg(replChevronSpacer, '#F5F5F500');
 
-  replaceTextField = TextField('Replace', (text: string) => { onReplaceInput(text); });
+  replaceTextField = TextField(t('Replace'), (text: string) => { onReplaceInput(text); });
   textfieldSetBorderless(replaceTextField, 1);
   textfieldSetFontSize(replaceTextField, 14);
   if (_iBg.length > 0) {
@@ -635,11 +851,11 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   }
 
   // Replace buttons — same count and similar width as Aa/.*
-  const replOneBtn = Button('Replace', () => { onReplaceOne(); });
+  const replOneBtn = Button(t('Replace'), () => { onReplaceOne(); });
   buttonSetBordered(replOneBtn, 0);
   textSetFontSize(replOneBtn, 11);
   if (colors) setBtnFg(replOneBtn, '#999999');
-  const replAllBtn = Button('All', () => { onReplaceAll(); });
+  const replAllBtn = Button(t('All'), () => { onReplaceAll(); });
   buttonSetBordered(replAllBtn, 0);
   textSetFontSize(replAllBtn, 11);
   if (colors) setBtnFg(replAllBtn, '#999999');
@@ -651,6 +867,34 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
     widgetSetHidden(replContainer, 1);
   }
 
+  // SHIP-V1-GAPS.md #82: include / exclude glob rows. Patterns are
+  // comma-separated; `*.ts`, `**/foo`, `dist/` syntaxes covered.
+  const includeField = TextField(t('files to include'), (text: string) => {
+    searchInclude = text;
+    performSearch();
+  });
+  textfieldSetBorderless(includeField, 1);
+  textfieldSetFontSize(includeField, 13);
+  if (_iBg.length > 0) {
+    const [_iir, _iig, _iib, _iia] = hexToRGBA(_iBg);
+    textfieldSetBackgroundColor(includeField, _iir, _iig, _iib, _iia);
+  }
+  if (searchInclude.length > 0) textfieldSetString(includeField, searchInclude);
+
+  const excludeField = TextField(t('files to exclude'), (text: string) => {
+    searchExclude = text;
+    performSearch();
+  });
+  textfieldSetBorderless(excludeField, 1);
+  textfieldSetFontSize(excludeField, 13);
+  if (_iBg.length > 0) {
+    const [_ier, _ieg, _ieb, _iea] = hexToRGBA(_iBg);
+    textfieldSetBackgroundColor(excludeField, _ier, _ieg, _ieb, _iea);
+  }
+  if (searchExclude.length > 0) textfieldSetString(excludeField, searchExclude);
+  widgetAddChild(container, includeField);
+  widgetAddChild(container, excludeField);
+
   const gap2 = Text('');
   textSetFontSize(gap2, 6);
   widgetAddChild(container, gap2);
@@ -660,8 +904,8 @@ export function renderSearchPanel(container: unknown, colors: ResolvedUIColors):
   textSetFontSize(resPad, 8);
   widgetAddChild(container, resPad);
 
-  // Result count label
-  searchResultCountLabel = Text('Type to search');
+  // Result count label — SHIP-V1-GAPS.md #90 empty-state guidance.
+  searchResultCountLabel = Text(t('Type to search across files'));
   textSetFontSize(searchResultCountLabel, 11);
   if (colors) setFg(searchResultCountLabel, getSideBarForeground());
   widgetAddChild(container, searchResultCountLabel);
