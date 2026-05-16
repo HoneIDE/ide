@@ -20,13 +20,17 @@ import {
 } from 'perry/ui';
 import { t } from 'perry/i18n';
 import { execSync, spawnSync } from 'child_process';
-import { readFileSync, writeFileSync } from 'fs';
-import { setFg, setBtnFg, setBg } from '../../ui-helpers';
+import { readFileSync, writeFileSync, readdirSync, isDirectory } from 'fs';
+import { join } from 'path';
+import { setFg, setBtnFg, setBg, monoFont } from '../../ui-helpers';
 import { telemetryTrackAiChat, telemetryTrackAiAgent } from '../../telemetry';
 import { getAppDataDir, canRunShellCommands } from '../../paths';
 import { getWorkbenchSettings } from '../../settings';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getSideBarForeground, getSideBarBackground, getSecondaryTextColor, getActivityBarForeground, isCurrentThemeDark, getInputBackground, getPanelBackground, getEditorBackground } from '../../theme/theme-colors';
+
+// Platform constant — 0=macOS, 1=iOS, 3=Windows, 4=Linux, 5=web.
+declare const __platform__: number;
 
 // Session persistence
 import {
@@ -65,7 +69,7 @@ import {
 
 // Claude Code integration
 import {
-  findClaudeBinary, checkClaudeAuth, startClaudeSession,
+  findClaudeBinary, checkClaudeAuth, startClaudeSession, stopClaudeSession,
 } from './claude-process';
 import { parseNDJSONCost, parseNDJSONTurns } from './claude-events';
 
@@ -171,6 +175,15 @@ let claudeLogFilePath = '';
 let claudeLogOffset: number = 0;
 let claudeProcessDone: number = 0;
 let claudeNoDataCount: number = 0;
+// Claude Code subprocess inactivity watchdog. The poll loop only finalizes
+// when the process EXITS (liveness check). A hung claude (alive but silent
+// forever) otherwise spins the poll timer indefinitely, pins the chat on
+// "thinking", AND leaks the subprocess — and the user can't even switch
+// sessions (blocked while claudeModeActive) or cancel (no cancel wired to
+// stopClaudeSession). 180s is very generous: the local claude CLI can pause
+// long during tool execution, so this only trips on a genuine hang.
+let _claudeLastDataMs: number = 0;
+const CLAUDE_IDLE_TIMEOUT_MS = 180000;
 let claudeSessionUUID = '';
 let claudeResumeSessionId = '';
 let claudeSpawnedPid: number = 0;
@@ -180,6 +193,12 @@ let streamHandle: number = 0;
 let streamActive: number = 0;
 let streamPollTimer: number = 0;
 let streamAccumulated = '';
+// Stream inactivity watchdog (see pollStreamTick). 90s with zero bytes
+// while the stream is still "connecting/streaming" means the connection is
+// effectively dead — AI providers send incremental events well within this,
+// even during long tool/thinking pauses, so 90s only trips on a real stall.
+let _streamLastDataMs: number = 0;
+const STREAM_IDLE_TIMEOUT_MS = 90000;
 let streamingMsgBlock: unknown = null;
 
 
@@ -194,6 +213,15 @@ let toolDisplayContainer: unknown = null;
 
 // Context chips container
 let chipsContainer: unknown = null;
+// SHIP-V1-GAPS.md #61: @-mention popup state.
+let mentionsContainer: unknown = null;
+let mentionsVisible: number = 0;
+let mentionsLastQuery: string = '';
+// Cached workspace file list — built lazily on first @-typing so chat startup
+// stays cheap on large repos.
+let _chatFileIndex: string[] = [];
+let _chatFileIndexBuilt: number = 0;
+let _chatFileIndexRoot: string = '';
 
 // Scroll view
 let chatScrollView: unknown = null;
@@ -357,6 +385,7 @@ export function startClaudeForRelay(prompt: string): void {
   claudeLogFilePath = logPath;
 
   const storedUUID = loadClaudeSessionUUID(getActiveSessionId());
+  _claudeLastDataMs = Date.now();
   claudeSpawnedPid = startClaudeSession(prompt, wsRoot, storedUUID, logPath, '', '', 0);
   claudePollTimer = setInterval(() => { claudePollTick(); }, 50);
 }
@@ -441,7 +470,7 @@ export function handleClaudeRelayEvent(operation: string, data: string): void {
       }
       claudeCostLabel = Text(costLabel);
       textSetFontSize(claudeCostLabel, 10);
-      textSetFontFamily(claudeCostLabel, 10, 'Menlo');
+      textSetFontFamily(claudeCostLabel, 10, monoFont());
       setFg(claudeCostLabel, getSideBarForeground());
       widgetAddChild(chatMessagesContainer, claudeCostLabel);
       lastAddedWidget = claudeCostLabel;
@@ -679,6 +708,10 @@ function loadProviderApiKey(providerIdx: number): string {
   } catch (e) {}
 
   // Fallback: try environment variables for common providers
+  // SHIP-V1-GAPS.md followup §5: was `execSync('echo $VAR')` which is POSIX-
+  // only. `process.env` works identically on every platform Perry targets,
+  // and skips an entire shell roundtrip. canRunShellCommands gate kept so
+  // we don't try this on iOS / web where env access may be restricted.
   if (canRunShellCommands()) {
     try {
       let envVar = '';
@@ -686,11 +719,9 @@ function loadProviderApiKey(providerIdx: number): string {
       if (providerIdx === 1) envVar = 'OPENAI_API_KEY';
       if (providerIdx === 2) envVar = 'GOOGLE_AI_API_KEY';
       if (envVar.length > 0) {
-        let cmd = 'echo $';
-        cmd += envVar;
-        const envResult = execSync(cmd) as unknown as string;
-        const key = trimNewline(envResult);
-        if (key.length > 5) return key;
+        const env = (process as any).env;
+        const value = env && env[envVar] ? env[envVar] : '';
+        if (value && value.length > 5) return value;
       }
     } catch (e) {}
   }
@@ -782,6 +813,13 @@ function startStream(requestBody: string): void {
 
   streamAccumulated = '';
   streamActive = 1;
+  // Stream inactivity watchdog: without this, a network stall (server
+  // silent-but-connected, proxy buffering, a hung native reader) leaves
+  // streamStatus at 0/1 forever — finishStream() never fires, the thinking
+  // indicator spins permanently, and only an app restart recovers. Track
+  // the last time data (or a connect) was observed; pollStreamTick aborts
+  // with a surfaced error if the gap exceeds STREAM_IDLE_TIMEOUT_MS.
+  _streamLastDataMs = Date.now();
 
   streamHandle = streamStart(url, 'POST', requestBody, headersJson);
 
@@ -800,20 +838,48 @@ function pollStreamTick(): void {
   if (streamActive < 1) return;
 
   // Drain all pending lines
+  let gotData = 0;
   for (let drain = 0; drain < 50; drain++) {
     const line = streamPoll(streamHandle);
     if (line.length < 1) break;
+    gotData = 1;
     currentSSELine = '' + line;
     processCurrentLine();
   }
+  if (gotData > 0) _streamLastDataMs = Date.now();
 
   // Re-check status after drain (avoid race with Rust tokio task)
   const statusAfter = streamStatus(streamHandle);
 
+  // Inactivity watchdog — only when the stream hasn't already reported
+  // done/error (status>=2 falls through to the normal finalize below).
+  if (statusAfter < 2) {
+    if (Date.now() - _streamLastDataMs > STREAM_IDLE_TIMEOUT_MS) {
+      if (streamAccumulated.length > 0) {
+        streamAccumulated += '\n\n';
+        streamAccumulated += t('[Connection timed out — response may be incomplete.]');
+      } else {
+        streamAccumulated = t('Request timed out — no response from the AI provider. Check your network and try again.');
+      }
+      finishStream();
+      return;
+    }
+  }
+
   // Check if done or error
   if (statusAfter >= 2) {
-    // Final drain pass — get any remaining lines
-    for (let drain2 = 0; drain2 < 50; drain2++) {
+    // Final drain pass — MUST fully drain. The per-tick loop above caps at
+    // 50 for UI responsiveness, but at stream-close the entire remaining
+    // buffer has to be consumed before finishStream(): a long code-heavy
+    // response flushes many `data:` delta lines at once, and a 50-cap here
+    // silently dropped lines 51+ → the tail of the assistant message was
+    // truncated in both the display and the saved transcript. Safe to loop
+    // unbounded: status>=2 means the stream is finished, so the buffer is
+    // finite and streamPoll returns empty once drained (the break exits).
+    // A defensive upper bound (1e6) guarantees no pathological infinite loop
+    // if the native layer ever misbehaves, while being far above any real
+    // SSE line count.
+    for (let drain2 = 0; drain2 < 1000000; drain2++) {
       const line2 = streamPoll(streamHandle);
       if (line2.length < 1) break;
       currentSSELine = '' + line2;
@@ -1260,8 +1326,16 @@ function requestTitleGeneration(): void {
 function pollTitleStream(): void {
   if (titleStreamHandle < 1) return;
   const status = streamStatus(titleStreamHandle);
-  if (status === 2) {
-    // Done
+  // `>= 2` catches DONE (2) AND ERROR (3). The old `=== 2` missed the error
+  // case entirely: a failed title-generation request (transient provider
+  // 429/500 or a network blip on the title call) left this 100ms timer +
+  // the stream handle dangling FOREVER — a resource leak that accumulated
+  // across every session whose first message hit a transient title-call
+  // error. Same status-handling pattern the main pollStreamTick already
+  // uses. On error titleAccumulated is empty/partial; the existing
+  // `length > 2` guard below already declines to set a junk title.
+  if (status >= 2) {
+    // Done or errored — clean up either way.
     if (titleStreamTimer > 0) { clearInterval(titleStreamTimer); titleStreamTimer = 0; }
     streamClose(titleStreamHandle);
     titleStreamHandle = 0;
@@ -1364,7 +1438,7 @@ function onAgentToolStart(name: string, id: string): void {
   toolLabel += name;
   const toolText = Text(toolLabel);
   textSetFontSize(toolText, 11);
-  textSetFontFamily(toolText, 11, 'Menlo');
+  textSetFontFamily(toolText, 11, monoFont());
   setFg(toolText, getSideBarForeground());
 
   toolDisplayContainer = VStackWithInsets(2, 4, 8, 4, 8);
@@ -1385,7 +1459,7 @@ function onAgentToolResult(name: string, result: string): void {
   }
   const resultText = Text(displayResult);
   textSetFontSize(resultText, 10);
-  textSetFontFamily(resultText, 10, 'Menlo');
+  textSetFontFamily(resultText, 10, monoFont());
   textSetWraps(resultText, 300);
   setFg(resultText, getSideBarForeground());
   widgetAddChild(toolDisplayContainer, resultText);
@@ -1421,7 +1495,7 @@ function onAgentApprovalNeeded(name: string, args: string): void {
   if (argsPreview.length > 200) argsPreview = args.slice(0, 200) + '...';
   const argsText = Text(argsPreview);
   textSetFontSize(argsText, 10);
-  textSetFontFamily(argsText, 10, 'Menlo');
+  textSetFontFamily(argsText, 10, monoFont());
   setFg(argsText, getSideBarForeground());
   widgetAddChild(approvalContainer, argsText);
 
@@ -1510,7 +1584,7 @@ function onClaudeToolActivity(name: string, status: string, inputDetail: string)
     }
     const toolText = Text(toolLabel);
     textSetFontSize(toolText, 11);
-    textSetFontFamily(toolText, 11, 'Menlo');
+    textSetFontFamily(toolText, 11, monoFont());
     textSetWraps(toolText, 300);
     setFg(toolText, getSideBarForeground());
 
@@ -1525,7 +1599,7 @@ function onClaudeToolActivity(name: string, status: string, inputDetail: string)
     if (claudeToolContainer) {
       const doneText = Text('\u2713 ' + t('done'));
       textSetFontSize(doneText, 10);
-      textSetFontFamily(doneText, 10, 'Menlo');
+      textSetFontFamily(doneText, 10, monoFont());
       setFg(doneText, getSideBarForeground());
       widgetAddChild(claudeToolContainer, doneText);
       claudeToolContainer = null;
@@ -1541,7 +1615,7 @@ function onClaudeToolResult(output: string, isError: number, filePath: string): 
   if (filePath.length > 0) {
     let fpLabel = Text(filePath);
     textSetFontSize(fpLabel, 10);
-    textSetFontFamily(fpLabel, 10, 'Menlo');
+    textSetFontFamily(fpLabel, 10, monoFont());
     setFg(fpLabel, getSecondaryTextColor());
     widgetAddChild(claudeToolContainer, fpLabel);
   }
@@ -1559,7 +1633,7 @@ function onClaudeToolResult(output: string, isError: number, filePath: string): 
       if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(errContainer, 0.3, 0.12, 0.12, 1.0); } else { widgetSetBackgroundColor(errContainer, 1.0, 0.9, 0.9, 1.0); };
       let errLabel = Text(displayOutput);
       textSetFontSize(errLabel, 10);
-      textSetFontFamily(errLabel, 10, 'Menlo');
+      textSetFontFamily(errLabel, 10, monoFont());
       textSetWraps(errLabel, 300);
       setFg(errLabel, getSideBarForeground());
       widgetAddChild(errContainer, errLabel);
@@ -1567,7 +1641,7 @@ function onClaudeToolResult(output: string, isError: number, filePath: string): 
     } else {
       let resultLabel = Text(displayOutput);
       textSetFontSize(resultLabel, 10);
-      textSetFontFamily(resultLabel, 10, 'Menlo');
+      textSetFontFamily(resultLabel, 10, monoFont());
       textSetWraps(resultLabel, 300);
       setFg(resultLabel, getSecondaryTextColor());
       widgetAddChild(claudeToolContainer, resultLabel);
@@ -1840,9 +1914,15 @@ function getDelSessionFn(idx: number): () => void {
   return onDelSession15;
 }
 
-// SHIP-V1-GAPS.md #110: rename a chat session via the history dropdown.
-// AppleScript prompt — same pattern as render.ts promptForRename().
+// SHIP-V1-GAPS.md #110 + followup §5: rename a chat session.
+// macOS: AppleScript. Windows: PowerShell + VB InputBox. Else: no prompt.
 function promptForSessionTitle(currentTitle: string): string {
+  if (__platform__ === 3) return promptSessionTitleWindows(currentTitle);
+  if (__platform__ === 0) return promptSessionTitleMacos(currentTitle);
+  return '';
+}
+
+function promptSessionTitleMacos(currentTitle: string): string {
   let script = 'try\n';
   script += '  set result to text returned of (display dialog "Rename chat:" default answer "';
   // Escape backslashes and double-quotes for AppleScript string literal.
@@ -1859,6 +1939,29 @@ function promptForSessionTitle(currentTitle: string): string {
   script += 'end try\n';
   try {
     const r = spawnSync('osascript', ['-e', script]);
+    if (r.status !== 0) return '';
+    let out = r.stdout;
+    let end = out.length;
+    while (end > 0 && (out.charCodeAt(end - 1) === 10 || out.charCodeAt(end - 1) === 13)) end--;
+    return out.slice(0, end);
+  } catch (_e: any) {
+    return '';
+  }
+}
+
+function promptSessionTitleWindows(currentTitle: string): string {
+  // Escape single quotes for PowerShell single-quoted strings (double them).
+  let escaped = '';
+  for (let i = 0; i < currentTitle.length; i++) {
+    const c = currentTitle.charCodeAt(i);
+    if (c === 39) escaped += "''";
+    else escaped += currentTitle.charAt(i);
+  }
+  let ps = '[void][System.Reflection.Assembly]::LoadWithPartialName(\'Microsoft.VisualBasic\');';
+  ps += '$r = [Microsoft.VisualBasic.Interaction]::InputBox(\'Rename chat:\',\'Hone\',\'' + escaped + '\');';
+  ps += '[Console]::Out.Write($r)';
+  try {
+    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
     if (r.status !== 0) return '';
     let out = r.stdout;
     let end = out.length;
@@ -2090,7 +2193,7 @@ function refreshSessionList(): void {
     if (smode === 3) badge = 'CC';
     const badgeLabel = Text(badge);
     textSetFontSize(badgeLabel, 9);
-    textSetFontFamily(badgeLabel, 9, 'Menlo');
+    textSetFontFamily(badgeLabel, 9, monoFont());
     setFg(badgeLabel, getSideBarForeground());
 
     // Click handler for the row
@@ -2190,6 +2293,146 @@ function onHistorySearch(text: string): void {
 
 function onChatInput(text: string): void {
   chatInputText = text;
+  // SHIP-V1-GAPS.md #61: scan for an `@`-mention being typed. We look at the
+  // last word — i.e. the substring after the last whitespace — and if it
+  // starts with `@` we treat the remainder as the search query. Hide the
+  // popup as soon as the user moves past the mention (types space, deletes
+  // the @, etc.).
+  let lastSpace = -1;
+  for (let i = text.length - 1; i >= 0; i--) {
+    const c = text.charCodeAt(i);
+    if (c === 32 || c === 10 || c === 9) { lastSpace = i; break; }
+  }
+  const word = lastSpace >= 0 ? text.slice(lastSpace + 1) : text;
+  if (word.length === 0 || word.charCodeAt(0) !== 64) {
+    hideMentionsPopup();
+    return;
+  }
+  const query = word.slice(1);
+  showMentionsPopup(query);
+}
+
+function hideMentionsPopup(): void {
+  if (mentionsContainer === null) return;
+  if (mentionsVisible < 1) return;
+  widgetSetHidden(mentionsContainer, 1);
+  mentionsVisible = 0;
+  mentionsLastQuery = '';
+}
+
+function showMentionsPopup(query: string): void {
+  if (mentionsContainer === null) return;
+  if (query === mentionsLastQuery && mentionsVisible > 0) return;
+  mentionsLastQuery = query;
+  buildChatFileIndex();
+  const matches = matchFileIndex(query, 8);
+  widgetClearChildren(mentionsContainer);
+  if (matches.length === 0) {
+    const empty = Text(query.length > 0 ? t('No file matches @' + query) : t('Type to search files…'));
+    textSetFontSize(empty, 11);
+    setFg(empty, getSecondaryTextColor());
+    widgetAddChild(mentionsContainer, empty);
+  } else {
+    for (let i = 0; i < matches.length; i++) {
+      const rel = matches[i];
+      const row = Button(rel, () => { insertMention(rel); });
+      buttonSetBordered(row, 0);
+      textSetFontSize(row, 11);
+      setBtnFg(row, getSideBarForeground());
+      widgetAddChild(mentionsContainer, row);
+    }
+  }
+  widgetSetHidden(mentionsContainer, 0);
+  mentionsVisible = 1;
+}
+
+function insertMention(rel: string): void {
+  // Replace the trailing `@<query>` token in chatInputText with `@<rel> `.
+  let lastSpace = -1;
+  for (let i = chatInputText.length - 1; i >= 0; i--) {
+    const c = chatInputText.charCodeAt(i);
+    if (c === 32 || c === 10 || c === 9) { lastSpace = i; break; }
+  }
+  const head = lastSpace >= 0 ? chatInputText.slice(0, lastSpace + 1) : '';
+  const next = head + '@' + rel + ' ';
+  chatInputText = next;
+  if (chatInput) {
+    textfieldSetString(chatInput, next);
+    textfieldFocus(chatInput);
+  }
+  hideMentionsPopup();
+}
+
+// Build a workspace file index on first @-typing. Capped at 5000 entries +
+// depth-8 to keep the walk bounded. Honors the existing skip-list for
+// dotfiles, `node_modules`, `dist`, `target`, `.git`.
+function buildChatFileIndex(): void {
+  if (_chatFileIndexBuilt > 0 && _chatFileIndexRoot === wsRoot) return;
+  if (wsRoot.length < 1) return;
+  _chatFileIndex = [];
+  walkChatDir(wsRoot, '', 0);
+  _chatFileIndexBuilt = 1;
+  _chatFileIndexRoot = wsRoot;
+}
+
+function walkChatDir(absPath: string, relPrefix: string, depth: number): void {
+  if (depth > 8) return;
+  if (_chatFileIndex.length > 5000) return;
+  let names: string[] = [];
+  try { names = readdirSync(absPath); } catch (_e: any) { return; }
+  for (let i = 0; i < names.length; i++) {
+    const n = names[i];
+    if (n.charCodeAt(0) === 46) continue; // dotfiles (incl .git)
+    if (n.length === 12 && n === 'node_modules') continue;
+    if (n.length === 4 && n === 'dist') continue;
+    if (n.length === 6 && n === 'target') continue;
+    const full = join(absPath, n);
+    const rel = relPrefix.length > 0 ? relPrefix + '/' + n : n;
+    let isDir = 0;
+    try { if (isDirectory(full)) isDir = 1; } catch (_e: any) {}
+    if (isDir > 0) {
+      walkChatDir(full, rel, depth + 1);
+    } else {
+      _chatFileIndex.push(rel);
+      if (_chatFileIndex.length > 5000) return;
+    }
+  }
+}
+
+function matchFileIndex(query: string, limit: number): string[] {
+  const out: string[] = [];
+  if (query.length === 0) {
+    // Show first `limit` files (useful when user just typed `@`).
+    for (let i = 0; i < _chatFileIndex.length && out.length < limit; i++) {
+      out.push(_chatFileIndex[i]);
+    }
+    return out;
+  }
+  // Case-insensitive substring match. Prefer matches whose basename starts
+  // with the query — those score higher and surface first.
+  const q = query.toLowerCase();
+  const starts: string[] = [];
+  const contains: string[] = [];
+  for (let i = 0; i < _chatFileIndex.length; i++) {
+    const path = _chatFileIndex[i];
+    const lower = path.toLowerCase();
+    // Pull basename.
+    let lastSlash = -1;
+    for (let j = lower.length - 1; j >= 0; j--) {
+      if (lower.charCodeAt(j) === 47) { lastSlash = j; break; }
+    }
+    const baseLower = lastSlash >= 0 ? lower.slice(lastSlash + 1) : lower;
+    if (baseLower.length >= q.length && baseLower.slice(0, q.length) === q) {
+      starts.push(path);
+      if (starts.length + contains.length >= limit * 4) break;
+    } else if (lower.indexOf(q) >= 0) {
+      contains.push(path);
+      if (starts.length + contains.length >= limit * 4) break;
+    }
+  }
+  for (let i = 0; i < starts.length && out.length < limit; i++) out.push(starts[i]);
+  for (let i = 0; i < contains.length && out.length < limit; i++) out.push(contains[i]);
+  return out;
 }
 
 /** Called when user presses Enter/Return in the text field. */
@@ -2422,7 +2665,7 @@ function handleClaudeLine(line: string): void {
       if (infoStr.length > 0) {
         claudeInfoRow = Text(infoStr);
         textSetFontSize(claudeInfoRow, 10);
-        textSetFontFamily(claudeInfoRow, 10, 'Menlo');
+        textSetFontFamily(claudeInfoRow, 10, monoFont());
         setFg(claudeInfoRow, getSecondaryTextColor());
         widgetAddChild(chatMessagesContainer, claudeInfoRow);
       }
@@ -2454,7 +2697,7 @@ function handleClaudeLine(line: string): void {
         if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(rlBlock, 0.35, 0.25, 0.05, 1.0); } else { widgetSetBackgroundColor(rlBlock, 1.0, 0.95, 0.85, 1.0); };
         claudeRateLimitLabel = Text(t('Rate limited. Waiting...'));
         textSetFontSize(claudeRateLimitLabel, 12);
-        textSetFontFamily(claudeRateLimitLabel, 12, 'Menlo');
+        textSetFontFamily(claudeRateLimitLabel, 12, monoFont());
         setFg(claudeRateLimitLabel, getSideBarForeground());
         widgetAddChild(rlBlock, claudeRateLimitLabel);
         widgetAddChild(chatMessagesContainer, rlBlock);
@@ -2612,7 +2855,7 @@ function handleClaudeLine(line: string): void {
       if (statsStr.length > 0) {
         claudeCostLabel = Text(statsStr);
         textSetFontSize(claudeCostLabel, 10);
-        textSetFontFamily(claudeCostLabel, 10, 'Menlo');
+        textSetFontFamily(claudeCostLabel, 10, monoFont());
         setFg(claudeCostLabel, getSecondaryTextColor());
         widgetAddChild(chatMessagesContainer, claudeCostLabel);
         lastAddedWidget = claudeCostLabel;
@@ -2898,7 +3141,7 @@ function showThinkingBlock(text: string): void {
   // Content — hidden by default
   let contentLabel = Text(text);
   textSetFontSize(contentLabel, 10);
-  textSetFontFamily(contentLabel, 10, 'Menlo');
+  textSetFontFamily(contentLabel, 10, monoFont());
   textSetWraps(contentLabel, 300);
   setFg(contentLabel, getSecondaryTextColor());
   widgetSetHidden(contentLabel, 1);
@@ -2939,7 +3182,7 @@ function onClaudeToolActivityWithDiff(toolName: string, filePath: string, block:
   }
   let toolText = Text(toolLabel);
   textSetFontSize(toolText, 11);
-  textSetFontFamily(toolText, 11, 'Menlo');
+  textSetFontFamily(toolText, 11, monoFont());
   textSetWraps(toolText, 300);
   setFg(toolText, getSideBarForeground());
 
@@ -2958,7 +3201,7 @@ function onClaudeToolActivityWithDiff(toolName: string, filePath: string, block:
     if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(oldBlock, 0.25, 0.10, 0.10, 1.0); } else { widgetSetBackgroundColor(oldBlock, 1.0, 0.92, 0.92, 1.0); };
     let oldLabel = Text('- ' + oldTrunc);
     textSetFontSize(oldLabel, 10);
-    textSetFontFamily(oldLabel, 10, 'Menlo');
+    textSetFontFamily(oldLabel, 10, monoFont());
     textSetWraps(oldLabel, 280);
     setFg(oldLabel, getSideBarForeground());
     widgetAddChild(oldBlock, oldLabel);
@@ -2971,7 +3214,7 @@ function onClaudeToolActivityWithDiff(toolName: string, filePath: string, block:
     if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(newBlock, 0.10, 0.25, 0.10, 1.0); } else { widgetSetBackgroundColor(newBlock, 0.92, 1.0, 0.92, 1.0); };
     let newLabel = Text('+ ' + newTrunc);
     textSetFontSize(newLabel, 10);
-    textSetFontFamily(newLabel, 10, 'Menlo');
+    textSetFontFamily(newLabel, 10, monoFont());
     textSetWraps(newLabel, 280);
     setFg(newLabel, getSideBarForeground());
     widgetAddChild(newBlock, newLabel);
@@ -3004,14 +3247,59 @@ function claudePollTick(): void {
   if (content.length <= claudeLogOffset) {
     // No new data — count consecutive empty polls
     claudeNoDataCount += 1;
+    // Inactivity watchdog: a claude subprocess that's alive but silent
+    // forever (hung) would otherwise spin this poll loop indefinitely and
+    // leak the process. Kill it, finalize, and surface a timeout so the
+    // user is unblocked (session-switch is gated on claudeModeActive, so a
+    // wedged claude also locks them out of every other session).
+    if (Date.now() - _claudeLastDataMs > CLAUDE_IDLE_TIMEOUT_MS) {
+      stopClaudeSession();
+      claudeProcessDone = 1;
+      if (claudePollTimer > 0) {
+        clearInterval(claudePollTimer);
+        claudePollTimer = 0;
+      }
+      if (claudeModeActive > 0) {
+        claudeModeActive = 0;
+        isRelayHostMode = 0;
+        stopThinking();
+        if (streamAccumulated.length > 0) {
+          streamAccumulated += '\n\n';
+          streamAccumulated += t('[Claude Code timed out — response may be incomplete.]');
+        } else {
+          streamAccumulated = t('Claude Code timed out (no output). The process was stopped — try again.');
+        }
+        appendMessage(0, streamAccumulated);
+        streamAccumulated = '';
+        streamDisplayLabel = null;
+        streamContainer = null;
+        updateMessages();
+      }
+      return;
+    }
     // After 60 empty polls (~3 seconds), check if process exited via kill -0
     if (claudeNoDataCount > 60) {
       claudeNoDataCount = 0;
+      // SHIP-V1-GAPS.md followup §5: process-alive check. POSIX `kill -0
+       // <pid>` exits 0 if alive, non-zero if dead. Windows equivalent:
+       // `tasklist /FI "PID eq <pid>" /NH` prints "INFO: No tasks..." when
+       // no match (and stdout starts with `INFO:`). We treat status != 0
+       // OR an INFO-prefixed line as "process gone".
       let processGone: number = 0;
       try {
-        let checkCmd = 'kill -0 ';
-        checkCmd += String(claudeSpawnedPid);
-        execSync(checkCmd);
+        const pidStr = String(claudeSpawnedPid);
+        if (__platform__ === 3) {
+          const r = spawnSync('tasklist', ['/FI', 'PID eq ' + pidStr, '/NH']);
+          if (r.status !== 0) {
+            processGone = 1;
+          } else if (r.stdout.length >= 5 && r.stdout.charCodeAt(0) === 73 && r.stdout.charCodeAt(1) === 78) {
+            // 'IN'FO: prefix → no match
+            processGone = 1;
+          }
+        } else {
+          const r = spawnSync('kill', ['-0', pidStr]);
+          if (r.status !== 0) processGone = 1;
+        }
       } catch (e) {
         processGone = 1;
       }
@@ -3039,8 +3327,9 @@ function claudePollTick(): void {
     return;
   }
 
-  // Got new data — reset no-data counter
+  // Got new data — reset no-data counter + watchdog timestamp
   claudeNoDataCount = 0;
+  _claudeLastDataMs = Date.now();
 
   // Extract new data since last read
   const newData = content.slice(claudeLogOffset);
@@ -3532,7 +3821,7 @@ function updateMessages(): void {
           setChatBgCode(toolBlock);
           const toolLabel = Text('\u2699 ' + t('Tool result'));
           textSetFontSize(toolLabel, 10);
-          textSetFontFamily(toolLabel, 10, 'Menlo');
+          textSetFontFamily(toolLabel, 10, monoFont());
           setFg(toolLabel, getSideBarForeground());
           widgetAddChild(toolBlock, toolLabel);
 
@@ -3549,7 +3838,7 @@ function updateMessages(): void {
           if (resultPreview.length > 200) resultPreview = resultPreview.slice(0, 200) + '...';
           const resultText = Text(resultPreview);
           textSetFontSize(resultText, 10);
-          textSetFontFamily(resultText, 10, 'Menlo');
+          textSetFontFamily(resultText, 10, monoFont());
           setFg(resultText, getSideBarForeground());
           widgetAddChild(toolBlock, resultText);
           widgetAddChild(chatMessagesContainer, toolBlock);
@@ -3838,6 +4127,15 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
 
   const bottomRow = HStack(6, [modelBtn, attachFileBtn, attachSelBtn, Spacer()]);
   widgetAddChild(container, bottomRow);
+
+  // --- @-mention popup (SHIP-V1-GAPS.md #61) ---
+  // Sits between the bottom bar and the input so suggestions appear visually
+  // close to the cursor. Hidden until the user types `@` somewhere in the
+  // input; populated on each keystroke that changes the query.
+  mentionsContainer = VStack(2, []);
+  widgetSetHidden(mentionsContainer, 1);
+  mentionsVisible = 0;
+  widgetAddChild(container, mentionsContainer);
 
   // --- Input ---
   chatInput = TextField('', (text: string) => { onChatInput(text); });

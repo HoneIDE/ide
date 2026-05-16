@@ -52,7 +52,23 @@ let _archStr: string = '';
 
 function getPlatformKey(): string {
   // __platform__: 0=macOS, 1=iOS, 3=Windows, 4=Linux
-  if (__platform__ === 3) return 'windows-x86_64';
+  // SHIP-V1-GAPS.md followup §5: Windows arch detection. Previous code
+  // hardcoded `windows-x86_64`, breaking auto-update for ARM64 Windows
+  // (Surface Pro X etc). Use `PROCESSOR_ARCHITECTURE` env var which
+  // Windows sets to 'AMD64' (x64) or 'ARM64'.
+  if (__platform__ === 3) {
+    try {
+      const arch = (process as any).env && (process as any).env.PROCESSOR_ARCHITECTURE;
+      if (arch && arch.length >= 5) {
+        const ac = arch.charCodeAt(0);
+        if (ac === 65) { // 'A' — could be AMD64 or ARM64
+          if (arch.length >= 5 && arch.charCodeAt(1) === 82) return 'windows-aarch64'; // ARM64
+          return 'windows-x86_64'; // AMD64
+        }
+      }
+    } catch (_e: any) {}
+    return 'windows-x86_64';
+  }
 
   // Get architecture via uname -m (macOS / Linux)
   if (_archStr.length === 0) {
@@ -448,7 +464,46 @@ function getBinaryPath(): string {
       return path;
     }
     if (__platform__ === 3) {
-      // Windows: use wmic or hardcoded
+      // Windows: Perry doesn't expose process.execPath, so probe known
+      // install locations in the order modern Windows installers use them.
+      // Per-user installs (LOCALAPPDATA\Programs\Hone) come first because
+      // they don't need UAC and are the default for Squirrel/Velopack/MSIX.
+      // Both `Hone.exe` (appBundle.name) and `hone-ide.exe` (--output flag)
+      // are checked since dev/release builds use different names.
+      const env = (process as any).env;
+      let localAppData = '';
+      let programFiles = '';
+      let programFilesX86 = '';
+      if (env) {
+        if (env.LOCALAPPDATA) localAppData = env.LOCALAPPDATA;
+        if (env.ProgramFiles) programFiles = env.ProgramFiles;
+        // `ProgramFiles(x86)` env var contains parentheses — bracket lookup
+        const pfx86 = env['ProgramFiles(x86)'];
+        if (pfx86) programFilesX86 = pfx86;
+      }
+      // Probe in priority order
+      if (localAppData.length > 0) {
+        let p = localAppData;
+        p += '\\Programs\\Hone\\Hone.exe';
+        if (existsSync(p)) return p;
+        let p2 = localAppData;
+        p2 += '\\Programs\\Hone\\hone-ide.exe';
+        if (existsSync(p2)) return p2;
+      }
+      if (programFiles.length > 0) {
+        let p = programFiles;
+        p += '\\Hone\\Hone.exe';
+        if (existsSync(p)) return p;
+        let p2 = programFiles;
+        p2 += '\\Hone\\hone-ide.exe';
+        if (existsSync(p2)) return p2;
+      }
+      if (programFilesX86.length > 0) {
+        let p = programFilesX86;
+        p += '\\Hone\\Hone.exe';
+        if (existsSync(p)) return p;
+      }
+      // Final fallback — legacy hardcoded location
       return 'C:\\Program Files\\Hone\\hone-ide.exe';
     }
   } catch (e) {}

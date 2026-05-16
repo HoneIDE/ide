@@ -78,10 +78,19 @@ perry compile src/app.ts --output hone-ide
 
 ### Windows
 
-```bash
+PowerShell:
+
+```powershell
 perry compile src/app.ts --target windows --output hone-ide
-mv hone-ide hone-ide.exe
-./hone-ide.exe
+# Perry auto-appends .exe on Windows targets, producing hone-ide.exe
+.\hone-ide.exe
+```
+
+cmd.exe:
+
+```cmd
+perry compile src/app.ts --target windows --output hone-ide
+hone-ide.exe
 ```
 
 ### iOS Simulator

@@ -21,6 +21,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { spawnBackground } from 'child_process';
 import { setFg, setBtnFg } from '../../ui-helpers';
+import { getTempDir } from '../../paths';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getSideBarForeground, getSecondaryTextColor } from '../../theme/theme-colors';
 
@@ -269,11 +270,14 @@ function runTaskAtIndex(idx: number): void {
 
   _onTaskRunStart(label);
 
+  // SHIP-V1-GAPS.md followup §5: cross-platform log path. Prefer the app's
+  // data dir; fall back to the platform-aware temp dir from paths.ts (which
+  // resolves to %TEMP% on Windows, /tmp on Unix).
   let logPath = '';
   if (_appDataDir.length > 0) {
     logPath = _appDataDir + '/tasks-' + sanitizeLabel(label) + '.log';
   } else {
-    logPath = '/tmp/hone-task-' + sanitizeLabel(label) + '.log';
+    logPath = getTempDir() + '/hone-task-' + sanitizeLabel(label) + '.log';
   }
 
   try {

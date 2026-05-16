@@ -12,7 +12,7 @@ import {
 } from 'perry/ui';
 import { spawnSync } from 'child_process';
 import { spawn } from 'perry/thread';
-import { setFg, setBtnFg } from '../../ui-helpers';
+import { setFg, setBtnFg, monoFont } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getSideBarForeground, getSecondaryTextColor } from '../../theme/theme-colors';
 
@@ -253,7 +253,7 @@ function updateLogUI(): void {
     // Hash label (monospace, muted)
     const hashLabel = Text(hash);
     textSetFontSize(hashLabel, 10);
-    textSetFontFamily(hashLabel, 10, 'Menlo');
+    textSetFontFamily(hashLabel, 10, monoFont());
     setFg(hashLabel, getSecondaryTextColor());
 
     // Message (primary text)

@@ -2,8 +2,8 @@
  * Perry-native tool implementations for the AI agent.
  * All tools validate paths against workspace root.
  */
-import { readFileSync, writeFileSync, readdirSync, isDirectory } from 'fs';
-import { execSync } from 'child_process';
+import { readFileSync, writeFileSync, readdirSync, isDirectory, existsSync } from 'fs';
+import { spawnSync } from 'child_process';
 import { jsonEscape } from './sse-parser';
 import { getTempDir, canRunShellCommands } from '../../paths';
 
@@ -40,18 +40,6 @@ function isPathSafe(filePath: string, workspaceRoot: string): number {
   return 1;
 }
 
-function shellEscapePath(p: string): string {
-  let out = "'";
-  for (let i = 0; i < p.length; i++) {
-    if (p.charCodeAt(i) === 39) {
-      out += "'\\''";
-    } else {
-      out += p.slice(i, i + 1);
-    }
-  }
-  out += "'";
-  return out;
-}
 
 function hexValTool(ch: number): number {
   if (ch >= 48 && ch <= 57) return ch - 48;
@@ -89,6 +77,17 @@ function executeToolFileRead(filePath: string): string {
   }
   try {
     const content = readFileSync(filePath);
+    // Binary guard: the editor refuses binary files (NUL-byte heuristic);
+    // the agent's file_read had no such guard, so the model reading a PNG /
+    // exe / pdf got raw byte-garbage dumped into its context — token waste,
+    // context pollution, and bytes that can break the tool-result encoding.
+    // Return a concise notice instead (same contract as Claude Code's Read).
+    let binScan = content.length < 8000 ? content.length : 8000;
+    for (let bi = 0; bi < binScan; bi++) {
+      if (content.charCodeAt(bi) === 0) {
+        return 'Error: binary file (' + String(content.length) + ' bytes) — not shown. Use a different tool if you need its metadata.';
+      }
+    }
     if (content.length > 10000) {
       return content.slice(0, 10000) + '\n... (truncated)';
     }
@@ -103,10 +102,19 @@ function executeToolFileEdit(filePath: string, oldText: string, newText: string)
   if (toolWorkspaceRoot.length > 0 && isPathSafe(filePath, toolWorkspaceRoot) < 1) {
     return 'Error: Path is outside the workspace';
   }
+  if (oldText.length < 1) {
+    return 'Error: old_text must not be empty (use file_create for new files)';
+  }
   try {
     const content = readFileSync(filePath);
-    // Find oldText using charCodeAt
+    // Find oldText, and count occurrences. An autonomous agent editing the
+    // FIRST match when old_text is not unique silently patches the wrong
+    // location (e.g. an earlier identical line) — the model believes the
+    // edit landed correctly but the user's code is now subtly corrupt.
+    // Match Claude Code's Edit contract: require old_text to be unique;
+    // on ambiguity, error and ask for more surrounding context.
     let foundPos = -1;
+    let matchCount = 0;
     for (let i = 0; i <= content.length - oldText.length; i++) {
       let match = 1;
       for (let j = 0; j < oldText.length; j++) {
@@ -116,12 +124,16 @@ function executeToolFileEdit(filePath: string, oldText: string, newText: string)
         }
       }
       if (match > 0) {
-        foundPos = i;
-        break;
+        if (foundPos < 0) foundPos = i;
+        matchCount = matchCount + 1;
+        if (matchCount > 1) break; // two is enough to reject
       }
     }
     if (foundPos < 0) {
       return 'Error: Could not find text to replace';
+    }
+    if (matchCount > 1) {
+      return 'Error: old_text is not unique (appears more than once). Include more surrounding lines so the match is unambiguous.';
     }
     let result = content.slice(0, foundPos);
     result += newText;
@@ -138,6 +150,16 @@ function executeToolFileCreate(filePath: string, content: string): string {
   if (toolWorkspaceRoot.length > 0 && isPathSafe(filePath, toolWorkspaceRoot) < 1) {
     return 'Error: Path is outside the workspace';
   }
+  // Refuse to clobber an existing file. The contract is *create*; a blind
+  // writeFileSync silently destroyed the existing content and falsely
+  // reported "created successfully" — a data-loss vector when the agent
+  // calls file_create on a path it wrongly believes is new. Direct it to
+  // file_edit for existing files (matches Claude Code's Write guard).
+  try {
+    if (existsSync(filePath)) {
+      return 'Error: file already exists — use file_edit to modify it (file_create only creates new files)';
+    }
+  } catch (_e: any) {}
   try {
     writeFileSync(filePath, content);
     return 'File created successfully';
@@ -229,16 +251,16 @@ function executeToolSearch(query: string, searchRoot: string): string {
   return searchResults;
 }
 
-/** Git status --short. */
+/** Git status --short. SHIP-V1-GAPS.md #1 + followup §5: argv-form spawn
+ *  so the workspace path can't shell-inject and so the `cd ... && git ...`
+ *  shell composition (which would break under cmd's escaping rules) is gone. */
 function executeToolGitStatus(): string {
   if (toolWorkspaceRoot.length < 1) return 'Error: No workspace root';
   try {
-    let cmd = 'cd ';
-    cmd += shellEscapePath(toolWorkspaceRoot);
-    cmd += ' && git status --short 2>&1';
-    const output = execSync(cmd) as unknown as string;
-    if (output.length > 4000) return output.slice(0, 4000);
-    return output;
+    const r = spawnSync('git', ['-C', toolWorkspaceRoot, 'status', '--short']);
+    if (r.status !== 0) return 'Error: git status failed';
+    if (r.stdout.length > 4000) return r.stdout.slice(0, 4000);
+    return r.stdout;
   } catch (e: any) {
     return 'Error: git status failed';
   }
@@ -251,40 +273,46 @@ function executeToolGitDiff(staged: number, filePath: string): string {
     return 'Error: Path is outside the workspace';
   }
   try {
-    let cmd = 'cd ';
-    cmd += shellEscapePath(toolWorkspaceRoot);
-    cmd += ' && git diff';
-    if (staged > 0) cmd += ' --cached';
+    const args: string[] = ['-C', toolWorkspaceRoot, 'diff'];
+    if (staged > 0) args.push('--cached');
     if (filePath.length > 0) {
-      cmd += ' -- ';
-      cmd += shellEscapePath(filePath);
+      args.push('--');
+      args.push(filePath);
     }
-    cmd += ' 2>&1';
-    const output = execSync(cmd) as unknown as string;
-    if (output.length > 8000) return output.slice(0, 8000) + '\n... (truncated)';
-    return output;
+    const r = spawnSync('git', args);
+    if (r.status !== 0) return 'Error: git diff failed';
+    if (r.stdout.length > 8000) return r.stdout.slice(0, 8000) + '\n... (truncated)';
+    return r.stdout;
   } catch (e: any) {
     return 'Error: git diff failed';
   }
 }
 
-/** List files in a directory. */
+/** List files in a directory. SHIP-V1-GAPS.md followup §5: was `ls -la`
+ *  which doesn't exist on Windows. Use `readdirSync` directly so the agent
+ *  tool works on every platform without a shell at all. */
 function executeToolListDir(dirPath: string): string {
   let dir = dirPath;
   if (dir.length < 1) dir = toolWorkspaceRoot;
   if (toolWorkspaceRoot.length > 0 && isPathSafe(dir, toolWorkspaceRoot) < 1) {
     return 'Error: Path is outside the workspace';
   }
-  try {
-    let cmd = 'ls -la ';
-    cmd += shellEscapePath(dir);
-    cmd += ' 2>&1';
-    const output = execSync(cmd) as unknown as string;
-    if (output.length > 4000) return output.slice(0, 4000);
-    return output;
-  } catch (e: any) {
-    return 'Error: Could not list directory';
+  let names: string[] = [];
+  try { names = readdirSync(dir); } catch (e: any) { return 'Error: Could not list directory'; }
+  let out = '';
+  // Annotate each entry: `d  name/` for dirs, `f  name` for files.
+  for (let i = 0; i < names.length; i++) {
+    const n = names[i];
+    let full = dir;
+    if (full.length > 0 && full.charCodeAt(full.length - 1) !== 47 && full.charCodeAt(full.length - 1) !== 92) full += '/';
+    full += n;
+    let isDir = 0;
+    try { if (isDirectory(full)) isDir = 1; } catch (_e: any) {}
+    if (isDir > 0) out += 'd  ' + n + '/\n';
+    else out += 'f  ' + n + '\n';
   }
+  if (out.length > 4000) return out.slice(0, 4000);
+  return out;
 }
 
 /** Check if a tool is destructive (needs approval). */

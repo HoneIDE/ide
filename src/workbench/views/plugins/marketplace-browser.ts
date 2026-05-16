@@ -18,7 +18,7 @@ import {
 } from 'perry/ui';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 
 // Marketplace plugin listing (inline type — Perry can't import from marketplace package)
 interface MarketplaceListing {
@@ -201,19 +201,17 @@ function getBuiltinListings(): MarketplaceListing[] {
  * Uses execSync + curl (Perry has no fetch/XMLHttpRequest).
  */
 function marketplaceFetch(urlPath: string): string {
+  // SHIP-V1-GAPS.md followup §5: argv-form. The URL may contain `&` or `?`
+  // which would break under shell parsing; argv-form passes it intact.
+  // `curl` ships with Windows 10+ so it's cross-platform now.
   let fullUrl = apiBase;
   fullUrl += urlPath;
-  let cmd = 'curl -s --connect-timeout 3 --max-time 5 "';
-  cmd += fullUrl;
-  cmd += '"';
   try {
-    const result = execSync(cmd, { encoding: 'utf-8' });
-    if (result !== undefined && result !== null) {
-      return String(result);
+    const r = spawnSync('curl', ['-s', '--connect-timeout', '3', '--max-time', '5', fullUrl]);
+    if (r.status === 0 && r.stdout !== undefined && r.stdout !== null) {
+      return String(r.stdout);
     }
-  } catch (e: any) {
-    // curl failed — marketplace unreachable
-  }
+  } catch (e: any) {}
   return '';
 }
 

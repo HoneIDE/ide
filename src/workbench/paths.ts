@@ -81,8 +81,15 @@ export function getHomeDir(): string {
     return _homeDir;
   }
 
-  // macOS (0), Linux (4) — use $HOME via shell
+  // macOS (0), Linux (4) — read $HOME from process.env first (avoids a
+  // subprocess fork on every call); fall back to /bin/echo only if env lookup
+  // fails. Subprocess version stays as last resort for the (rare) case where
+  // Perry runtime didn't expose process.env on this host.
   if (__platform__ === 0 || __platform__ === 4) {
+    try {
+      const envHome = (process as any).env && (process as any).env.HOME;
+      if (envHome && envHome.length > 0) { _homeDir = envHome; return _homeDir; }
+    } catch (_e: any) {}
     try {
       const result = execSync('/bin/echo $HOME') as unknown as string;
       const dir = trimNewline(result);
@@ -90,8 +97,13 @@ export function getHomeDir(): string {
     } catch (e: any) {}
   }
 
-  // Windows (3) — use %USERPROFILE%
+  // Windows (3) — read %USERPROFILE% from process.env first; fall back to
+  // shelling out via cmd.exe if env lookup fails.
   if (__platform__ === 3) {
+    try {
+      const envUP = (process as any).env && (process as any).env.USERPROFILE;
+      if (envUP && envUP.length > 0) { _homeDir = envUP; return _homeDir; }
+    } catch (_e: any) {}
     try {
       const result = execSync('echo %USERPROFILE%') as unknown as string;
       const dir = trimNewline(result);
@@ -137,6 +149,25 @@ export function getTempDir(): string {
     dir += '/tmp';
     ensureDirExists(dir);
     _tempDir = dir;
+    return _tempDir;
+  }
+
+  if (__platform__ === 3) {
+    // Windows: $env:TEMP (typically %USERPROFILE%\AppData\Local\Temp) is the
+    // canonical user-writable temp dir. Fall back to a dir under the user's
+    // home when the env var isn't set.
+    let temp = '';
+    try {
+      const envTemp = (process as any).env && ((process as any).env.TEMP || (process as any).env.TMP);
+      if (envTemp && envTemp.length > 0) temp = envTemp;
+    } catch (_e: any) {}
+    if (temp.length < 1) {
+      let dir = getHomeDir();
+      dir += '/AppData/Local/Temp';
+      temp = dir;
+    }
+    ensureDirExists(temp);
+    _tempDir = temp;
     return _tempDir;
   }
 
@@ -206,12 +237,21 @@ export function getCwd(): string {
     if (dir.length > 0) return dir;
   } catch (e: any) {}
 
-  // Fallback: try execSync('pwd')
-  try {
-    const result = execSync('pwd') as unknown as string;
-    const dir = trimNewline(result);
-    if (dir.length > 0) return dir;
-  } catch (e: any) {}
+  // Fallback: shell out — `pwd` on POSIX, `cd` on Windows (cmd.exe builtin
+  // that prints the working directory when called with no args).
+  if (__platform__ === 3) {
+    try {
+      const result = execSync('cd') as unknown as string;
+      const dir = trimNewline(result);
+      if (dir.length > 0) return dir;
+    } catch (e: any) {}
+  } else {
+    try {
+      const result = execSync('pwd') as unknown as string;
+      const dir = trimNewline(result);
+      if (dir.length > 0) return dir;
+    } catch (e: any) {}
+  }
 
   return '';
 }

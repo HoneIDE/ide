@@ -9,18 +9,18 @@ import {
   VStackWithInsets, HStackWithInsets,
   ScrollView, scrollViewSetChild,
   textSetFontSize, textSetFontWeight, textSetFontFamily,
-  buttonSetBordered, buttonSetImage, buttonSetImagePosition,
+  buttonSetBordered, buttonSetImagePosition,
   widgetAddChild, widgetClearChildren, widgetSetWidth, widgetSetHeight,
   widgetSetContextMenu,
 } from 'perry/ui';
 import { t } from 'perry/i18n';
 import { readdirSync, isDirectory } from 'fs';
 import { join } from 'path';
-import { setBg, setFg, setBtnFg, setBtnTint, pathId, getFileName, getFileIcon, getFileIconColor, truncateName } from '../../ui-helpers';
+import { setBg, setFg, setBtnFg, setBtnTint, pathId, getFileName, getFileIcon, getFileIconColor, truncateName, setIconButton } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getSideBarBackground, getSideBarForeground, getListActiveSelectionBackground, getListActiveSelectionForeground, getStatusAddedColor, getStatusModifiedColor, getStatusDeletedColor, getStatusConflictColor, getStatusRenamedColor, getStatusIgnoredColor } from '../../theme/theme-colors';
-import { getGitFileStatus, getGitDirStatus } from '../git/git-panel';
-import { buildFileContextMenu, buildDirContextMenu, buildEmptySpaceContextMenu } from './context-menu';
+import { getGitFileStatus, getGitDirStatus, isPathGitIgnored } from '../git/git-panel';
+import { buildFileContextMenu, buildDirContextMenu, buildEmptySpaceContextMenu, onNewFolder } from './context-menu';
 
 // ---------------------------------------------------------------------------
 // Module-level state (must be declared BEFORE any function — Perry no-hoist)
@@ -73,6 +73,17 @@ export function setSidebarShowHiddenFiles(show: number): void {
 }
 export function getSidebarShowHiddenFiles(): number {
   return _showHiddenFiles;
+}
+
+// SHIP-V1-GAPS.md #50: when 1 (default), entries reported as ignored by
+// `git status --porcelain=v2 --ignored` are hidden from the explorer. Falls
+// back to "show everything" when not inside a git repo.
+let _respectGitignore: number = 1;
+export function setSidebarRespectGitignore(on: number): void {
+  _respectGitignore = on > 0 ? 1 : 0;
+}
+export function getSidebarRespectGitignore(): number {
+  return _respectGitignore;
 }
 
 export function setSidebarFileClickCallback(cb: (path: string, name: string) => void): void {
@@ -287,7 +298,7 @@ function refreshSidebar(): void {
     setFg(rRootLabel, getSideBarForeground());
     const rCollapseBtn = Button('', () => { collapseAllDirs(); });
     buttonSetBordered(rCollapseBtn, 0);
-    buttonSetImage(rCollapseBtn, 'arrow.down.right.and.arrow.up.left');
+    setIconButton(rCollapseBtn, 'arrow.down.right.and.arrow.up.left');
     buttonSetImagePosition(rCollapseBtn, 1);
     textSetFontSize(rCollapseBtn, 10);
     setBtnTint(rCollapseBtn, getSideBarForeground());
@@ -337,7 +348,7 @@ function refreshSidebar(): void {
   setFg(foldersLabel, getSideBarForeground());
   const dotsBtn = Button('', () => {});
   buttonSetBordered(dotsBtn, 0);
-  buttonSetImage(dotsBtn, 'ellipsis');
+  setIconButton(dotsBtn, 'ellipsis');
   buttonSetImagePosition(dotsBtn, 1);
   textSetFontSize(dotsBtn, 10);
   setBtnTint(dotsBtn, getSideBarForeground());
@@ -371,15 +382,17 @@ function refreshSidebar(): void {
   // New file button
   const newFileBtn = Button('', () => { newFileAction(); });
   buttonSetBordered(newFileBtn, 0);
-  buttonSetImage(newFileBtn, 'doc.badge.plus');
+  setIconButton(newFileBtn, 'doc.badge.plus');
   buttonSetImagePosition(newFileBtn, 1);
   textSetFontSize(newFileBtn, 10);
   setBtnTint(newFileBtn, getSideBarForeground());
 
-  // New folder button
-  const newFolderBtn = Button('', () => {});
+  // New folder button — creates a folder under the workspace root. Was a
+  // dead no-op stub; the New File button right beside it was wired but this
+  // one never got its handler.
+  const newFolderBtn = Button('', () => { onNewFolder(sidebarWorkspaceRoot); });
   buttonSetBordered(newFolderBtn, 0);
-  buttonSetImage(newFolderBtn, 'folder.badge.plus');
+  setIconButton(newFolderBtn, 'folder.badge.plus');
   buttonSetImagePosition(newFolderBtn, 1);
   textSetFontSize(newFolderBtn, 10);
   setBtnTint(newFolderBtn, getSideBarForeground());
@@ -387,7 +400,7 @@ function refreshSidebar(): void {
   // Collapse all button
   const collapseBtn = Button('', () => { collapseAllDirs(); });
   buttonSetBordered(collapseBtn, 0);
-  buttonSetImage(collapseBtn, 'arrow.down.right.and.arrow.up.left');
+  setIconButton(collapseBtn, 'arrow.down.right.and.arrow.up.left');
   buttonSetImagePosition(collapseBtn, 1);
   textSetFontSize(collapseBtn, 10);
   setBtnTint(collapseBtn, getSideBarForeground());
@@ -512,9 +525,44 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     // Local: read filesystem
     let names: string[] = [];
     try { names = readdirSync(dirPath); } catch (e) { return; }
+    // SHIP-V1-GAPS.md #50: precompute the workspace-relative prefix so we can
+    // ask the git panel whether each child is gitignored. Only used when the
+    // explorer is inside the workspace root + the setting is on.
+    const wsRoot = sidebarWorkspaceRoot;
+    const wsLen = wsRoot.length;
+    let relPrefix = '';
+    if (_respectGitignore > 0 && wsLen > 0 && dirPath.length >= wsLen) {
+      // dirPath should begin with wsRoot for paths inside the workspace.
+      let match = 1;
+      for (let c = 0; c < wsLen; c++) {
+        if (dirPath.charCodeAt(c) !== wsRoot.charCodeAt(c)) { match = 0; break; }
+      }
+      if (match > 0) {
+        if (dirPath.length === wsLen) relPrefix = '';
+        else if (dirPath.charCodeAt(wsLen) === 47 || dirPath.charCodeAt(wsLen) === 92) {
+          // strip leading slash/backslash so relPrefix mirrors git's posix form
+          relPrefix = dirPath.slice(wsLen + 1);
+        }
+      }
+    }
     for (let i = 0; i < names.length; i++) {
       const n = names[i];
       if (_showHiddenFiles < 1 && n.charCodeAt(0) === 46) continue; // skip dotfiles unless toggled on
+      // SHIP-V1-GAPS.md #50: skip git-ignored entries when the setting is on.
+      // git reports paths in posix form, so normalize the candidate.
+      if (_respectGitignore > 0) {
+        let rel = relPrefix.length > 0 ? relPrefix + '/' + n : n;
+        // Replace `\` with `/` in case any code path produced a backslash form.
+        if (rel.indexOf('\\') >= 0) {
+          let cleaned = '';
+          for (let c = 0; c < rel.length; c++) {
+            const cc = rel.charCodeAt(c);
+            cleaned += cc === 92 ? '/' : rel.charAt(c);
+          }
+          rel = cleaned;
+        }
+        if (isPathGitIgnored(rel) > 0) continue;
+      }
       const full = join(dirPath, n);
       if (isDirectory(full)) {
         dirNames.push(n);
@@ -540,13 +588,15 @@ function renderTreeLevel(dirPath: string, depth: number): void {
     const row = HStackWithInsets(4, 0, indentPx, 0, 4);
     widgetSetHeight(row, 22);
 
-    // Chevron (16px wide)
+    // Chevron (16px wide). SHIP-V1-GAPS.md followup §5: `setIconButton`
+    // uses SF Symbol on Mac, Unicode glyph on Windows/Linux so the chevron
+    // isn't a blank clickable area outside of macOS.
     const chevron = Button('', () => { onDirToggle(id); });
     buttonSetBordered(chevron, 0);
     if (expanded) {
-      buttonSetImage(chevron, 'chevron.down');
+      setIconButton(chevron, 'chevron.down');
     } else {
-      buttonSetImage(chevron, 'chevron.right');
+      setIconButton(chevron, 'chevron.right');
     }
     textSetFontSize(chevron, 9);
     widgetSetWidth(chevron, 14);

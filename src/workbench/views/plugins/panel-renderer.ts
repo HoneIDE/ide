@@ -11,7 +11,7 @@ import {
   buttonSetBordered,
   widgetAddChild, widgetSetWidth, widgetSetHeight, widgetSetBackgroundColor,
 } from 'perry/ui';
-import { setFg, setBg, setBtnFg } from '../../ui-helpers';
+import { setFg, setBg, setBtnFg, monoFont } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 
 // PanelElement types (mirroring @honeide/sdk types inline for Perry compilation)
@@ -185,7 +185,7 @@ function renderProgress(el: ProgressElement, colors: ResolvedUIColors): unknown 
   barText += '%';
   const bar = Text(barText);
   textSetFontSize(bar, 11);
-  textSetFontFamily(bar, 'Menlo');
+  textSetFontFamily(bar, monoFont());
   setFg(bar, colors.sideBarForeground);
   widgetAddChild(stack, bar);
   return stack;
@@ -196,7 +196,7 @@ function renderCodeBlock(el: CodeBlockElement, colors: ResolvedUIColors): unknow
   widgetSetBackgroundColor(block, 0.15, 0.15, 0.15, 1.0);
   const code = Text(el.code);
   textSetFontSize(code, 12);
-  textSetFontFamily(code, 'Menlo');
+  textSetFontFamily(code, monoFont());
   setFg(code, '#CE9178');
   widgetAddChild(block, code);
   return block;

@@ -9,7 +9,7 @@ import {
   TextField,
   textSetFontSize, textSetFontWeight, textSetFontFamily,
   textSetString,
-  buttonSetBordered,
+  buttonSetBordered, buttonSetTitle,
   widgetAddChild, widgetClearChildren, widgetSetHidden,
   textfieldSetString,
 } from 'perry/ui';
@@ -18,7 +18,7 @@ import { spawnSync } from 'child_process';
 import { spawn } from 'perry/thread';
 import { join } from 'path';
 import { readFileSync } from 'fs';
-import { setFg, setBtnFg, getFileName } from '../../ui-helpers';
+import { setFg, setBtnFg, getFileName, monoFont } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getSideBarForeground, getStatusAddedColor, getStatusModifiedColor, getStatusDeletedColor, getSecondaryTextColor } from '../../theme/theme-colors';
 import { telemetryTrackGitCommit } from '../../telemetry';
@@ -51,6 +51,13 @@ let gitResultsContainer: unknown = null;
 let gitBranchLabel: unknown = null;
 let gitCommitTextField: unknown = null;
 let gitCommitMessage = '';
+// SHIP-V1-GAPS.md #46: optional commit body + amend / sign-off toggles.
+let gitCommitBodyField: unknown = null;
+let gitCommitBodyText: string = '';
+let gitAmendActive: number = 0;
+let gitSignOffActive: number = 0;
+let gitAmendBtn: unknown = null;
+let gitSignOffBtn: unknown = null;
 let gitTagsContainer: unknown = null;
 let gitTagsExpanded: number = 0;
 let gitBranchesContainer: unknown = null;
@@ -65,11 +72,16 @@ let gitLfsTracked: number = 0;
 // SHIP-V1-GAPS.md #103: commit graph (history) container state.
 let gitHistoryContainer: unknown = null;
 let gitHistoryExpanded: number = 0;
+// SHIP-V1-GAPS.md #48: stash list state.
+let gitStashesContainer: unknown = null;
+let gitStashesExpanded: number = 0;
 // SHIP-V1-GAPS.md #93: spinner for long git ops (push/pull/fetch).
 let gitSpinnerId: number = -1;
 let gitSpinnerWidget: unknown = null;
 // SHIP-V1-GAPS.md #100: pending tag-create input.
 let gitNewTagName: string = '';
+// SHIP-V1-GAPS.md #47: pending branch-create input.
+let gitNewBranchName: string = '';
 
 // Generation counter for async refresh — discard stale results
 let gitRefreshGeneration: number = 0;
@@ -154,6 +166,32 @@ export function getGitFileStatus(relPath: string): number {
     }
   }
   return 0; // clean
+}
+
+// SHIP-V1-GAPS.md #50: gitignore predicate used by the sidebar to skip
+// ignored entries during enumeration. `git status --porcelain=v2 --ignored`
+// reports the highest-level ignored entry — usually a directory with a
+// trailing `/`. So for a candidate path we check:
+//   • exact match against any gitIgnoredPaths entry
+//   • prefix match where the entry ends in `/` (i.e. candidate sits inside)
+// Entries without a trailing `/` only match exactly (a single ignored file).
+export function isPathGitIgnored(relPath: string): number {
+  if (gitIgnoredCount < 1) return 0;
+  for (let i = 0; i < gitIgnoredCount; i++) {
+    const e = gitIgnoredPaths[i];
+    if (e.length === 0) continue;
+    if (e === relPath) return 1;
+    // Directory entry — git appends `/`. Match candidates that live inside.
+    const lastChar = e.charCodeAt(e.length - 1);
+    if (lastChar === 47 && relPath.length > e.length) {
+      let prefix = 1;
+      for (let c = 0; c < e.length; c++) {
+        if (relPath.charCodeAt(c) !== e.charCodeAt(c)) { prefix = 0; break; }
+      }
+      if (prefix > 0) return 1;
+    }
+  }
+  return 0;
 }
 
 /** Get aggregated git status for a directory (relative path). Returns: 0=clean, 1=modified, 2=untracked, 3=staged, 4=deleted. */
@@ -261,7 +299,9 @@ export function refreshGitState(): void {
     gitBranch += branchOut.charAt(i);
   }
 
-  const statusOut = gitRun(['-C', gitWorkspaceRoot, 'status', '--porcelain=v2']);
+  // `--ignored` so SHIP-V1-GAPS.md #50 (gitignore-aware explorer) can read
+  // `gitIgnoredPaths` and skip ignored entries during sidebar enumeration.
+  const statusOut = gitRun(['-C', gitWorkspaceRoot, 'status', '--porcelain=v2', '--ignored']);
 
   gitStagedPaths = [];
   gitStagedStatuses = [];
@@ -411,6 +451,7 @@ interface GitRefreshResult {
   modifiedPaths: string[];
   modifiedStatuses: string[];
   untrackedPaths: string[];
+  ignoredPaths: string[];
 }
 
 /** Async refresh — runs git commands off the main thread. UI stays responsive. */
@@ -440,7 +481,7 @@ export function refreshGitStateAsync(): void {
       if (r.status === 0) check = r.stdout;
     } catch (e) { check = ''; }
     if (check.length < 1) {
-      return { isRepo: 0, branch: '', stagedPaths: sPaths, stagedStatuses: sStatuses, modifiedPaths: mPaths, modifiedStatuses: mStatuses, untrackedPaths: uPaths };
+      return { isRepo: 0, branch: '', stagedPaths: sPaths, stagedStatuses: sStatuses, modifiedPaths: mPaths, modifiedStatuses: mStatuses, untrackedPaths: uPaths, ignoredPaths: [] };
     }
     isRepo = 1;
 
@@ -457,7 +498,7 @@ export function refreshGitStateAsync(): void {
 
     let statusOut = '';
     try {
-      const r = spawnSync('git', ['-C', wsRoot, 'status', '--porcelain=v2']);
+      const r = spawnSync('git', ['-C', wsRoot, 'status', '--porcelain=v2', '--ignored']);
       if (r.status === 0) statusOut = r.stdout;
     } catch (e) { statusOut = ''; }
 
@@ -465,6 +506,8 @@ export function refreshGitStateAsync(): void {
     let sCount = 0;
     let mCount = 0;
     let uCount = 0;
+    let iCount = 0;
+    const iPaths: string[] = [];
     let lineStart = 0;
     for (let i = 0; i <= statusOut.length; i++) {
       if (i === statusOut.length || statusOut.charCodeAt(i) === 10) {
@@ -572,6 +615,14 @@ export function refreshGitStateAsync(): void {
             } else if (first === 63) {
               uPaths[uCount] = line.slice(2);
               uCount = uCount + 1;
+            } else if (first === 33) {
+              // SHIP-V1-GAPS.md #50: '!' = ignored entry. `git status
+              // --porcelain=v2 --ignored` reports the highest-level ignored
+              // path (e.g. `node_modules/` rather than every file inside),
+              // which is exactly what the explorer needs to short-circuit
+              // descent.
+              iPaths[iCount] = line.slice(2);
+              iCount = iCount + 1;
             }
           }
         }
@@ -579,7 +630,7 @@ export function refreshGitStateAsync(): void {
       }
     }
 
-    return { isRepo: isRepo, branch: branch, stagedPaths: sPaths, stagedStatuses: sStatuses, modifiedPaths: mPaths, modifiedStatuses: mStatuses, untrackedPaths: uPaths };
+    return { isRepo: isRepo, branch: branch, stagedPaths: sPaths, stagedStatuses: sStatuses, modifiedPaths: mPaths, modifiedStatuses: mStatuses, untrackedPaths: uPaths, ignoredPaths: iPaths };
   }).then((result) => { applyGitRefreshResult(result, gen); });
 }
 
@@ -600,6 +651,9 @@ function applyGitRefreshResult(r: GitRefreshResult, gen: number): void {
   gitModifiedCount = r.modifiedPaths.length;
   gitUntrackedPaths = r.untrackedPaths;
   gitUntrackedCount = r.untrackedPaths.length;
+  // SHIP-V1-GAPS.md #50: apply ignored paths so the explorer can skip them.
+  gitIgnoredPaths = r.ignoredPaths;
+  gitIgnoredCount = r.ignoredPaths.length;
 
   if (gitPanelReady > 0) {
     updateGitResultsUI();
@@ -639,18 +693,57 @@ function gitDiscardFile(filePath: string): void {
 }
 
 function gitCommit(): void {
-  if (gitCommitMessage.length < 1) return;
-  if (gitStagedCount < 1) return;
+  const amend = gitAmendActive > 0;
+  // Amend is allowed without staged changes or a new title — it can just
+  // rewrite the previous commit's body / metadata. Plain commit requires both.
+  if (!amend) {
+    if (gitCommitMessage.length < 1) return;
+    if (gitStagedCount < 1) return;
+  }
   const wsRoot = gitWorkspaceRoot;
-  const msg = gitCommitMessage;
+  const title = gitCommitMessage;
+  const body = gitCommitBodyText;
+  const useSignOff = gitSignOffActive > 0;
   gitCommitMessage = '';
-  if (gitCommitTextField) {
-    textfieldSetString(gitCommitTextField, '');
+  gitCommitBodyText = '';
+  if (gitCommitTextField) textfieldSetString(gitCommitTextField, '');
+  if (gitCommitBodyField) textfieldSetString(gitCommitBodyField, '');
+  // Amend is a one-shot — reset the toggle so the next commit defaults to a
+  // fresh commit. Sign-off sticks (matches VS Code: once you opt in, every
+  // subsequent commit is signed off until you toggle off).
+  if (gitAmendActive > 0) {
+    gitAmendActive = 0;
+    if (gitAmendBtn) buttonSetTitle(gitAmendBtn, t('Amend'));
+  }
+  // SHIP-V1-GAPS.md #1: argv-form spawn, never a shell string — title/body
+  // can contain backticks, $, quotes, newlines without injection.
+  const args: string[] = ['-C', wsRoot, 'commit'];
+  if (amend) args.push('--amend');
+  if (useSignOff) args.push('-s');
+  if (title.length > 0) {
+    args.push('-m', title);
+    if (body.length > 0) args.push('-m', body);
+  } else if (amend) {
+    args.push('--no-edit');
   }
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'commit', '-m', msg]); } catch (e) {}
+    try { spawnSync('git', args); } catch (e) {}
     return 0;
   }).then((_) => { onGitCommitComplete(); });
+}
+
+function toggleAmend(): void {
+  gitAmendActive = gitAmendActive > 0 ? 0 : 1;
+  if (gitAmendBtn) {
+    buttonSetTitle(gitAmendBtn, gitAmendActive > 0 ? t('Amend ✓') : t('Amend'));
+  }
+}
+
+function toggleSignOff(): void {
+  gitSignOffActive = gitSignOffActive > 0 ? 0 : 1;
+  if (gitSignOffBtn) {
+    buttonSetTitle(gitSignOffBtn, gitSignOffActive > 0 ? t('Sign-off ✓') : t('Sign-off'));
+  }
 }
 
 function onGitCommitComplete(): void {
@@ -712,6 +805,55 @@ function gitStashPop(): void {
   }).then((_) => { onGitActionComplete(); });
 }
 
+// SHIP-V1-GAPS.md #48: enumerate stashes. Each line:
+// `stash@{N}: WIP on branch: hash message`.
+function listGitStashes(): string[] {
+  if (gitWorkspaceRoot.length === 0) return [];
+  let out = '';
+  try {
+    const r = spawnSync('git', ['-C', gitWorkspaceRoot, 'stash', 'list']);
+    if (r.status === 0) out = r.stdout;
+  } catch (_e: any) {}
+  if (out.length === 0) return [];
+  const items: string[] = [];
+  let start = 0;
+  for (let i = 0; i <= out.length; i++) {
+    if (i === out.length || out.charCodeAt(i) === 10) {
+      if (i > start) items.push(out.slice(start, i));
+      start = i + 1;
+    }
+  }
+  return items;
+}
+
+function gitStashApply(ref: string): void {
+  if (ref.length < 1) return;
+  const wsRoot = gitWorkspaceRoot;
+  const refName = ref;
+  gitSpinnerBegin(t('Applying stash…'));
+  spawn(() => {
+    try { spawnSync('git', ['-C', wsRoot, 'stash', 'apply', refName]); } catch (e) {}
+    return 0;
+  }).then((_) => { gitSpinnerEnd(); onGitActionComplete(); });
+}
+
+function gitStashDrop(ref: string): void {
+  if (ref.length < 1) return;
+  const wsRoot = gitWorkspaceRoot;
+  const refName = ref;
+  gitSpinnerBegin(t('Dropping stash…'));
+  spawn(() => {
+    try { spawnSync('git', ['-C', wsRoot, 'stash', 'drop', refName]); } catch (e) {}
+    return 0;
+  }).then((_) => { gitSpinnerEnd(); rerenderStashesList(); });
+}
+
+function rerenderStashesList(): void {
+  if (gitStashesContainer === null) return;
+  gitStashesExpanded = 0;
+  onStashesButtonClick(null, panelColors);
+}
+
 // SHIP-V1-GAPS.md #47: list local branches. Returns the current branch first
 // (with a `*` prefix) and the rest sorted by most-recent commit.
 function listGitBranches(): string[] {
@@ -750,6 +892,38 @@ function gitCheckoutBranch(branchName: string): void {
     try { spawnSync('git', ['-C', wsRoot, 'checkout', bName]); } catch (e) {}
     return 0;
   }).then((_) => { onGitActionComplete(); });
+}
+
+// SHIP-V1-GAPS.md #47: create + switch in one — VS Code's `Create branch
+// from…` shortcut.
+function gitBranchCreate(name: string): void {
+  if (name.length < 1) return;
+  const wsRoot = gitWorkspaceRoot;
+  const bName = name;
+  gitSpinnerBegin(t('Creating branch…'));
+  spawn(() => {
+    try { spawnSync('git', ['-C', wsRoot, 'checkout', '-b', bName]); } catch (e) {}
+    return 0;
+  }).then((_) => { gitSpinnerEnd(); onGitActionComplete(); rerenderBranchesList(); });
+}
+
+// SHIP-V1-GAPS.md #47: delete a local branch. Uses `-d` so unmerged branches
+// fail loudly; force-delete (`-D`) remains a terminal-only escape hatch in v1.
+function gitBranchDelete(name: string): void {
+  if (name.length < 1) return;
+  const wsRoot = gitWorkspaceRoot;
+  const bName = name;
+  gitSpinnerBegin(t('Deleting branch…'));
+  spawn(() => {
+    try { spawnSync('git', ['-C', wsRoot, 'branch', '-d', bName]); } catch (e) {}
+    return 0;
+  }).then((_) => { gitSpinnerEnd(); onGitActionComplete(); rerenderBranchesList(); });
+}
+
+function rerenderBranchesList(): void {
+  if (gitBranchesContainer === null) return;
+  gitBranchesExpanded = 0;
+  onBranchesButtonClick(null, panelColors);
 }
 
 // SHIP-V1-GAPS.md #100: read the workspace's git tags. Returns the newest 20
@@ -896,7 +1070,7 @@ function onHistoryButtonClick(_container: unknown, _colors: ResolvedUIColors): v
       // monospace font is essential to preserve alignment.
       const row = Text(lines[i]);
       textSetFontSize(row, 11);
-      textSetFontFamily(row, 11, 'Menlo');
+      textSetFontFamily(row, 11, monoFont());
       setFg(row, getSideBarForeground());
       widgetAddChild(gitHistoryContainer, row);
     }
@@ -1015,7 +1189,7 @@ function updateGitResultsUI(): void {
       if (status.charCodeAt(0) === 100) indicator = 'D';
       const statusLabel = Text(indicator);
       textSetFontSize(statusLabel, 11);
-      textSetFontFamily(statusLabel, 11, 'Menlo');
+      textSetFontFamily(statusLabel, 11, monoFont());
       if (panelColors) {
         if (indicator === 'A') {
           setFg(statusLabel, getStatusAddedColor());
@@ -1058,7 +1232,7 @@ function updateGitResultsUI(): void {
       if (status.charCodeAt(0) === 100) indicator = 'D';
       const statusLabel = Text(indicator);
       textSetFontSize(statusLabel, 11);
-      textSetFontFamily(statusLabel, 11, 'Menlo');
+      textSetFontFamily(statusLabel, 11, monoFont());
       if (panelColors) {
         if (indicator === 'D') {
           setFg(statusLabel, getStatusDeletedColor());
@@ -1101,7 +1275,7 @@ function updateGitResultsUI(): void {
       const row = HStack(4, []);
       const statusLabel = Text('U');
       textSetFontSize(statusLabel, 11);
-      textSetFontFamily(statusLabel, 11, 'Menlo');
+      textSetFontFamily(statusLabel, 11, monoFont());
       if (panelColors) setFg(statusLabel, getStatusAddedColor());
       const fileBtn = Button(fname, () => { onGitFileClick(fpath); });
       buttonSetBordered(fileBtn, 0);
@@ -1189,6 +1363,20 @@ function onBranchesButtonClick(_container: unknown, _colors: ResolvedUIColors): 
     return;
   }
   widgetClearChildren(gitBranchesContainer);
+
+  // SHIP-V1-GAPS.md #47: create-branch row at top — mirror tags create UX.
+  const newBranchField = TextField(t('New branch…'), (text: string) => { gitNewBranchName = text; });
+  widgetAddChild(gitBranchesContainer, newBranchField);
+  const createBtn = Button(t('Create + switch'), () => {
+    const n = gitNewBranchName;
+    gitNewBranchName = '';
+    gitBranchCreate(n);
+  });
+  buttonSetBordered(createBtn, 0);
+  textSetFontSize(createBtn, 11);
+  setBtnFg(createBtn, getSideBarForeground());
+  widgetAddChild(gitBranchesContainer, createBtn);
+
   const branches = listGitBranches();
   if (branches.length === 0) {
     const empty = Text(t('No branches.'));
@@ -1198,13 +1386,30 @@ function onBranchesButtonClick(_container: unknown, _colors: ResolvedUIColors): 
   } else {
     for (let i = 0; i < branches.length; i++) {
       const b = branches[i];
-      // Mark the current branch (starts with "* ") in a brighter color.
+      // Lines from `for-each-ref --format=%(HEAD) %(refname:short)`:
+      // current branch starts with "* "; others start with two spaces or a
+      // single name. listGitBranches already trims leading spaces, so the
+      // current branch is the only one prefixed "*".
       const isCurrent = b.length > 2 && b.charCodeAt(0) === 42;
+      const cleanName = isCurrent ? b.slice(2) : b;
       const row = Button(b, () => { gitCheckoutBranch(b); });
       buttonSetBordered(row, 0);
       textSetFontSize(row, 11);
       setBtnFg(row, isCurrent ? '#A6E3A1' : getSideBarForeground());
-      widgetAddChild(gitBranchesContainer, row);
+
+      // SHIP-V1-GAPS.md #47: per-row delete (non-current branches only).
+      // Deleting the current branch requires checking out somewhere else
+      // first — git refuses, so we don't surface the affordance.
+      if (isCurrent) {
+        widgetAddChild(gitBranchesContainer, row);
+      } else {
+        const delBtn = Button(t('Delete'), () => { gitBranchDelete(cleanName); });
+        buttonSetBordered(delBtn, 0);
+        textSetFontSize(delBtn, 11);
+        setBtnFg(delBtn, getStatusDeletedColor());
+        const r = HStack(8, [row, Spacer(), delBtn]);
+        widgetAddChild(gitBranchesContainer, r);
+      }
     }
   }
   widgetSetHidden(gitBranchesContainer, 0);
@@ -1266,6 +1471,55 @@ function onTagsButtonClick(_container: unknown, _colors: ResolvedUIColors): void
   }
   widgetSetHidden(gitTagsContainer, 0);
   gitTagsExpanded = 1;
+}
+
+/** SHIP-V1-GAPS.md #48: toggle the stash list, populating on first show.
+ *  Each row shows the full stash line with Apply + Drop buttons. The top
+ *  `Stash` / `Pop` buttons still drive the most-recent stash for fast paths. */
+function onStashesButtonClick(_container: unknown, _colors: ResolvedUIColors): void {
+  if (gitStashesContainer === null) return;
+  if (gitStashesExpanded > 0) {
+    widgetSetHidden(gitStashesContainer, 1);
+    gitStashesExpanded = 0;
+    return;
+  }
+  widgetClearChildren(gitStashesContainer);
+  const stashes = listGitStashes();
+  if (stashes.length === 0) {
+    const empty = Text(t('No stashes.'));
+    textSetFontSize(empty, 11);
+    setFg(empty, getSecondaryTextColor());
+    widgetAddChild(gitStashesContainer, empty);
+  } else {
+    for (let i = 0; i < stashes.length; i++) {
+      const line = stashes[i];
+      // Extract `stash@{N}` ref (everything up to the first ":").
+      let colonIdx = -1;
+      for (let j = 0; j < line.length; j++) {
+        if (line.charCodeAt(j) === 58) { colonIdx = j; break; }
+      }
+      const ref = colonIdx > 0 ? line.slice(0, colonIdx) : line;
+
+      const label = Text(line);
+      textSetFontSize(label, 11);
+      setFg(label, getSideBarForeground());
+
+      const applyBtn = Button(t('Apply'), () => { gitStashApply(ref); });
+      buttonSetBordered(applyBtn, 0);
+      textSetFontSize(applyBtn, 11);
+      setBtnFg(applyBtn, getSideBarForeground());
+
+      const dropBtn = Button(t('Drop'), () => { gitStashDrop(ref); });
+      buttonSetBordered(dropBtn, 0);
+      textSetFontSize(dropBtn, 11);
+      setBtnFg(dropBtn, getStatusDeletedColor());
+
+      const r = HStack(8, [label, Spacer(), applyBtn, dropBtn]);
+      widgetAddChild(gitStashesContainer, r);
+    }
+  }
+  widgetSetHidden(gitStashesContainer, 0);
+  gitStashesExpanded = 1;
 }
 
 /** Toggle the submodule list visibility, populating on first show. */
@@ -1370,9 +1624,28 @@ export function renderGitPanel(container: unknown, colors: ResolvedUIColors): vo
   }
   widgetAddChild(container, branchRow);
 
-  // Commit message input
-  gitCommitTextField = TextField(t('Commit message'), (text: string) => { onCommitMessageInput(text); });
+  // Commit message input — title (line 1).
+  gitCommitTextField = TextField(t('Commit title'), (text: string) => { onCommitMessageInput(text); });
   widgetAddChild(container, gitCommitTextField);
+
+  // SHIP-V1-GAPS.md #46: optional body. Joined to the title with a blank line
+  // (`git commit -m TITLE -m BODY` is conventional-commit-style).
+  gitCommitBodyField = TextField(t('Description (optional)'), (text: string) => { gitCommitBodyText = text; });
+  widgetAddChild(container, gitCommitBodyField);
+
+  // SHIP-V1-GAPS.md #46: Amend + Sign-off toggles. Amend resets after a
+  // successful commit (single-shot); Sign-off sticks until the user clicks it
+  // off again — matches VS Code's behavior.
+  gitAmendBtn = Button(t('Amend'), () => { toggleAmend(); });
+  buttonSetBordered(gitAmendBtn, 0);
+  textSetFontSize(gitAmendBtn, 11);
+  if (colors) setBtnFg(gitAmendBtn, getSideBarForeground());
+  gitSignOffBtn = Button(t('Sign-off'), () => { toggleSignOff(); });
+  buttonSetBordered(gitSignOffBtn, 0);
+  textSetFontSize(gitSignOffBtn, 11);
+  if (colors) setBtnFg(gitSignOffBtn, getSideBarForeground());
+  const commitOptionsRow = HStack(8, [gitAmendBtn, gitSignOffBtn, Spacer()]);
+  widgetAddChild(container, commitOptionsRow);
 
   // Commit button
   const commitBtn = Button(t('Commit'), () => { gitCommit(); });
@@ -1433,6 +1706,11 @@ export function renderGitPanel(container: unknown, colors: ResolvedUIColors): vo
   buttonSetBordered(popBtn, 0);
   textSetFontSize(popBtn, 11);
   if (colors) setBtnFg(popBtn, getSideBarForeground());
+  // SHIP-V1-GAPS.md #48: stash list with per-row Apply / Drop.
+  const stashesBtn = Button(t('Stashes'), () => { onStashesButtonClick(container, colors); });
+  buttonSetBordered(stashesBtn, 0);
+  textSetFontSize(stashesBtn, 11);
+  if (colors) setBtnFg(stashesBtn, getSideBarForeground());
   // SHIP-V1-GAPS.md #100: tag list. Toggles a section showing the 20 newest
   // tags; click checks out (detached HEAD).
   const tagsBtn = Button(t('Tags'), () => { onTagsButtonClick(container, colors); });
@@ -1460,7 +1738,7 @@ export function renderGitPanel(container: unknown, colors: ResolvedUIColors): vo
   buttonSetBordered(historyBtn, 0);
   textSetFontSize(historyBtn, 11);
   if (colors) setBtnFg(historyBtn, getSideBarForeground());
-  const stashRow = HStack(8, [stashBtn, popBtn, branchesBtn, tagsBtn, submodBtn, historyBtn, prBtn]);
+  const stashRow = HStack(8, [stashBtn, popBtn, stashesBtn, branchesBtn, tagsBtn, submodBtn, historyBtn, prBtn]);
   widgetAddChild(container, stashRow);
 
   // Branches list — toggles visibility, populated on first show.
@@ -1472,6 +1750,11 @@ export function renderGitPanel(container: unknown, colors: ResolvedUIColors): vo
   gitTagsContainer = VStack(2, []);
   widgetSetHidden(gitTagsContainer, 1);
   widgetAddChild(container, gitTagsContainer);
+
+  // SHIP-V1-GAPS.md #48: stash list — toggles visibility.
+  gitStashesContainer = VStack(2, []);
+  widgetSetHidden(gitStashesContainer, 1);
+  widgetAddChild(container, gitStashesContainer);
 
   // Submodules list — toggles visibility, populated on first show.
   gitSubmodulesContainer = VStack(2, []);

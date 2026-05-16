@@ -15,7 +15,7 @@ import {
   checkForUpdatesAction, formatDocumentAction, goToDefinitionAction,
   newFileAction, findAction, replaceAction, openRecentItem,
   saveFileAction, saveFileAsAction,
-  showCommandPaletteAction, showOutlineAction,
+  showCommandPaletteAction, showOutlineAction, showTimelineAction,
   showTasksAction, runBuildTaskAction,
   undoAction, redoAction,
 } from './render';
@@ -77,6 +77,9 @@ function dispatchCommand(command: string): void {
   } else if (command.length === 12 && command.charCodeAt(0) === 118 && command.charCodeAt(5) === 111) {
     // view.outline (length 12, 'v'iew.'o'utline)
     showOutlineAction();
+  } else if (command.length === 13 && command.charCodeAt(0) === 118 && command.charCodeAt(5) === 116) {
+    // view.timeline (length 13, 'v'iew.'t'imeline)
+    showTimelineAction();
   } else if (command.length === 13 && command.charCodeAt(0) === 116 && command.charCodeAt(6) === 82) {
     // tasks.runTask (length 13, 't'asks.'R'unTask — chr at 6 is 'R')
     showTasksAction();

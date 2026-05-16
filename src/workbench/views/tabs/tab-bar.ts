@@ -8,13 +8,13 @@ import {
   VStack, HStack, Button, Spacer,
   HStackWithInsets,
   textSetFontSize, textSetFontWeight,
-  buttonSetBordered, buttonSetImage, buttonSetImagePosition,
+  buttonSetBordered, buttonSetImagePosition,
   widgetAddChild, widgetClearChildren, widgetSetWidth, widgetSetHeight, widgetSetHugging,
   widgetSetBackgroundColor,
   widgetSetContextMenu, menuCreate, menuAddItem,
 } from 'perry/ui';
 import { readFileSync } from 'fs';
-import { setBg, setBtnFg, setBtnTint, getFileIcon, getFileIconColor } from '../../ui-helpers';
+import { setBg, setBtnFg, setBtnTint, getFileIcon, getFileIconColor, setIconButton } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getTabActiveForeground, getTabActiveBackground, getTabInactiveForeground, getTabInactiveBackground, getTabBorder, getFocusBorder } from '../../theme/theme-colors';
 import { setStringSetting, setNumberSetting } from '../../settings';
@@ -35,6 +35,9 @@ let tabLabelButtons: unknown[] = [];
 let tabIconButtons: unknown[] = [];
 let tabDirty: number[] = [];
 let tabSavedLengths: number[] = [];
+// SHIP-V1-GAPS.md #26: per-tab pinned flag. Parallel array to openTabs/Names.
+// Pinned tabs always render before unpinned ones; persisted via settings.
+let tabPinned: number[] = [];
 
 let tabBarContainer: unknown = null;
 let tabBarReady: number = 0;
@@ -142,6 +145,7 @@ export function openTab(filePath: string, fileName: string): number {
   // Add to tracking arrays — use .push() (Perry AOT indexed assignment broken)
   openTabs.push(filePath);
   openTabNames.push(displayName);
+  tabPinned.push(0);
   openTabCount = openTabCount + 1;
   activeTabIdx = openTabCount - 1;
 
@@ -169,7 +173,7 @@ export function markTabSaved(contentLength: number): void {
     tabDirty[activeTabIdx] = 0;
     tabSavedLengths[activeTabIdx] = contentLength;
     if (activeTabIdx < tabCloseButtons.length) {
-      buttonSetImage(tabCloseButtons[activeTabIdx], 'xmark');
+      setIconButton(tabCloseButtons[activeTabIdx], 'xmark');
       textSetFontSize(tabCloseButtons[activeTabIdx], 9);
     }
   }
@@ -189,7 +193,7 @@ export function updateTabDirtyIcon(contentLength: number): void {
     if (wasDirty < 1) {
       tabDirty[activeTabIdx] = 1;
       if (activeTabIdx < tabCloseButtons.length) {
-        buttonSetImage(tabCloseButtons[activeTabIdx], 'circle.fill');
+        setIconButton(tabCloseButtons[activeTabIdx], 'circle.fill');
         textSetFontSize(tabCloseButtons[activeTabIdx], 6);
       }
     }
@@ -197,7 +201,7 @@ export function updateTabDirtyIcon(contentLength: number): void {
     if (wasDirty > 0) {
       tabDirty[activeTabIdx] = 0;
       if (activeTabIdx < tabCloseButtons.length) {
-        buttonSetImage(tabCloseButtons[activeTabIdx], 'xmark');
+        setIconButton(tabCloseButtons[activeTabIdx], 'xmark');
         textSetFontSize(tabCloseButtons[activeTabIdx], 9);
       }
     }
@@ -217,17 +221,24 @@ function rebuildTabBarDirect(count: number, names: string[], paths: string[], co
   tabIconButtons = [];
   tabDirty = [];
   tabSavedLengths = [];
+
+  // SHIP-V1-GAPS.md #26: build tab wrappers in source order so the parallel
+  // state arrays (`tabBarButtons[srcIdx]` etc.) stay source-indexed —
+  // `applyTabColors` reads them by source idx. The render order (pinned
+  // first, unpinned next) is applied at addChild time below.
+  const wrappers: unknown[] = [];
   for (let i = 0; i < count; i++) {
     const idx = i;
     const path = paths[i];
     const name = names[i];
+    const isPinned = idx < tabPinned.length && tabPinned[idx] > 0 ? 1 : 0;
     // VS Code-like tab padding: spacing=5, top=10, right=10, bottom=10, left=12
     const tabGroup = HStackWithInsets(5, 10, 10, 10, 12);
     // File type icon
     const tabIcon = Button('', () => { onTabClickDirect(idx, path); });
     buttonSetBordered(tabIcon, 0);
     const tIcon = getFileIcon(name);
-    buttonSetImage(tabIcon, tIcon);
+    setIconButton(tabIcon, tIcon);
     buttonSetImagePosition(tabIcon, 1);
     textSetFontSize(tabIcon, 12);
     const tabBtn = Button(name, () => { onTabClickDirect(idx, path); });
@@ -235,7 +246,7 @@ function rebuildTabBarDirect(count: number, names: string[], paths: string[], co
     textSetFontSize(tabBtn, 13);
     const closeBtn = Button('', () => { onTabClose(idx); });
     buttonSetBordered(closeBtn, 0);
-    buttonSetImage(closeBtn, 'xmark');
+    setIconButton(closeBtn, 'xmark');
     buttonSetImagePosition(closeBtn, 1);
     textSetFontSize(closeBtn, 9);
     widgetSetWidth(closeBtn, 16);
@@ -275,29 +286,54 @@ function rebuildTabBarDirect(count: number, names: string[], paths: string[], co
       }
     }
 
+    // SHIP-V1-GAPS.md #26: pinned tabs get a leading pin glyph in front of
+    // the file icon. Cheaper than swapping the icon since the file icon
+    // still helps users identify the file.
+    if (isPinned > 0) {
+      setIconButton(tabIcon, 'pin.fill');
+    }
+
     // Wrap tab in VStack with accent bar at bottom (VS Code style)
     const tabWrapper = VStack(0, [tabGroup, accent]);
     const tabMenu = menuCreate();
+    if (isPinned > 0) {
+      menuAddItem(tabMenu, 'Unpin Tab', () => { unpinTab(idx); });
+    } else {
+      menuAddItem(tabMenu, 'Pin Tab', () => { pinTab(idx); });
+    }
     menuAddItem(tabMenu, 'Close', () => { onTabClose(idx); });
     menuAddItem(tabMenu, 'Close Others', () => { closeOtherTabs(idx); });
     menuAddItem(tabMenu, 'Close All', () => { closeAllTabs(); });
     widgetSetContextMenu(tabWrapper, tabMenu);
-    widgetAddChild(container, tabWrapper);
-    // 1px vertical separator between tabs
-    if (i < count - 1) {
-      const sep = VStack(0, []);
-      widgetSetWidth(sep, 1);
-      setBg(sep, getTabBorder());
-      widgetAddChild(container, sep);
-    }
+
     tabBarButtons.push(tabGroup);
     tabAccentBars.push(accent);
     tabCloseButtons.push(closeBtn);
     tabLabelButtons.push(tabBtn);
     tabIconButtons.push(tabIcon);
     tabDirty.push(0);
-    // -1 = not yet initialized; first pollDirtyState will set it to actual content length
     tabSavedLengths.push(-1);
+    wrappers.push(tabWrapper);
+  }
+
+  // SHIP-V1-GAPS.md #26: addChild order is pinned-first then unpinned, both
+  // in source-insertion order. Keeps the active-tab idx and the parallel
+  // state arrays source-indexed.
+  const renderOrder: number[] = [];
+  for (let i = 0; i < count; i++) {
+    if (i < tabPinned.length && tabPinned[i] > 0) renderOrder.push(i);
+  }
+  for (let i = 0; i < count; i++) {
+    if (i >= tabPinned.length || tabPinned[i] < 1) renderOrder.push(i);
+  }
+  for (let r = 0; r < renderOrder.length; r++) {
+    widgetAddChild(container, wrappers[renderOrder[r]]);
+    if (r < renderOrder.length - 1) {
+      const sep = VStack(0, []);
+      widgetSetWidth(sep, 1);
+      setBg(sep, getTabBorder());
+      widgetAddChild(container, sep);
+    }
   }
   // Push tabs to the left — spacer fills remaining width
   widgetAddChild(container, Spacer());
@@ -343,6 +379,28 @@ export function setTabBarRestoring(val: number): void {
   tabBarRestoring = val;
 }
 
+// SHIP-V1-GAPS.md #26: pin / unpin a tab. Pinned tabs render before unpinned
+// ones on the next rebuild; the persisted bitmask survives across restarts.
+export function pinTab(idx: number): void {
+  if (idx < 0 || idx >= openTabCount) return;
+  while (tabPinned.length <= idx) tabPinned.push(0);
+  tabPinned[idx] = 1;
+  if (tabBarReady > 0) rebuildTabBarDirect(openTabCount, openTabNames, openTabs, tabBarContainer);
+  persistTabState();
+}
+
+export function unpinTab(idx: number): void {
+  if (idx < 0 || idx >= tabPinned.length) return;
+  tabPinned[idx] = 0;
+  if (tabBarReady > 0) rebuildTabBarDirect(openTabCount, openTabNames, openTabs, tabBarContainer);
+  persistTabState();
+}
+
+export function isTabPinned(idx: number): number {
+  if (idx < 0 || idx >= tabPinned.length) return 0;
+  return tabPinned[idx];
+}
+
 /** Persist open tabs to settings (pipe-separated paths). */
 function persistTabState(): void {
   if (tabBarReady < 1) return;
@@ -354,6 +412,13 @@ function persistTabState(): void {
   }
   setStringSetting('lastOpenTabs', joined);
   setNumberSetting('lastActiveTab', activeTabIdx);
+  // SHIP-V1-GAPS.md #26: pin mask — string of '1'/'0' chars, one per tab.
+  let pinMask = '';
+  for (let i = 0; i < openTabCount; i++) {
+    const p = i < tabPinned.length && tabPinned[i] > 0 ? '1' : '0';
+    pinMask += p;
+  }
+  setStringSetting('lastPinnedTabs', pinMask);
 }
 
 // ---------------------------------------------------------------------------
@@ -405,14 +470,17 @@ function onTabCloseDeferred(): void {
   if (openTabCount < 2) return;
   const newTabs: string[] = [];
   const newNames: string[] = [];
+  const newPinned: number[] = [];
   for (let i = 0; i < openTabCount; i++) {
     if (i === idx) continue;
     newTabs.push(openTabs[i]);
     newNames.push(openTabNames[i]);
+    newPinned.push(i < tabPinned.length ? tabPinned[i] : 0);
   }
   const newCount = newTabs.length;
   openTabs = newTabs;
   openTabNames = newNames;
+  tabPinned = newPinned;
   openTabCount = newCount;
 
   if (activeTabIdx === idx) {

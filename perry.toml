@@ -1,6 +1,9 @@
 [android]
 distribute = "playstore:production"
-google_play_key = "/Users/amlug/projects/gscmaster.com/searchbird-483214-a77c096cd7bb.json"
+# Google Play service-account key for upload. Local override expected — the
+# repo doesn't ship a real key. Set HONE_GOOGLE_PLAY_KEY env var or replace
+# this path locally; do NOT commit a real key here.
+google_play_key = ".perry/google-play-key.json"
 key_alias = "key0"
 keystore = "../android.keystore"
 
@@ -28,10 +31,14 @@ locales = [
 
 [ios]
 bundle_id = "com.hone.ide"
-certificate = "/Users/amlug/.perry/distribution.p12"
+# Apple Distribution cert + provisioning profile. Local override expected —
+# the repo doesn't ship real certs. Drop your `.p12` and provisioning
+# profile into `.perry/` (gitignored) or set HONE_APPLE_CERT_PATH /
+# HONE_APPLE_PROFILE_PATH env vars for CI.
+certificate = ".perry/distribution.p12"
 distribute = "testflight"
 encryption_exempt = true
-provisioning_profile = "/Users/amlug/.perry/com_hone_ide.mobileprovision"
+provisioning_profile = ".perry/com_hone_ide.mobileprovision"
 signing_identity = "Apple Distribution: Skelpo GmbH (K6UW5YV9F7)"
 
 [linux]

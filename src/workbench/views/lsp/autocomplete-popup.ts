@@ -7,7 +7,7 @@ import {
   buttonSetBordered,
   widgetAddChild, widgetClearChildren, widgetSetWidth, widgetSetHidden,
 } from 'perry/ui';
-import { setFg, setBtnFg, setBg } from '../../ui-helpers';
+import { setFg, setBtnFg, setBg, monoFont } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getEditorBackground, getEditorForeground } from '../../theme/theme-colors';
 
@@ -45,7 +45,7 @@ export function showAutocomplete(items: string[]): void {
     const btn = Button(text, () => { onItemClick(text); });
     buttonSetBordered(btn, 0);
     textSetFontSize(btn, 12);
-    textSetFontFamily(btn, 12, 'Menlo');
+    textSetFontFamily(btn, 12, monoFont());
     if (popupColors) setBtnFg(btn, getEditorForeground());
     widgetAddChild(popupWidget, btn);
   }

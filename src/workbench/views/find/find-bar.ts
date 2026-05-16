@@ -10,14 +10,14 @@ import {
   HStackWithInsets, VStackWithInsets,
   TextField,
   textSetFontSize, textSetString,
-  buttonSetBordered, buttonSetImage, buttonSetImagePosition,
+  buttonSetBordered, buttonSetImagePosition,
   widgetAddChild, widgetSetWidth, widgetSetHeight, widgetSetHidden, widgetSetHugging, widgetSetBackgroundColor,
   widgetAddOverlay, widgetSetOverlayFrame,
   textfieldSetString, textfieldFocus, textfieldSetOnSubmit,
   textfieldSetBorderless, textfieldSetBackgroundColor, textfieldSetFontSize, textfieldSetTextColor,
 } from 'perry/ui';
 import { t } from 'perry/i18n';
-import { setBg, setFg, setBtnFg, setBtnTint, toLowerCode } from '../../ui-helpers';
+import { setBg, setFg, setBtnFg, setBtnTint, toLowerCode, setIconButton } from '../../ui-helpers';
 import {
   getEditorBackground, getEditorForeground,
   getInputBackground, getInputForeground, getInputBorder,
@@ -564,7 +564,7 @@ export function createFindBar(): unknown {
   // Find row — compact VS Code-like layout
   chevronBtn = Button('', () => { onChevronClick(); });
   buttonSetBordered(chevronBtn, 0);
-  buttonSetImage(chevronBtn, 'chevron.right');
+  setIconButton(chevronBtn, 'chevron.right');
   buttonSetImagePosition(chevronBtn, 1);
   textSetFontSize(chevronBtn, 10);
   widgetSetWidth(chevronBtn, 20);
@@ -591,21 +591,21 @@ export function createFindBar(): unknown {
 
   const prevBtn = Button('', () => { onPrevClick(); });
   buttonSetBordered(prevBtn, 0);
-  buttonSetImage(prevBtn, 'chevron.up');
+  setIconButton(prevBtn, 'chevron.up');
   buttonSetImagePosition(prevBtn, 1);
   textSetFontSize(prevBtn, 10);
   widgetSetWidth(prevBtn, 24);
 
   const nextBtn = Button('', () => { onNextClick(); });
   buttonSetBordered(nextBtn, 0);
-  buttonSetImage(nextBtn, 'chevron.down');
+  setIconButton(nextBtn, 'chevron.down');
   buttonSetImagePosition(nextBtn, 1);
   textSetFontSize(nextBtn, 10);
   widgetSetWidth(nextBtn, 24);
 
   const closeBtn = Button('', () => { onCloseClick(); });
   buttonSetBordered(closeBtn, 0);
-  buttonSetImage(closeBtn, 'xmark');
+  setIconButton(closeBtn, 'xmark');
   buttonSetImagePosition(closeBtn, 1);
   textSetFontSize(closeBtn, 10);
   widgetSetWidth(closeBtn, 24);
@@ -635,14 +635,14 @@ export function createFindBar(): unknown {
 
   const replaceOneBtn = Button('', () => { onReplaceOneClick(); });
   buttonSetBordered(replaceOneBtn, 0);
-  buttonSetImage(replaceOneBtn, 'arrow.left.arrow.right');
+  setIconButton(replaceOneBtn, 'arrow.left.arrow.right');
   buttonSetImagePosition(replaceOneBtn, 1);
   textSetFontSize(replaceOneBtn, 10);
   widgetSetWidth(replaceOneBtn, 24);
 
   const replaceAllBtn = Button('', () => { onReplaceAllClick(); });
   buttonSetBordered(replaceAllBtn, 0);
-  buttonSetImage(replaceAllBtn, 'arrow.left.arrow.right.square');
+  setIconButton(replaceAllBtn, 'arrow.left.arrow.right.square');
   buttonSetImagePosition(replaceAllBtn, 1);
   textSetFontSize(replaceAllBtn, 10);
   widgetSetWidth(replaceAllBtn, 24);

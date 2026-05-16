@@ -135,6 +135,14 @@ export function registerBuiltinCommands(): void {
     showInPalette: false,
   });
 
+  // SHIP-V1-GAPS.md #85: per-file timeline (git log --follow).
+  registerCommand('view.timeline', t('Show Timeline'), () => {
+    executeCommand('workbench.action.showTimeline');
+  }, { category: t('View') });
+  registerCommand('workbench.action.showTimeline', t('Show Timeline'), () => {}, {
+    showInPalette: false,
+  });
+
   // SHIP-V1-GAPS.md #58: workspace trust commands. v1.0 ships the storage;
   // plugin gating lands with the `@honeide/api` runtime.
   registerCommand('workspace.trust', t('Workspaces: Trust Current Folder'), () => {

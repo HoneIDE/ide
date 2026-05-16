@@ -19,7 +19,7 @@ import {
 } from 'perry/ui';
 import { Editor } from '@honeide/editor/perry';
 import { readFileSync } from 'fs';
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { spawn } from 'perry/thread';
 import { parseDiffOutput, countLines } from './diff-parser';
 import { setBg, setFg } from '../../ui-helpers';
@@ -44,6 +44,13 @@ let diffActive: number = 0;
 let diffFilePath = '';
 let panelColors: ResolvedUIColors = null as any;
 
+// Strip a leading UTF-8 BOM (U+FEFF) so it isn't a phantom leading char in
+// the read-only diff editors. See iter-64 main-editor fix for the rationale.
+function stripLeadingBOM(s: string): string {
+  if (s.length > 0 && s.charCodeAt(0) === 0xFEFF) return s.slice(1);
+  return s;
+}
+
 // SHIP-V1-GAPS.md #104: view mode (0 = side-by-side, 1 = inline).
 let diffViewMode: number = 0;
 // Cached payload so a toggle can re-render without re-fetching from git.
@@ -67,16 +74,6 @@ const ADD_A = 0.60;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function execGit(cmd: string): string {
-  let result = '';
-  try {
-    result = execSync(cmd) as unknown as string;
-  } catch (e) {
-    return '';
-  }
-  return result;
-}
 
 function safeReadFile(filePath: string): string {
   let content = '';
@@ -142,18 +139,30 @@ export function openDiffForFile(filePath: string, relPath: string, wsRoot: strin
   const stg = staged;
 
   spawn(() => {
-    // All git commands + file reads run on a background thread
+    // All git commands + file reads run on a background thread.
+    // SHIP-V1-GAPS.md #1: argv-form. `rp` and `ws` are user-controlled
+    // (workspace + relative path) and could contain spaces or shell
+    // metacharacters; previous shell-string form was an injection vector.
     let oldContent = '';
-    try { oldContent = execSync('git -C ' + ws + ' show HEAD:' + rp) as unknown as string; } catch (e) { oldContent = ''; }
+    try {
+      const r = spawnSync('git', ['-C', ws, 'show', 'HEAD:' + rp]);
+      if (r.status === 0) oldContent = r.stdout;
+    } catch (e) { oldContent = ''; }
 
     let newContent = '';
     try { newContent = readFileSync(fp); } catch (e) { newContent = ''; }
 
     let diffText = '';
     if (stg > 0) {
-      try { diffText = execSync('git -C ' + ws + ' diff --cached -- ' + rp) as unknown as string; } catch (e) { diffText = ''; }
+      try {
+        const r = spawnSync('git', ['-C', ws, 'diff', '--cached', '--', rp]);
+        if (r.status === 0) diffText = r.stdout;
+      } catch (e) { diffText = ''; }
     } else {
-      try { diffText = execSync('git -C ' + ws + ' diff -- ' + rp) as unknown as string; } catch (e) { diffText = ''; }
+      try {
+        const r = spawnSync('git', ['-C', ws, 'diff', '--', rp]);
+        if (r.status === 0) diffText = r.stdout;
+      } catch (e) { diffText = ''; }
     }
 
     return { oldContent: oldContent, newContent: newContent, diffText: diffText };
@@ -262,8 +271,12 @@ function buildSideBySideEditors(): unknown {
   diffLeftEditor = leftEd;
   diffRightEditor = rightEd;
 
-  leftEd.setContent(oldContent);
-  rightEd.setContent(newContent);
+  // Strip a leading UTF-8 BOM from each side so a Notepad/VS-authored file
+  // doesn't show a phantom zero-width char at line 1 in the diff pane (same
+  // class as the iter-64 main-editor fix; here it's display-only, read-only
+  // editors — no save path — so a local strip is sufficient).
+  leftEd.setContent(stripLeadingBOM(oldContent));
+  rightEd.setContent(stripLeadingBOM(newContent));
 
   for (let i = 1; i <= oldLineCount; i++) {
     if (oldLineTypes[i] === 1) leftEd.setLineBackground(i, DEL_R, DEL_G, DEL_B, DEL_A);

@@ -3,13 +3,36 @@
  * Renders markdown text into Perry UI widgets.
  */
 import {
-  VStack, VStackWithInsets, HStack, Text, Spacer,
+  VStack, VStackWithInsets, HStack, Text, Spacer, Button,
   textSetFontSize, textSetFontWeight, textSetFontFamily, textSetWraps,
+  buttonSetBordered,
   widgetAddChild, widgetSetBackgroundColor, widgetSetWidth,
 } from 'perry/ui';
-import { setFg } from '../../ui-helpers';
+import { spawnSync } from 'child_process';
+import { setFg, setBtnFg, monoFont } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getSideBarForeground, getSecondaryTextColor, isCurrentThemeDark } from '../../theme/theme-colors';
+
+// Platform constant — 0=macOS, 1=iOS, 3=Windows, 4=Linux, 5=web.
+declare const __platform__: number;
+
+// SHIP-V1-GAPS.md #59: open an external URL via the platform's default
+// handler. macOS: `open`, Windows: `cmd /c start`, Linux: `xdg-open`. iOS /
+// web fall through silently — they don't allow arbitrary subprocess spawns.
+export function openExternalUrl(url: string): void {
+  if (url.length < 1) return;
+  try {
+    if (__platform__ === 3) {
+      // Windows: `start` is a cmd builtin. First "" is the window title slot,
+      // required so URLs starting with `"` parse correctly.
+      spawnSync('cmd', ['/c', 'start', '', url]);
+    } else if (__platform__ === 0) {
+      spawnSync('open', [url]);
+    } else {
+      spawnSync('xdg-open', [url]);
+    }
+  } catch (_e: any) {}
+}
 
 /** Check if line starts with ``` (code fence). */
 function isCodeFence(line: string): number {
@@ -42,7 +65,77 @@ function isBulletItem(line: string): number {
   return 0;
 }
 
-/** Render a text line with inline `code` spans detected. */
+/** Render a non-code text segment. Splits on markdown link syntax
+ *  `[label](url)` and emits Buttons for clickable links + Text for the rest.
+ *  Bold (`**...**`) is rendered with weight; non-bold markers pass through.
+ *  Pre-existing layout limitation: each segment becomes its own widget so
+ *  inline-vs-stacked depends on the parent container. */
+function renderProseSegment(text: string, container: unknown, fontSize: number, wrapWidth: number): void {
+  let pos = 0;
+  while (pos < text.length) {
+    // Find the next `[` that opens a markdown link.
+    let openBracket = -1;
+    for (let i = pos; i < text.length; i++) {
+      if (text.charCodeAt(i) === 91) { // '['
+        openBracket = i;
+        break;
+      }
+    }
+    if (openBracket < 0) {
+      emitPlain(text.slice(pos), container, fontSize, wrapWidth);
+      return;
+    }
+    // Find matching `]` followed by `(`.
+    let closeBracket = -1;
+    for (let i = openBracket + 1; i < text.length; i++) {
+      const c = text.charCodeAt(i);
+      if (c === 93) { closeBracket = i; break; }
+      if (c === 10) break; // newline aborts
+    }
+    if (closeBracket < 0 || closeBracket + 1 >= text.length || text.charCodeAt(closeBracket + 1) !== 40) {
+      // Not a link — emit up to and including this `[` as plain text.
+      emitPlain(text.slice(pos, openBracket + 1), container, fontSize, wrapWidth);
+      pos = openBracket + 1;
+      continue;
+    }
+    // Find matching `)`.
+    let closeParen = -1;
+    for (let i = closeBracket + 2; i < text.length; i++) {
+      const c = text.charCodeAt(i);
+      if (c === 41) { closeParen = i; break; }
+      if (c === 10) break;
+    }
+    if (closeParen < 0) {
+      emitPlain(text.slice(pos, openBracket + 1), container, fontSize, wrapWidth);
+      pos = openBracket + 1;
+      continue;
+    }
+    // Emit prefix + Button + advance.
+    if (openBracket > pos) {
+      emitPlain(text.slice(pos, openBracket), container, fontSize, wrapWidth);
+    }
+    const label = text.slice(openBracket + 1, closeBracket);
+    const url = text.slice(closeBracket + 2, closeParen);
+    const btn = Button(label, () => { openExternalUrl(url); });
+    buttonSetBordered(btn, 0);
+    textSetFontSize(btn, fontSize);
+    // Subtle blue (matches VS Code's link color in both light + dark).
+    setBtnFg(btn, isCurrentThemeDark() > 0 ? '#3794FF' : '#0066CC');
+    widgetAddChild(container, btn);
+    pos = closeParen + 1;
+  }
+}
+
+function emitPlain(text: string, container: unknown, fontSize: number, wrapWidth: number): void {
+  if (text.length === 0) return;
+  const t = Text(text);
+  textSetFontSize(t, fontSize);
+  textSetWraps(t, wrapWidth);
+  setFg(t, getSideBarForeground());
+  widgetAddChild(container, t);
+}
+
+/** Render a text line with inline `code` spans + markdown link spans. */
 function renderInlineText(text: string, container: unknown, fontSize: number, colors: ResolvedUIColors, wrapWidth: number): void {
   // Scan for backtick pairs
   let hasBacktick: number = 0;
@@ -54,16 +147,14 @@ function renderInlineText(text: string, container: unknown, fontSize: number, co
   }
 
   if (hasBacktick < 1) {
-    // Simple text, no inline code
-    const t = Text(text);
-    textSetFontSize(t, fontSize);
-    textSetWraps(t, wrapWidth);
-    setFg(t, getSideBarForeground());
-    widgetAddChild(container, t);
+    // No inline code — route the whole line through the link-aware path.
+    renderProseSegment(text, container, fontSize, wrapWidth);
     return;
   }
 
-  // Has backticks — split into segments
+  // Has backticks — split into code/prose segments. Prose segments still go
+  // through the link-aware renderer so `[text](url)` inside a sentence with
+  // `code` still works.
   let segStart = 0;
   let inCode: number = 0;
   for (let i = 0; i <= text.length; i++) {
@@ -73,16 +164,15 @@ function renderInlineText(text: string, container: unknown, fontSize: number, co
     if (isTick > 0 || isEnd > 0) {
       if (segStart < i) {
         const seg = text.slice(segStart, i);
-        const t = Text(seg);
         if (inCode > 0) {
-          textSetFontFamily(t, fontSize, 'Menlo');
+          const t = Text(seg);
+          textSetFontFamily(t, fontSize, monoFont());
           textSetFontSize(t, fontSize - 1);
+          setFg(t, getSideBarForeground());
+          widgetAddChild(container, t);
         } else {
-          textSetFontSize(t, fontSize);
-          textSetWraps(t, wrapWidth);
+          renderProseSegment(seg, container, fontSize, wrapWidth);
         }
-        setFg(t, getSideBarForeground());
-        widgetAddChild(container, t);
       }
       if (isTick > 0) {
         if (inCode > 0) {
@@ -158,7 +248,7 @@ export function renderMarkdownBlock(content: string, container: unknown, colors:
         let codeLine = line;
         if (codeLine.length < 1) codeLine = ' ';
         const t = Text(codeLine);
-        textSetFontFamily(t, 11, 'Menlo');
+        textSetFontFamily(t, 11, monoFont());
         textSetFontSize(t, 11);
         setFg(t, getSideBarForeground());
         widgetAddChild(codeLines, t);
@@ -357,7 +447,7 @@ function renderTable(rows: string[][], container: unknown, _colors: ResolvedUICo
       row += cells[c];
     }
     const t = Text(row);
-    textSetFontFamily(t, 11, 'Menlo');
+    textSetFontFamily(t, 11, monoFont());
     textSetFontSize(t, 11);
     setFg(t, getSideBarForeground());
     textSetWraps(t, wrapWidth);

@@ -10,7 +10,7 @@ import {
   widgetAddChild, widgetClearChildren, widgetSetWidth, widgetSetHidden,
   widgetSetBackgroundColor,
 } from 'perry/ui';
-import { setFg } from '../../ui-helpers';
+import { setFg, monoFont } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 
 let sigWidget: unknown = null;
@@ -45,7 +45,7 @@ export function showSignaturePopup(
   // Signature label — monospace
   const sigLabel = Text(label);
   textSetFontSize(sigLabel, 12);
-  textSetFontFamily(sigLabel, 12, 'Menlo');
+  textSetFontFamily(sigLabel, 12, monoFont());
   setFg(sigLabel, '#e0e0e0');
   widgetAddChild(sigWidget, sigLabel);
 

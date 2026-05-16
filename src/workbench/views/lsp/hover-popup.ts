@@ -16,9 +16,18 @@ import {
   widgetAddChild, widgetClearChildren, widgetSetWidth, widgetSetHidden,
   widgetSetBackgroundColor,
 } from 'perry/ui';
-import { setFg, setBg } from '../../ui-helpers';
+import { setFg, setBg, monoFont } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getEditorBackground, getEditorForeground, getInputBorder } from '../../theme/theme-colors';
+import { renderMarkdownBlock } from '../ai-chat/markdown-render';
+
+// SHIP-V1-GAPS.md #34: theme colors captured at popup-create time so hover
+// rendering can pick them up without plumbing a colors arg through every
+// caller of `showHoverPopup`. Re-set on theme change via `setHoverThemeColors`.
+let _hoverColors: ResolvedUIColors = null as any;
+export function setHoverThemeColors(c: ResolvedUIColors): void {
+  _hoverColors = c;
+}
 
 /**
  * Strip markdown markers so the popup reads as plain prose:
@@ -77,13 +86,14 @@ let hoverWidget: unknown = null;
 let hoverReady: number = 0;
 let hoverVisible: number = 0;
 
-export function createHoverPopup(_colors: ResolvedUIColors): unknown {
+export function createHoverPopup(colors: ResolvedUIColors): unknown {
   const popup = VStackWithInsets(4, 6, 8, 6, 8);
   widgetSetBackgroundColor(popup, 0.15, 0.15, 0.17, 0.97);
   widgetSetWidth(popup, 400);
   widgetSetHidden(popup, 1);
   hoverWidget = popup;
   hoverReady = 1;
+  _hoverColors = colors;
   return popup;
 }
 
@@ -93,46 +103,52 @@ export function showHoverPopup(content: string): void {
 
   widgetClearChildren(hoverWidget);
 
-  const rendered = stripMarkdown(content);
-
-  // Split content by newlines — first line is type/signature, rest is docs
+  // Split content by newlines — first line is type/signature, rest is docs.
+  // The first line is always rendered monospace (LSP servers put the function
+  // signature there). Doc body now routes through the full markdown renderer
+  // (#34 follow-up) so bold/inline-code/links/lists/blockquotes work.
   let firstNewline = -1;
-  for (let i = 0; i < rendered.length; i = i + 1) {
-    if (rendered.charCodeAt(i) === 10) {
+  for (let i = 0; i < content.length; i = i + 1) {
+    if (content.charCodeAt(i) === 10) {
       firstNewline = i;
       break;
     }
   }
 
-  let typeLine = rendered;
+  let typeLine = content;
   let docText = '';
   if (firstNewline > 0) {
-    typeLine = rendered.slice(0, firstNewline);
-    docText = rendered.slice(firstNewline + 1);
+    typeLine = content.slice(0, firstNewline);
+    docText = content.slice(firstNewline + 1);
   }
 
-  // Type/signature line — monospace, bold
   if (typeLine.length > 0) {
-    const typeLabel = Text(typeLine);
+    // Strip markdown only on the type/signature line — keep it tight.
+    const typeStripped = stripMarkdown(typeLine);
+    const typeLabel = Text(typeStripped);
     textSetFontSize(typeLabel, 12);
-    textSetFontFamily(typeLabel, 12, 'Menlo');
+    textSetFontFamily(typeLabel, 12, monoFont());
     textSetFontWeight(typeLabel, 12, 0.5);
     setFg(typeLabel, '#e0e0e0');
     widgetAddChild(hoverWidget, typeLabel);
   }
 
-  // Documentation text — regular font
   if (docText.length > 0) {
-    // Trim leading/trailing whitespace from docText
     let trimmed = docText;
     while (trimmed.length > 0 && trimmed.charCodeAt(0) === 10) {
       trimmed = trimmed.slice(1);
     }
     if (trimmed.length > 0) {
-      const docLabel = Text(trimmed);
-      textSetFontSize(docLabel, 12);
-      setFg(docLabel, '#a0a0a0');
-      widgetAddChild(hoverWidget, docLabel);
+      // Full markdown render for the doc body — code blocks become monospace,
+      // [text](url) becomes clickable, lists/tables/blockquotes layout.
+      if (_hoverColors !== null) {
+        renderMarkdownBlock(trimmed, hoverWidget, _hoverColors, 380);
+      } else {
+        const docLabel = Text(stripMarkdown(trimmed));
+        textSetFontSize(docLabel, 12);
+        setFg(docLabel, '#a0a0a0');
+        widgetAddChild(hoverWidget, docLabel);
+      }
     }
   }
 

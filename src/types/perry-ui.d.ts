@@ -91,6 +91,12 @@ declare module 'perry/ui' {
   // Native view embedding
   export function embedNSView(view: unknown): unknown;
 
+  // Cross-platform clipboard. Resolves to pbcopy/pbpaste on macOS,
+  // clip.exe/PowerShell on Windows, xclip on Linux. Already shipping at
+  // runtime; declaration added so callers don't get noise from typecheck.
+  export function clipboardWrite(text: string): void;
+  export function clipboardRead(): string;
+
   // Dialogs
   export function openFolderDialog(callback: (path: string) => void): void;
   export function openFileDialog(callback: (path: string) => void): void;

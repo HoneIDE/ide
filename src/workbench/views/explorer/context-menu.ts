@@ -4,10 +4,14 @@
  * Perry-safe: module-level state, for-loops, no closures capturing mutable vars.
  * Closures capture path/name by value and pass to module-level action functions.
  */
-import { menuCreate, menuAddItem, menuAddSeparator } from 'perry/ui';
+import { menuCreate, menuAddItem, menuAddSeparator, clipboardWrite } from 'perry/ui';
 import { t } from 'perry/i18n';
-import { execSync } from 'child_process';
-import { writeFileSync, unlinkSync, mkdirSync } from 'fs';
+import { spawnSync } from 'child_process';
+import { writeFileSync, unlinkSync, mkdirSync, isDirectory, existsSync } from 'fs';
+import { join } from 'path';
+
+// Platform constant — 0=macOS, 1=iOS, 3=Windows, 4=Linux, 5=web.
+declare const __platform__: number;
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -54,39 +58,144 @@ export function setContextMenuTerminalOpener(cb: (dir: string) => void): void {
 // ---------------------------------------------------------------------------
 
 function copyToClipboard(text: string): void {
-  let tmpPath = '/tmp/hone_clip.tmp';
-  try {
-    writeFileSync(tmpPath, text);
-    execSync('pbcopy < /tmp/hone_clip.tmp');
-  } catch (e) {
-    try { execSync('cmd /c clip < /tmp/hone_clip.tmp'); } catch (e2) {}
-  }
-  try { unlinkSync(tmpPath); } catch (e) {}
+  // Perry's clipboardWrite handles pbcopy / clip.exe / xclip per platform —
+  // followup §5 mandates this in place of shelling out.
+  clipboardWrite(text);
 }
 
-// ---------------------------------------------------------------------------
-// Parse osascript dialog result — extracts "text returned:" value
-// ---------------------------------------------------------------------------
+// Cross-platform input prompt. macOS uses AppleScript dialog; Windows uses
+// PowerShell + VB InputBox; other platforms return '' (no native prompt yet).
+// followup §5: prefer perry/ui Alert/Input widgets when they ship.
+function promptInputCrossPlatform(title: string, defaultValue: string): string {
+  if (__platform__ === 0) return promptInputMac(title, defaultValue);
+  if (__platform__ === 3) return promptInputWindows(title, defaultValue);
+  return '';
+}
 
-function parseDialogResult(result: string): string {
-  let text = '';
-  let needle = 'text returned:';
-  let trIdx = -1;
-  for (let i = 0; i < result.length; i++) {
-    let found = 1;
-    for (let j = 0; j < needle.length; j++) {
-      if (i + j >= result.length) { found = 0; break; }
-      if (result.charCodeAt(i + j) !== needle.charCodeAt(j)) { found = 0; break; }
-    }
-    if (found > 0) { trIdx = i + needle.length; break; }
+function promptInputMac(title: string, defaultValue: string): string {
+  // Escape `"` and `\` for the AppleScript string literal.
+  let safeTitle = '';
+  for (let i = 0; i < title.length; i++) {
+    const c = title.charCodeAt(i);
+    if (c === 92) safeTitle += '\\\\';
+    else if (c === 34) safeTitle += '\\"';
+    else safeTitle += title.charAt(i);
   }
-  if (trIdx < 0) return '';
-  for (let i = trIdx; i < result.length; i++) {
-    const c = result.charCodeAt(i);
-    if (c === 10 || c === 13) break;
-    text += result.charAt(i);
+  let safeDefault = '';
+  for (let i = 0; i < defaultValue.length; i++) {
+    const c = defaultValue.charCodeAt(i);
+    if (c === 92) safeDefault += '\\\\';
+    else if (c === 34) safeDefault += '\\"';
+    else safeDefault += defaultValue.charAt(i);
   }
-  return text;
+  let script = 'try\n';
+  script += '  set result to text returned of (display dialog "' + safeTitle + '" default answer "' + safeDefault + '" buttons {"Cancel","OK"} default button "OK" cancel button "Cancel")\n';
+  script += '  return result\n';
+  script += 'on error number -128\n';
+  script += '  return ""\n';
+  script += 'end try\n';
+  try {
+    const r = spawnSync('osascript', ['-e', script]);
+    if (r.status !== 0) return '';
+    let out = r.stdout;
+    let end = out.length;
+    while (end > 0 && (out.charCodeAt(end - 1) === 10 || out.charCodeAt(end - 1) === 13)) end--;
+    return out.slice(0, end);
+  } catch (_e: any) {
+    return '';
+  }
+}
+
+function promptInputWindows(title: string, defaultValue: string): string {
+  // Escape single quotes (double them) for PS single-quoted literal.
+  let safeTitle = '';
+  for (let i = 0; i < title.length; i++) {
+    const c = title.charCodeAt(i);
+    if (c === 39) safeTitle += "''";
+    else safeTitle += title.charAt(i);
+  }
+  let safeDefault = '';
+  for (let i = 0; i < defaultValue.length; i++) {
+    const c = defaultValue.charCodeAt(i);
+    if (c === 39) safeDefault += "''";
+    else safeDefault += defaultValue.charAt(i);
+  }
+  let ps = '[void][System.Reflection.Assembly]::LoadWithPartialName(\'Microsoft.VisualBasic\');';
+  ps += '$r = [Microsoft.VisualBasic.Interaction]::InputBox(\'' + safeTitle + '\',\'Hone\',\'' + safeDefault + '\');';
+  ps += '[Console]::Out.Write($r)';
+  try {
+    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+    if (r.status !== 0) return '';
+    let out = r.stdout;
+    let end = out.length;
+    while (end > 0 && (out.charCodeAt(end - 1) === 10 || out.charCodeAt(end - 1) === 13)) end--;
+    return out.slice(0, end);
+  } catch (_e: any) {
+    return '';
+  }
+}
+
+// Cross-platform confirm. Returns 1 = OK, 0 = Cancel.
+function confirmCrossPlatform(title: string, message: string): number {
+  if (__platform__ === 0) return confirmMac(title, message);
+  if (__platform__ === 3) return confirmWindows(title, message);
+  return 0;
+}
+
+function confirmMac(title: string, message: string): number {
+  let safeTitle = '';
+  for (let i = 0; i < title.length; i++) {
+    const c = title.charCodeAt(i);
+    if (c === 92) safeTitle += '\\\\';
+    else if (c === 34) safeTitle += '\\"';
+    else safeTitle += title.charAt(i);
+  }
+  let safeMsg = '';
+  for (let i = 0; i < message.length; i++) {
+    const c = message.charCodeAt(i);
+    if (c === 92) safeMsg += '\\\\';
+    else if (c === 34) safeMsg += '\\"';
+    else safeMsg += message.charAt(i);
+  }
+  let script = 'try\n';
+  script += '  set result to button returned of (display alert "' + safeTitle + '" message "' + safeMsg + '" buttons {"Cancel","OK"} cancel button "Cancel" default button "OK")\n';
+  script += '  if result is "OK" then return "1"\n';
+  script += '  return "0"\n';
+  script += 'on error number -128\n';
+  script += '  return "0"\n';
+  script += 'end try\n';
+  try {
+    const r = spawnSync('osascript', ['-e', script]);
+    if (r.status !== 0) return 0;
+    return r.stdout.length > 0 && r.stdout.charAt(0) === '1' ? 1 : 0;
+  } catch (_e: any) {
+    return 0;
+  }
+}
+
+function confirmWindows(title: string, message: string): number {
+  let safeTitle = '';
+  for (let i = 0; i < title.length; i++) {
+    const c = title.charCodeAt(i);
+    if (c === 39) safeTitle += "''";
+    else safeTitle += title.charAt(i);
+  }
+  let safeMsg = '';
+  for (let i = 0; i < message.length; i++) {
+    const c = message.charCodeAt(i);
+    if (c === 39) safeMsg += "''";
+    else safeMsg += message.charAt(i);
+  }
+  let ps = '[void][System.Reflection.Assembly]::LoadWithPartialName(\'System.Windows.Forms\');';
+  ps += '$r = [System.Windows.Forms.MessageBox]::Show(\'' + safeMsg + '\',\'' + safeTitle + '\',\'OKCancel\',\'Question\');';
+  ps += 'if ($r -eq \'OK\') { [Console]::Out.Write(\'1\') } else { [Console]::Out.Write(\'0\') }';
+  try {
+    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+    if (r.status !== 0) return 0;
+    return r.stdout.length > 0 && r.stdout.charAt(0) === '1' ? 1 : 0;
+  } catch (_e: any) {
+    return 0;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -132,7 +241,7 @@ function onNewFile(parentDir: string): void {
   setTimeout(() => { doNewFile(); }, 0);
 }
 
-function onNewFolder(parentDir: string): void {
+export function onNewFolder(parentDir: string): void {
   _pendingParentDir = parentDir;
   setTimeout(() => { doNewFolder(); }, 0);
 }
@@ -172,16 +281,17 @@ function doCopyRelPath(): void {
 }
 
 function doReveal(): void {
-  let tmpPath = '/tmp/hone_reveal.tmp';
-  try {
-    writeFileSync(tmpPath, _pendingPath);
-    execSync('cat /tmp/hone_reveal.tmp | xargs -I{} open -R "{}"');
-  } catch (e) {
-    try {
-      execSync('cat /tmp/hone_reveal.tmp | xargs -I{} explorer /select,"{}"');
-    } catch (e2) {}
+  // SHIP-V1-GAPS.md #1: argv-form spawn. macOS: `open -R <path>` (Finder
+  // selects the file). Windows: `explorer /select,<path>` (selects in File
+  // Explorer). Linux: best-effort `xdg-open` on the parent dir — there's no
+  // standard file-manager reveal flag.
+  if (__platform__ === 3) {
+    try { spawnSync('explorer', ['/select,' + _pendingPath]); } catch (_e: any) {}
+  } else if (__platform__ === 0) {
+    try { spawnSync('open', ['-R', _pendingPath]); } catch (_e: any) {}
+  } else {
+    try { spawnSync('xdg-open', [getParentDir(_pendingPath)]); } catch (_e: any) {}
   }
-  try { unlinkSync(tmpPath); } catch (e) {}
 }
 
 function doOpenTerminal(): void {
@@ -189,21 +299,23 @@ function doOpenTerminal(): void {
 }
 
 function doNewFile(): void {
-  let result = '';
-  try {
-    result = execSync("osascript -e 'display dialog \"" + t('Enter file name:') + "\" default answer \"untitled.ts\" buttons {\"" + t('Cancel') + "\",\"" + t('Create') + "\"} default button \"" + t('Create') + "\"'") as unknown as string;
-  } catch (e) {
+  const fileName = promptInputCrossPlatform(t('Enter file name:'), 'untitled.ts');
+  if (fileName.length < 1) return;
+  // Use `join` so the path separator matches the host OS (no more `+ '/'`).
+  const filePath = join(_pendingParentDir, fileName);
+  // If the name collides with an existing file, OPEN it instead of
+  // `writeFileSync(path, '')` — which silently truncated the existing file
+  // to empty (data loss). Opening the existing file is also the more
+  // helpful behavior (matches VS Code's "New File" with a taken name).
+  let collides = 0;
+  try { if (existsSync(filePath)) collides = 1; } catch (_e: any) {}
+  if (collides > 0) {
+    _openFileInEditor(filePath, fileName);
     return;
   }
-  let fileName = parseDialogResult(result);
-  if (fileName.length < 1) return;
-  let filePath = '';
-  filePath += _pendingParentDir;
-  filePath += '/';
-  filePath += fileName;
   try {
     writeFileSync(filePath, '');
-  } catch (e) {
+  } catch (_e: any) {
     return;
   }
   _refreshSidebar();
@@ -211,83 +323,122 @@ function doNewFile(): void {
 }
 
 function doNewFolder(): void {
-  let result = '';
-  try {
-    result = execSync("osascript -e 'display dialog \"" + t('Enter folder name:') + "\" default answer \"new-folder\" buttons {\"" + t('Cancel') + "\",\"" + t('Create') + "\"} default button \"" + t('Create') + "\"'") as unknown as string;
-  } catch (e) {
-    return;
-  }
-  let folderName = parseDialogResult(result);
+  const folderName = promptInputCrossPlatform(t('Enter folder name:'), 'new-folder');
   if (folderName.length < 1) return;
-  let dirPath = '';
-  dirPath += _pendingParentDir;
-  dirPath += '/';
-  dirPath += folderName;
+  const dirPath = join(_pendingParentDir, folderName);
   try {
     mkdirSync(dirPath);
-  } catch (e) {
+  } catch (_e: any) {
     return;
   }
   _refreshSidebar();
 }
 
 function doRename(): void {
-  let prompt = "osascript -e 'display dialog \"" + t('Rename to:') + "\" default answer \"";
-  prompt += _pendingName;
-  prompt += "\" buttons {\"" + t('Cancel') + "\",\"" + t('Rename') + "\"} default button \"" + t('Rename') + "\"'";
-  let result = '';
-  try {
-    result = execSync(prompt) as unknown as string;
-  } catch (e) {
-    return;
-  }
-  let newName = parseDialogResult(result);
+  const newName = promptInputCrossPlatform(t('Rename to:'), _pendingName);
   if (newName.length < 1) return;
-  let parentDir = getParentDir(_pendingPath);
-  let newPath = '';
-  newPath += parentDir;
-  newPath += '/';
-  newPath += newName;
-  try {
-    let tmpSrc = '/tmp/hone_rename_src.tmp';
-    let tmpDst = '/tmp/hone_rename_dst.tmp';
-    writeFileSync(tmpSrc, _pendingPath);
-    writeFileSync(tmpDst, newPath);
-    execSync('mv "$(cat /tmp/hone_rename_src.tmp)" "$(cat /tmp/hone_rename_dst.tmp)"');
-    try { unlinkSync(tmpSrc); } catch (e) {}
-    try { unlinkSync(tmpDst); } catch (e) {}
-  } catch (e) {
-    return;
+  const parentDir = getParentDir(_pendingPath);
+  const newPath = join(parentDir, newName);
+  if (newName === _pendingName) return; // no-op rename
+  // Refuse to clobber an existing target. `move /Y` (Windows) and `mv`
+  // without `-i` (Unix) BOTH silently overwrite — renaming foo.ts onto an
+  // existing bar.ts destroyed bar.ts with no warning. Confirm before any
+  // destructive overwrite so the user can't lose a file by a name typo.
+  let targetExists = 0;
+  try { if (existsSync(newPath)) targetExists = 1; } catch (_e: any) {}
+  if (targetExists > 0) {
+    const ok = confirmCrossPlatform(t('Overwrite?'), t('A file or folder named') + ' "' + newName + '" ' + t('already exists. Overwrite it? This cannot be undone.'));
+    if (ok < 1) return;
+  }
+  // SHIP-V1-GAPS.md #1: argv-form `mv` (Unix) or `move` (Windows). No more
+  // shell-string concatenation of user-controlled paths.
+  if (__platform__ === 3) {
+    try {
+      spawnSync('cmd', ['/c', 'move', '/Y', _pendingPath, newPath]);
+    } catch (_e: any) { return; }
+  } else {
+    try {
+      spawnSync('mv', [_pendingPath, newPath]);
+    } catch (_e: any) { return; }
   }
   _refreshSidebar();
 }
 
-function doDeleteItem(): void {
-  let prompt = "osascript -e 'display alert \"" + t('Delete') + "\" message \"" + t('Move to Trash?') + " \\\"";
-  prompt += _pendingName;
-  prompt += "\\\"\" buttons {\"" + t('Cancel') + "\",\"" + t('Move to Trash') + "\"} cancel button \"" + t('Cancel') + "\" default button \"" + t('Cancel') + "\"'";
+// Move a path to the OS Trash/Recycle Bin via the platform-native facility.
+// Returns 1 on success, 0 on failure. Recoverable, unlike unlink/rm -rf.
+// - Windows: Microsoft.VisualBasic.FileIO with SendToRecycleBin (works for
+//   files and dirs; present wherever .NET is, i.e. all supported Windows).
+// - macOS: Finder `delete` via osascript → moves to ~/.Trash.
+// - Linux: `gio trash` (glib; present on essentially all desktop Linux).
+function moveToTrash(p: string): number {
+  if (__platform__ === 3) {
+    // PowerShell single-quoted string: the only metachar is `'`, escaped by
+    // doubling it. Prevents both breakage and injection for paths with `'`.
+    let pe = '';
+    for (let i = 0; i < p.length; i++) {
+      const ch = p.charAt(i);
+      if (ch === "'") pe += "''"; else pe += ch;
+    }
+    const ps = "Add-Type -AssemblyName Microsoft.VisualBasic; if (Test-Path -LiteralPath '" + pe + "' -PathType Container) { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory('" + pe + "','OnlyErrorDialogs','SendToRecycleBin') } else { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('" + pe + "','OnlyErrorDialogs','SendToRecycleBin') }";
+    try {
+      const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+      if (r.status === 0) return 1;
+    } catch (_e: any) {}
+    return 0;
+  }
+  if (__platform__ === 0) {
+    // AppleScript double-quoted string: escape `\` then `"`.
+    let ae = '';
+    for (let i = 0; i < p.length; i++) {
+      const ch = p.charAt(i);
+      if (ch === '\\') ae += '\\\\';
+      else if (ch === '"') ae += '\\"';
+      else ae += ch;
+    }
+    const script = 'tell application "Finder" to delete (POSIX file "' + ae + '" as alias)';
+    try {
+      const r = spawnSync('osascript', ['-e', script]);
+      if (r.status === 0) return 1;
+    } catch (_e: any) {}
+    return 0;
+  }
+  // Linux / other
   try {
-    execSync(prompt);
-  } catch (e) {
-    // User cancelled
+    const r = spawnSync('gio', ['trash', p]);
+    if (r.status === 0) return 1;
+  } catch (_e: any) {}
+  return 0;
+}
+
+function doDeleteItem(): void {
+  const confirmed = confirmCrossPlatform(t('Delete'), t('Move to Trash?') + ' "' + _pendingName + '"');
+  if (confirmed < 1) return;
+  // The confirm says "Move to Trash" — so actually move to Trash, don't
+  // permanently destroy. Previously this ran unlinkSync / rm -rf / rmdir
+  // /S /Q, which is unrecoverable: the user reads "Trash" and reasonably
+  // believes they can restore it, but the file was gone forever. Try the
+  // OS Trash first; only fall back to permanent delete if Trash fails AND
+  // the user explicitly opts in to the irreversible delete.
+  if (moveToTrash(_pendingPath) > 0) {
+    _refreshSidebar();
     return;
   }
-  // Move to Trash via Finder (safer)
-  try {
-    let tmpPath = '/tmp/hone_trash.tmp';
-    writeFileSync(tmpPath, _pendingPath);
-    execSync("osascript -e 'tell application \"Finder\" to delete (POSIX file (do shell script \"cat /tmp/hone_trash.tmp\") as alias)'");
-    try { unlinkSync(tmpPath); } catch (e) {}
-  } catch (e) {
-    // Fallback: rm -rf
+  const hard = confirmCrossPlatform(t('Trash unavailable'), t('Could not move to Trash. Permanently delete') + ' "' + _pendingName + '"? ' + t('This cannot be undone.'));
+  if (hard < 1) return;
+  // SHIP-V1-GAPS.md #1: argv-form spawn for the recursive delete; plain
+  // files go through unlinkSync.
+  let isDir = 0;
+  try { if (isDirectory(_pendingPath)) isDir = 1; } catch (_e: any) {}
+  if (isDir < 1) {
+    try { unlinkSync(_pendingPath); } catch (_e: any) {}
+  } else if (__platform__ === 3) {
     try {
-      let tmpPath = '/tmp/hone_rm.tmp';
-      writeFileSync(tmpPath, _pendingPath);
-      execSync('cat /tmp/hone_rm.tmp | xargs -I{} rm -rf "{}"');
-      try { unlinkSync(tmpPath); } catch (e2) {}
-    } catch (e2) {
-      return;
-    }
+      spawnSync('cmd', ['/c', 'rmdir', '/S', '/Q', _pendingPath]);
+    } catch (_e: any) {}
+  } else {
+    try {
+      spawnSync('rm', ['-rf', _pendingPath]);
+    } catch (_e: any) {}
   }
   _refreshSidebar();
 }

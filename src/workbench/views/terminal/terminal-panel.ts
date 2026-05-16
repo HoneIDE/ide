@@ -10,7 +10,7 @@ import {
   VStack, HStack, Text, Button, Spacer,
   ScrollView, scrollViewSetChild,
   textSetFontSize, textSetFontWeight, textSetFontFamily,
-  buttonSetBordered, buttonSetImage, buttonSetImagePosition,
+  buttonSetBordered, buttonSetImagePosition,
   widgetAddChild, widgetClearChildren, widgetSetHugging, widgetSetHeight, widgetSetWidth,
   widgetSetHidden,
   widgetSetBackgroundColor,
@@ -19,14 +19,17 @@ import {
 import { t } from 'perry/i18n';
 // Import triggers Perry to discover @honeide/terminal package.json FFI manifest
 import { TERMINAL_LIVE } from '@honeide/terminal/perry/live';
-import { hexToRGBA, setBg, setFg, setBtnFg, setBtnTint } from '../../ui-helpers';
-import { getWorkbenchSettings } from '../../settings';
+import { hexToRGBA, setBg, setFg, setBtnFg, setBtnTint, monoFont, setIconButton } from '../../ui-helpers';
+import { getWorkbenchSettings, onSettingsChange } from '../../settings';
 import {
   getDiagFiles, getDiagLines, getDiagMessages, getDiagSeverities, getDiagCount,
   onDiagnosticsUpdate,
 } from '../lsp/diagnostics-panel';
 import { getFileName } from '../../ui-helpers';
 import { getEditorBackground, getEditorForeground, getEditorCursorForeground, getEditorSelectionBackground, getSideBarForeground, getPanelBackground, getPanelBorder, getStatusAddedColor, getStatusModifiedColor, getStatusDeletedColor, getSecondaryTextColor, isCurrentThemeDark } from '../../theme/theme-colors';
+
+// Platform constant injected by Perry — 0=macOS, 1=iOS, 3=Windows, 4=Linux, 5=web.
+declare const __platform__: number;
 
 // FFI declarations — LiveTerminal API
 declare function hone_terminal_open(rows: number, cols: number, shell: number, cwd: number): number;
@@ -45,6 +48,12 @@ let pollInterval: number = 0;
 let termCwd: string = '';
 let termContainer: unknown = null;
 let termStarted: number = 0;
+// SHIP-V1-GAPS.md #54: track the PTY grid we last allocated so the settings
+// listener can detect changes and call `hone_terminal_resize` only when the
+// new values differ. Avoids gratuitous PTY ioctls on unrelated saves.
+let termCurrentRows: number = 0;
+let termCurrentCols: number = 0;
+let termSettingsListenerInstalled: number = 0;
 
 // Header tab buttons
 let headerTabBtns: unknown[] = [];
@@ -77,6 +86,32 @@ export function setTerminalCwd(cwd: string): void {
 function doPoll(): void {
   if (termHandle === 0) return;
   hone_terminal_poll(termHandle);
+}
+
+// SHIP-V1-GAPS.md #54: re-issue the PTY ioctl when the user changes
+// terminalRows / terminalCols. Skipped if no active terminal or if the
+// values haven't moved.
+function resizeTerminalIfChanged(): void {
+  if (termHandle === 0) return;
+  const s = getWorkbenchSettings();
+  const r = s.terminalRows > 0 ? s.terminalRows : 30;
+  const c = s.terminalCols > 0 ? s.terminalCols : 120;
+  if (r === termCurrentRows && c === termCurrentCols) return;
+  hone_terminal_resize(termHandle, r, c);
+  termCurrentRows = r;
+  termCurrentCols = c;
+}
+
+/** SHIP-V1-GAPS.md #54: external entry point so render.ts can resize on
+ *  panel show/hide. Caller passes the new rows/cols based on the terminal
+ *  panel's effective pixel dimensions divided by glyph metrics. */
+export function resizeTerminal(rows: number, cols: number): void {
+  if (termHandle === 0) return;
+  if (rows < 4 || cols < 40) return;
+  if (rows === termCurrentRows && cols === termCurrentCols) return;
+  hone_terminal_resize(termHandle, rows, cols);
+  termCurrentRows = rows;
+  termCurrentCols = cols;
 }
 
 function onHeaderTabClick(idx: number): void {
@@ -149,7 +184,7 @@ function refreshProblemsView(): void {
 
     const sevLabel = Text(severityChar);
     textSetFontSize(sevLabel, 11);
-    textSetFontFamily(sevLabel, 11, 'Menlo');
+    textSetFontFamily(sevLabel, 11, monoFont());
     setFg(sevLabel, severityColor);
 
     const fname = getFileName(files[i]);
@@ -249,7 +284,7 @@ function buildTerminalHeader(colors: any): unknown {
   // Maximize button
   const maxBtn = Button('', () => { onMaximizeClick(); });
   buttonSetBordered(maxBtn, 0);
-  buttonSetImage(maxBtn, 'arrow.up.left.and.arrow.down.right');
+  setIconButton(maxBtn, 'arrow.up.left.and.arrow.down.right');
   buttonSetImagePosition(maxBtn, 1);
   textSetFontSize(maxBtn, 10);
   setBtnTint(maxBtn, getSideBarForeground());
@@ -258,7 +293,7 @@ function buildTerminalHeader(colors: any): unknown {
   // Close button
   const closeBtn = Button('', () => { onCloseClick(); });
   buttonSetBordered(closeBtn, 0);
-  buttonSetImage(closeBtn, 'xmark');
+  setIconButton(closeBtn, 'xmark');
   buttonSetImagePosition(closeBtn, 1);
   textSetFontSize(closeBtn, 10);
   setBtnTint(closeBtn, getSideBarForeground());
@@ -299,21 +334,56 @@ export function renderTerminalPanel(container: unknown, colors: any): void {
   // Register diagnostics update callback
   onDiagnosticsUpdate(() => { onDiagsUpdated(); });
 
-  // Get CWD from workspace settings
+  // Get CWD from workspace settings, or fall back to the user's home dir
+  // (HOME on Unix-likes, USERPROFILE on Windows). The prior literal
+  // `/Users/amlug` was a previous-agent leak that no longer exists outside
+  // their dev box.
   let cwd = termCwd;
+  const s = getWorkbenchSettings();
   if (cwd.length < 1) {
-    const s = getWorkbenchSettings();
     if (s.lastOpenFolder.length > 0) {
       cwd = s.lastOpenFolder;
     }
   }
   if (cwd.length < 1) {
-    cwd = '/Users/amlug';
+    const home = (process as any).env && ((process as any).env.HOME || (process as any).env.USERPROFILE);
+    if (home && home.length > 0) cwd = home;
+  }
+  if (cwd.length < 1) {
+    // Last-resort: try cwd() (where the binary was launched from).
+    try { cwd = (process as any).cwd(); } catch (_e: any) { cwd = ''; }
   }
 
-  // Open terminal: 14 rows x 80 cols
-  const shell = '/bin/zsh';
-  termHandle = hone_terminal_open(14, 80, shell as any, cwd as any);
+  // SHIP-V1-GAPS.md #52: shell defaults per platform.
+  // 0=macOS, 1=iOS, 3=Windows, 4=Linux. iOS doesn't have a shell — terminal
+  // is host-tunneled on iPad (#113), so this branch only matters on desktop.
+  let shell = s.terminalShell;
+  if (shell.length < 1) {
+    if (__platform__ === 3) shell = 'powershell.exe';
+    else if (__platform__ === 4) shell = '/bin/bash';
+    else shell = '/bin/zsh';
+  }
+
+  // SHIP-V1-GAPS.md #54: PTY grid size — pulled from settings so the user
+  // can match their panel size. Defaults 30 rows x 120 cols are large enough
+  // to feel like a real terminal but small enough to fit a half-width panel.
+  let rows = s.terminalRows > 0 ? s.terminalRows : 30;
+  let cols = s.terminalCols > 0 ? s.terminalCols : 120;
+  // Defensive: never overwrite a live PTY handle. Today renderTerminalPanel
+  // has a single startup call site so this can't trigger, but it sits
+  // directly in the path of #51 (multiple terminals / splits) which will
+  // add more open-calls — without this, a second render would orphan the
+  // previous shell process (handle lost; destroyTerminalPanel can only
+  // close the current one). Mirrors the stopClaudeSession-before-start
+  // guard pattern. Leak-safe by default for the future expansion.
+  if (termHandle !== 0) {
+    hone_terminal_close(termHandle);
+    termHandle = 0;
+  }
+  termHandle = hone_terminal_open(rows, cols, shell as any, cwd as any);
+  // Record so settings-change handler knows whether a resize is needed.
+  termCurrentRows = rows;
+  termCurrentCols = cols;
 
   // Get the NSView and embed it
   const nsview = hone_terminal_nsview(termHandle);
@@ -323,6 +393,14 @@ export function renderTerminalPanel(container: unknown, colors: any): void {
 
   // Poll every 16ms for PTY output
   pollInterval = setInterval(() => { doPoll(); }, 16);
+
+  // SHIP-V1-GAPS.md #54: react to settings-driven grid resize. Wired once
+  // per process so closing + reopening the terminal panel doesn't pile up
+  // listeners. The listener is no-op when there's no active termHandle.
+  if (termSettingsListenerInstalled < 1) {
+    onSettingsChange((s2) => { resizeTerminalIfChanged(); });
+    termSettingsListenerInstalled = 1;
+  }
 
   // Apply theme colors after a delay to ensure NSView is fully initialized
   setTimeout(() => { applyTermColors(); }, 500);

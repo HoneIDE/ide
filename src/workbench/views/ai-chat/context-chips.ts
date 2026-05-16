@@ -8,7 +8,7 @@ import {
   buttonSetBordered,
   widgetAddChild, widgetSetBackgroundColor,
 } from 'perry/ui';
-import { setFg, setBtnFg } from '../../ui-helpers';
+import { setFg, setBtnFg, monoFont } from '../../ui-helpers';
 import { jsonEscape } from './sse-parser';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getSideBarForeground, isCurrentThemeDark } from '../../theme/theme-colors';
@@ -181,7 +181,7 @@ export function renderChips(container: unknown, colors: ResolvedUIColors): void 
 
     const chipLabel = Text(label);
     textSetFontSize(chipLabel, 10);
-    textSetFontFamily(chipLabel, 10, 'Menlo');
+    textSetFontFamily(chipLabel, 10, monoFont());
     setFg(chipLabel, getSideBarForeground());
 
     const removeFn = getRemoveFn(i);

@@ -4,11 +4,11 @@
 import {
   VStack, VStackWithInsets, HStack, Text, Button, Spacer,
   textSetFontSize, textSetFontWeight,
-  buttonSetBordered, buttonSetImage, buttonSetImagePosition,
+  buttonSetBordered, buttonSetImagePosition,
   widgetAddChild,
 } from 'perry/ui';
 import { t } from 'perry/i18n';
-import { setFg, setBtnFg, setBg, setBtnTint } from '../../ui-helpers';
+import { setFg, setBtnFg, setBg, setBtnTint, setIconButton } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getEditorForeground, getEditorBackground } from '../../theme/theme-colors';
 import { getRecentCount, getRecentPath, getRecentType } from '../recent/recent-store';
@@ -148,11 +148,11 @@ export function createWelcomeContent(colors: ResolvedUIColors): unknown {
 
       // Icon: folder or file
       if (type > 0) {
-        buttonSetImage(recentBtn, 'folder.fill');
+        setIconButton(recentBtn, 'folder.fill');
         buttonSetImagePosition(recentBtn, 0);
         setBtnTint(recentBtn, '#E8AB53');
       } else {
-        buttonSetImage(recentBtn, 'doc.text');
+        setIconButton(recentBtn, 'doc.text');
         buttonSetImagePosition(recentBtn, 0);
       }
 

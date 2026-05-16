@@ -12,7 +12,9 @@ import {
   buttonSetBordered, buttonSetTitle, buttonSetTextColor, buttonSetContentTintColor,
   widgetAddChild, widgetSetWidth, widgetSetHeight,
   widgetClearChildren, widgetSetHugging, widgetMatchParentWidth,
+  clipboardWrite,
 } from 'perry/ui';
+import { getOrCreateDeviceId } from '../../paths';
 import { t } from 'perry/i18n';
 import { setFg, setBtnFg, setBg, hexToRGBA } from '../../ui-helpers';
 import {
@@ -57,6 +59,9 @@ let _hTrimWsBtn: unknown = null;
 // Widget handles — Terminal
 let _hTermFontSizeVal: unknown = null;
 let _hTermCursorBtn: unknown = null;
+let _hTermRowsVal: unknown = null;
+let _hTermColsVal: unknown = null;
+let _hExplorerGitignoreBtn: unknown = null;
 
 // Widget handles — AI
 let _hAiInlineBtn: unknown = null;
@@ -120,6 +125,13 @@ function onTelemetryToggle(): void { _pendingAction = 27; setTimeout(() => { def
 function onInsertFinalNewlineToggle(): void { _pendingAction = 28; setTimeout(() => { deferredAction(); }, 0); }
 function onTrimFinalNewlinesToggle(): void { _pendingAction = 29; setTimeout(() => { deferredAction(); }, 0); }
 function onFormatNormalizeIndentToggle(): void { _pendingAction = 30; setTimeout(() => { deferredAction(); }, 0); }
+// SHIP-V1-GAPS.md #52 / #54 / #50: surface terminalShell / terminalRows /
+// terminalCols / explorerRespectGitignore in the settings UI.
+function onTermRowsUp(): void { _pendingAction = 31; setTimeout(() => { deferredAction(); }, 0); }
+function onTermRowsDown(): void { _pendingAction = 32; setTimeout(() => { deferredAction(); }, 0); }
+function onTermColsUp(): void { _pendingAction = 33; setTimeout(() => { deferredAction(); }, 0); }
+function onTermColsDown(): void { _pendingAction = 34; setTimeout(() => { deferredAction(); }, 0); }
+function onExplorerGitignoreToggle(): void { _pendingAction = 35; setTimeout(() => { deferredAction(); }, 0); }
 
 // ---------------------------------------------------------------------------
 // Cycle helpers
@@ -362,6 +374,45 @@ function deferredAction(): void {
     setBoolSetting('editorFormatNormalizeIndent', next);
     if (_hEdFormatNormalizeIndentBtn) updateBtn(_hEdFormatNormalizeIndentBtn, next > 0 ? t('On') : t('Off'));
   }
+  // SHIP-V1-GAPS.md #54: terminal grid rows/cols. Clamped to keep PTY sane.
+  if (action === 31) {
+    const next = s.terminalRows + 1;
+    if (next <= 200) {
+      setNumberSetting('terminalRows', next);
+      if (_hTermRowsVal) updateValBtn(_hTermRowsVal, next.toString());
+    }
+  }
+  if (action === 32) {
+    const next = s.terminalRows - 1;
+    if (next >= 4) {
+      setNumberSetting('terminalRows', next);
+      if (_hTermRowsVal) updateValBtn(_hTermRowsVal, next.toString());
+    }
+  }
+  if (action === 33) {
+    const next = s.terminalCols + 10;
+    if (next <= 500) {
+      setNumberSetting('terminalCols', next);
+      if (_hTermColsVal) updateValBtn(_hTermColsVal, next.toString());
+    }
+  }
+  if (action === 34) {
+    const next = s.terminalCols - 10;
+    if (next >= 40) {
+      setNumberSetting('terminalCols', next);
+      if (_hTermColsVal) updateValBtn(_hTermColsVal, next.toString());
+    }
+  }
+  // SHIP-V1-GAPS.md #50: gitignore-aware explorer toggle.
+  if (action === 35) {
+    const next = s.explorerRespectGitignore ? 0 : 1;
+    setBoolSetting('explorerRespectGitignore', next);
+    if (_hExplorerGitignoreBtn) updateBtn(_hExplorerGitignoreBtn, next > 0 ? t('On') : t('Off'));
+  }
+}
+
+function onTermShellChange(text: string): void {
+  setStringSetting('terminalShell', text);
 }
 
 // ---------------------------------------------------------------------------
@@ -654,13 +705,13 @@ function buildContent(ctr: unknown, colors: ResolvedUIColors): void {
     if (matchesSearch(t('Insert Spaces'), t('Insert spaces when pressing Tab')) > 0)
       _hEdInsertSpacesBtn = makeToggleRow(ctr, colors, t('Insert Spaces'), t('Insert spaces when pressing Tab'), s.editorInsertSpaces ? 1 : 0, () => { onInsertSpacesToggle(); });
     if (matchesSearch(t('Word Wrap'), t('Controls how lines should wrap')) > 0)
-      _hEdWordWrapBtn = makeCycleRow(ctr, colors, t('Word Wrap'), t('Controls how lines should wrap'), s.editorWordWrap, () => { onWordWrapCycle(); });
+      _hEdWordWrapBtn = makeCycleRow(ctr, colors, t('Word Wrap'), t('Controls how lines should wrap. Setting is saved but not yet active (v1.1).'), s.editorWordWrap, () => { onWordWrapCycle(); });
     if (matchesSearch(t('Line Numbers'), t('Controls the display of line numbers')) > 0)
-      _hEdLineNumBtn = makeCycleRow(ctr, colors, t('Line Numbers'), t('Controls the display of line numbers'), s.editorLineNumbers, () => { onLineNumCycle(); });
+      _hEdLineNumBtn = makeCycleRow(ctr, colors, t('Line Numbers'), t('Controls the display of line numbers. Setting is saved but not yet active (v1.1).'), s.editorLineNumbers, () => { onLineNumCycle(); });
     if (matchesSearch(t('Cursor Style'), t('Controls the cursor style in the editor')) > 0)
-      _hEdCursorStyleBtn = makeCycleRow(ctr, colors, t('Cursor Style'), t('Controls the cursor style in the editor'), s.editorCursorStyle, () => { onCursorStyleCycle(); });
+      _hEdCursorStyleBtn = makeCycleRow(ctr, colors, t('Cursor Style'), t('Controls the cursor style in the editor. Setting is saved but not yet active (v1.1).'), s.editorCursorStyle, () => { onCursorStyleCycle(); });
     if (matchesSearch(t('Minimap'), t('Controls whether the minimap is shown')) > 0)
-      _hEdMinimapBtn = makeToggleRow(ctr, colors, t('Minimap'), t('Controls whether the minimap is shown'), s.editorMinimapEnabled ? 1 : 0, () => { onMinimapToggle(); });
+      _hEdMinimapBtn = makeToggleRow(ctr, colors, t('Minimap'), t('Controls whether the minimap is shown. Setting is saved but not yet active (v1.1).'), s.editorMinimapEnabled ? 1 : 0, () => { onMinimapToggle(); });
     if (matchesSearch(t('Format on Save'), t('Format the file on save')) > 0)
       _hEdFormatOnSaveBtn = makeToggleRow(ctr, colors, t('Format on Save'), t('Format the file on save'), s.editorFormatOnSave ? 1 : 0, () => { onFormatOnSaveToggle(); });
     if (matchesSearch(t('Insert Final Newline'), t('Insert a final newline at end of file on save')) > 0)
@@ -707,13 +758,23 @@ function buildContent(ctr: unknown, colors: ResolvedUIColors): void {
   // ---- Terminal ----
   if (matchesSearch(t('Terminal Font Size'), t('Controls the font size of the terminal')) > 0) hasTerminal = 1;
   if (matchesSearch(t('Terminal Cursor Style'), t('Controls the cursor style of the terminal')) > 0) hasTerminal = 1;
+  // SHIP-V1-GAPS.md #52 / #54.
+  if (matchesSearch(t('Terminal Shell'), t('Command used to launch the integrated terminal')) > 0) hasTerminal = 1;
+  if (matchesSearch(t('Terminal Rows'), t('PTY grid row count')) > 0) hasTerminal = 1;
+  if (matchesSearch(t('Terminal Cols'), t('PTY grid column count')) > 0) hasTerminal = 1;
 
   if (hasTerminal > 0) {
     makeSection(ctr, colors, t('Terminal'));
     if (matchesSearch(t('Terminal Font Size'), t('Controls the font size of the terminal')) > 0)
-      _hTermFontSizeVal = makeStepperRow(ctr, colors, t('Terminal Font Size'), t('Controls the font size of the terminal'), s.terminalFontSize, () => { onTermFontSizeDown(); }, () => { onTermFontSizeUp(); });
+      _hTermFontSizeVal = makeStepperRow(ctr, colors, t('Terminal Font Size'), t('Controls the font size of the terminal. Setting is saved but not yet active (v1.1).'), s.terminalFontSize, () => { onTermFontSizeDown(); }, () => { onTermFontSizeUp(); });
     if (matchesSearch(t('Terminal Cursor Style'), t('Controls the cursor style of the terminal')) > 0)
-      _hTermCursorBtn = makeCycleRow(ctr, colors, t('Terminal Cursor Style'), t('Controls the cursor style of the terminal'), s.terminalCursorStyle, () => { onTermCursorCycle(); });
+      _hTermCursorBtn = makeCycleRow(ctr, colors, t('Terminal Cursor Style'), t('Controls the cursor style of the terminal. Setting is saved but not yet active (v1.1).'), s.terminalCursorStyle, () => { onTermCursorCycle(); });
+    if (matchesSearch(t('Terminal Shell'), t('Command used to launch the integrated terminal')) > 0)
+      makeTextRow(ctr, colors, t('Terminal Shell'), t('Command used to launch the integrated terminal. Empty = platform default (zsh/bash/powershell).'), s.terminalShell, onTermShellChange);
+    if (matchesSearch(t('Terminal Rows'), t('PTY grid row count')) > 0)
+      _hTermRowsVal = makeStepperRow(ctr, colors, t('Terminal Rows'), t('PTY grid row count. Defaults to 30.'), s.terminalRows, () => { onTermRowsDown(); }, () => { onTermRowsUp(); });
+    if (matchesSearch(t('Terminal Cols'), t('PTY grid column count')) > 0)
+      _hTermColsVal = makeStepperRow(ctr, colors, t('Terminal Cols'), t('PTY grid column count. Defaults to 120.'), s.terminalCols, () => { onTermColsDown(); }, () => { onTermColsUp(); });
   }
 
   // ---- AI ----
@@ -770,14 +831,42 @@ function buildContent(ctr: unknown, colors: ResolvedUIColors): void {
       _hSearchSymlinksBtn = makeToggleRow(ctr, colors, t('Follow Symlinks'), t('Follow symbolic links while searching'), s.searchFollowSymlinks ? 1 : 0, () => { onSearchSymlinksToggle(); });
   }
 
+  // ---- Explorer (SHIP-V1-GAPS.md #50) ----
+  let hasExplorer = 0;
+  if (matchesSearch(t('Respect Gitignore'), t('Hide files excluded by .gitignore from the explorer')) > 0) hasExplorer = 1;
+  if (hasExplorer > 0) {
+    makeSection(ctr, colors, t('Explorer'));
+    if (matchesSearch(t('Respect Gitignore'), t('Hide files excluded by .gitignore from the explorer')) > 0)
+      _hExplorerGitignoreBtn = makeToggleRow(ctr, colors, t('Respect Gitignore'), t('Hide files excluded by .gitignore from the file tree. Toggle off to show ignored files.'), s.explorerRespectGitignore ? 1 : 0, () => { onExplorerGitignoreToggle(); });
+  }
+
   // ---- Privacy ----
   let hasPrivacy = 0;
   if (matchesSearch(t('Anonymous Statistics'), t('Share anonymous usage statistics to help improve Hone')) > 0) hasPrivacy = 1;
+  // SHIP-V1-GAPS.md #9 follow-up: device-ID display lets users request
+  // deletion from Chirp telemetry (privacy policy lists the device-ID
+  // identifier as the only join key).
+  if (matchesSearch(t('Device ID'), t('Anonymous identifier sent with telemetry events')) > 0) hasPrivacy = 1;
 
   if (hasPrivacy > 0) {
     makeSection(ctr, colors, t('Privacy'));
     if (matchesSearch(t('Anonymous Statistics'), t('Share anonymous usage statistics to help improve Hone')) > 0)
       _hTelemetryBtn = makeToggleRow(ctr, colors, t('Anonymous Statistics'), t('Share anonymous usage statistics to help improve Hone. No file content, paths, or personal data is ever collected.'), s.telemetryEnabled ? 1 : 0, () => { onTelemetryToggle(); });
+    if (matchesSearch(t('Device ID'), t('Anonymous identifier sent with telemetry events')) > 0) {
+      const devId = getOrCreateDeviceId();
+      // Show only first 8 chars in the row; full ID goes to clipboard.
+      const shortId = devId.length > 8 ? devId.slice(0, 8) + '…' : devId;
+      const fullId = devId;
+      const idVal = Button(shortId + '  ' + t('Copy'), () => { clipboardWrite(fullId); });
+      buttonSetBordered(idVal, 0);
+      setBtnFg(idVal, getInputPlaceholderForeground());
+      textSetFontSize(idVal, 12);
+      const idLbl = makeSettingLabel(t('Device ID'), t('Anonymous identifier sent with telemetry events. Email support@hone.codes with this ID to request deletion.'));
+      widgetSetWidth(idLbl, 200);
+      const idRow = HStack(12, [idLbl, idVal]);
+      widgetSetHeight(idRow, 26);
+      widgetAddChild(ctr, idRow);
+    }
   }
 
   // ---- Account ----

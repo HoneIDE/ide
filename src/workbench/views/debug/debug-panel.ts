@@ -11,7 +11,7 @@
 import {
   VStack, HStack, Text, Button, Spacer,
   textSetFontSize, textSetFontWeight, textSetFontFamily, textSetString,
-  buttonSetBordered, buttonSetImage, buttonSetImagePosition,
+  buttonSetBordered, buttonSetImagePosition,
   widgetAddChild, widgetClearChildren,
   widgetSetBackgroundColor,
 } from 'perry/ui';
@@ -19,9 +19,13 @@ import { t } from 'perry/i18n';
 import { execSync } from 'child_process';
 import { existsSync } from 'fs';
 import { spawn } from 'perry/thread';
-import { setFg, setBtnFg, setBtnTint } from '../../ui-helpers';
+import { setFg, setBtnFg, setBtnTint, monoFont, setIconButton } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getSideBarForeground, getStatusAddedColor, getStatusDeletedColor, getSecondaryTextColor } from '../../theme/theme-colors';
+import { getTempDir } from '../../paths';
+
+// Platform constant — 0=macOS, 1=iOS, 3=Windows, 4=Linux, 5=web.
+declare const __platform__: number;
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -30,6 +34,15 @@ import { getSideBarForeground, getStatusAddedColor, getStatusDeletedColor, getSe
 let debugReady: number = 0;
 let debugRunning: number = 0;
 let debugPaused: number = 0;
+// True while the background execSync thread is still blocked on the child
+// process (it returns only when the child exits). `debugStop()` cannot
+// actually kill the child (execSync captures no PID), so it must NOT clear
+// this — otherwise Run→Stop→Run on a long-lived program (a dev server,
+// `cargo run`, a REPL) re-passes the debugRunning guard and spawns ANOTHER
+// orphan copy each time, accumulating unkillable processes. Cleared only
+// in onRunComplete, i.e. when the child has genuinely exited. Real
+// stop/kill needs the spawnBackground+PID rearchitecture noted in #11 (v1.1).
+let _debugThreadInFlight: number = 0;
 let debugWorkspaceRoot: string = '';
 
 // Breakpoints: parallel arrays
@@ -223,71 +236,109 @@ function findCargoRoot(startDir: string): string {
   return '';
 }
 
-/** Build the shell command to run a file based on its extension. */
+/** Build the shell command to run a file based on its extension.
+ *
+ * Path quoting: every interpolated path (filePath, cargoRoot, debugBin) is
+ * wrapped in double quotes. Workspace paths frequently contain spaces on
+ * every desktop OS (`C:\Users\Foo\My Projects\...`, `~/Library/...`,
+ * `/Users/Foo Bar/...`). Double quotes preserve the path as one argv slot in
+ * both cmd.exe and POSIX `/bin/sh`. We don't need to escape `$` or backtick
+ * inside the quotes here because filesystem paths essentially never contain
+ * them. If they did, those characters would already trigger their own
+ * pathological POSIX behavior — out of scope for the run-file feature.
+ */
 function buildRunCommand(filePath: string, ext: string): string {
+  const qFile = '"' + filePath + '"';
   // TypeScript
   if (strEq(ext, 'ts') > 0) {
     let cmd = 'bun run ';
-    cmd += filePath;
+    cmd += qFile;
     return cmd;
   }
   // JavaScript
   if (strEq(ext, 'js') > 0) {
     let cmd = 'bun run ';
-    cmd += filePath;
+    cmd += qFile;
     return cmd;
   }
   // JSX / TSX
   if (strEq(ext, 'tsx') > 0 || strEq(ext, 'jsx') > 0) {
     let cmd = 'bun run ';
-    cmd += filePath;
+    cmd += qFile;
     return cmd;
   }
-  // Python
+  // Python — Windows usually has `python` (not `python3`); Unix typically
+  // has `python3`. Best-effort: probe via `findExecutableOnPath`... actually
+  // simpler: `python` resolves on both (Windows Python launcher provides it,
+  // macOS Big Sur+ links python3 → python).
   if (strEq(ext, 'py') > 0) {
     let cmd = 'python3 ';
-    cmd += filePath;
+    if (__platform__ === 3) cmd = 'python ';
+    cmd += qFile;
     return cmd;
   }
   // Go
   if (strEq(ext, 'go') > 0) {
     let cmd = 'go run ';
-    cmd += filePath;
+    cmd += qFile;
     return cmd;
   }
+  // SHIP-V1-GAPS.md followup §5: cross-platform debug-build output path.
+  // `/tmp/hone-debug-bin` is POSIX-only; Windows uses `%TEMP%\hone-debug-bin.exe`.
+  // Perry-safe: assemble strings with if/else instead of ternary on strings.
+  let debugBin = getTempDir();
+  if (__platform__ === 3) debugBin += '/hone-debug-bin.exe';
+  else debugBin += '/hone-debug-bin';
+  const qBin = '"' + debugBin + '"';
+  // `cd` works in both shells; Windows needs `/d` to also switch drives.
+  let cdFlag = 'cd ';
+  if (__platform__ === 3) cdFlag = 'cd /d ';
+
   // Rust
   if (strEq(ext, 'rs') > 0) {
     const dir = getFileDir(filePath);
     const cargoRoot = findCargoRoot(dir);
     if (cargoRoot.length > 0) {
-      let cmd = 'cd ';
+      let cmd = cdFlag;
+      cmd += '"';
       cmd += cargoRoot;
+      cmd += '"';
       cmd += ' && cargo run 2>&1';
       return cmd;
     }
     let cmd = 'rustc ';
-    cmd += filePath;
-    cmd += ' -o /tmp/hone-debug-bin && /tmp/hone-debug-bin';
+    cmd += qFile;
+    cmd += ' -o ';
+    cmd += qBin;
+    cmd += ' && ';
+    cmd += qBin;
     return cmd;
   }
   // C
   if (strEq(ext, 'c') > 0) {
     let cmd = 'cc ';
-    cmd += filePath;
-    cmd += ' -o /tmp/hone-debug-bin && /tmp/hone-debug-bin';
+    cmd += qFile;
+    cmd += ' -o ';
+    cmd += qBin;
+    cmd += ' && ';
+    cmd += qBin;
     return cmd;
   }
   // C++
   if (strEq(ext, 'cpp') > 0 || strEq(ext, 'cc') > 0 || strEq(ext, 'cxx') > 0) {
     let cmd = 'c++ ';
-    cmd += filePath;
-    cmd += ' -o /tmp/hone-debug-bin && /tmp/hone-debug-bin';
+    cmd += qFile;
+    cmd += ' -o ';
+    cmd += qBin;
+    cmd += ' && ';
+    cmd += qBin;
     return cmd;
   }
-  // Shell
+  // Shell — `bash` on Unix; on Windows we use Git for Windows's bash if
+  // available (env-resolved), else WSL `sh`.
   if (strEq(ext, 'sh') > 0) {
     let cmd = 'bash ';
-    cmd += filePath;
+    cmd += qFile;
     return cmd;
   }
   return '';
@@ -495,6 +546,16 @@ function parseOutputLines(output: string): void {
 
 function debugStart(): void {
   if (debugRunning > 0) return;
+  // A previous run's child may still be alive even though debugRunning was
+  // cleared by debugStop(). Refuse to spawn another — otherwise orphans
+  // accumulate (see _debugThreadInFlight). Tell the user why.
+  if (_debugThreadInFlight > 0) {
+    outputLineCount = 0;
+    outputLines[0] = t('Previous program is still running in the background (it cannot be force-stopped in v1). Wait for it to exit before running again.');
+    outputLineCount = 1;
+    updateOutputUI();
+    return;
+  }
 
   // Get current file path
   const filePath = _getCurrentFilePath();
@@ -553,7 +614,9 @@ function debugStart(): void {
   updateVariablesUI();
   updateCallStackUI();
 
-  // Run on background thread
+  // Run on background thread. Mark in-flight BEFORE spawn so a racing
+  // debugStart can't slip a second child through.
+  _debugThreadInFlight = 1;
   const cmdToRun = cmd;
   spawn(() => {
     let stdout = '';
@@ -612,6 +675,9 @@ interface RunResult {
 function onRunComplete(result: RunResult): void {
   debugRunning = 0;
   debugPaused = 0;
+  // Child has genuinely exited (execSync returned) — clear the in-flight
+  // guard so the user can run again.
+  _debugThreadInFlight = 0;
 
   // Combine output
   let fullOutput = '';
@@ -694,6 +760,17 @@ function debugStop(): void {
   debugPaused = 0;
   varCount = 0;
   stackCount = 0;
+  // Be honest: with the execSync model there is no PID to kill, so the
+  // child keeps running until it exits on its own. Say so rather than
+  // letting the cleared "Running..." status imply it was actually stopped.
+  // (#11 honest-framing; real kill needs the spawnBackground+PID v1.1 work.)
+  if (_debugThreadInFlight > 0) {
+    if (outputLineCount < outputLines.length) {
+      outputLines[outputLineCount] = t('[Stop pressed — the program keeps running in the background until it exits; it cannot be force-killed in v1.]');
+      outputLineCount = outputLineCount + 1;
+      updateOutputUI();
+    }
+  }
   updateVariablesUI();
   updateCallStackUI();
   updateStatusUI();
@@ -795,7 +872,7 @@ function updateCallStackUI(): void {
     const frameBtn = Button(label, () => { onStackFrameClick(frameFile, frameLine); });
     buttonSetBordered(frameBtn, 0);
     textSetFontSize(frameBtn, 11);
-    textSetFontFamily(frameBtn, 11, 'Menlo');
+    textSetFontFamily(frameBtn, 11, monoFont());
     setBtnFg(frameBtn, getSideBarForeground());
     widgetAddChild(csContainer, frameBtn);
   }
@@ -824,7 +901,7 @@ function updateOutputUI(): void {
   for (let i = 0; i < displayCount; i = i + 1) {
     const lineText = Text(outputLines[i]);
     textSetFontSize(lineText, 11);
-    textSetFontFamily(lineText, 11, 'Menlo');
+    textSetFontFamily(lineText, 11, monoFont());
 
     // Color error lines (exit status, error keywords) differently
     let isErrorLine = 0;
@@ -922,37 +999,37 @@ export function renderDebugPanel(container: unknown, colors: ResolvedUIColors): 
   // Toolbar row with wired buttons
   const playBtn = Button('', () => { onPlayOrContinueClick(); });
   buttonSetBordered(playBtn, 0);
-  buttonSetImage(playBtn, 'play.fill');
+  setIconButton(playBtn, 'play.fill');
   buttonSetImagePosition(playBtn, 1);
   setBtnTint(playBtn, getStatusAddedColor());
 
   const pauseBtn = Button('', () => { debugPause(); });
   buttonSetBordered(pauseBtn, 0);
-  buttonSetImage(pauseBtn, 'pause.fill');
+  setIconButton(pauseBtn, 'pause.fill');
   buttonSetImagePosition(pauseBtn, 1);
   setBtnTint(pauseBtn, colors.sideBarForeground);
 
   const stepOverBtn = Button('', () => { debugStepOver(); });
   buttonSetBordered(stepOverBtn, 0);
-  buttonSetImage(stepOverBtn, 'arrow.right');
+  setIconButton(stepOverBtn, 'arrow.right');
   buttonSetImagePosition(stepOverBtn, 1);
   setBtnTint(stepOverBtn, colors.sideBarForeground);
 
   const stepIntoBtn = Button('', () => { debugStepInto(); });
   buttonSetBordered(stepIntoBtn, 0);
-  buttonSetImage(stepIntoBtn, 'arrow.down.right');
+  setIconButton(stepIntoBtn, 'arrow.down.right');
   buttonSetImagePosition(stepIntoBtn, 1);
   setBtnTint(stepIntoBtn, colors.sideBarForeground);
 
   const stepOutBtn = Button('', () => { debugStepOut(); });
   buttonSetBordered(stepOutBtn, 0);
-  buttonSetImage(stepOutBtn, 'arrow.up.left');
+  setIconButton(stepOutBtn, 'arrow.up.left');
   buttonSetImagePosition(stepOutBtn, 1);
   setBtnTint(stepOutBtn, colors.sideBarForeground);
 
   const stopBtn = Button('', () => { onStopClick(); });
   buttonSetBordered(stopBtn, 0);
-  buttonSetImage(stopBtn, 'stop.fill');
+  setIconButton(stopBtn, 'stop.fill');
   buttonSetImagePosition(stopBtn, 1);
   setBtnTint(stopBtn, getStatusDeletedColor());
 

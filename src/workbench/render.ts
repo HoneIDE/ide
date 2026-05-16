@@ -17,7 +17,7 @@ import {
   TextField,
   textSetFontSize, textSetFontWeight, textSetFontFamily,
   textSetString,
-  buttonSetBordered, buttonSetImage, buttonSetImagePosition,
+  buttonSetBordered, buttonSetImagePosition,
   widgetAddChild, widgetClearChildren, widgetRemoveChild, widgetAddOverlay, widgetSetOverlayFrame,
   widgetSetWidth, widgetSetHeight, widgetSetHugging, widgetSetHidden, widgetSetBackgroundColor,
   stackSetDetachesHidden, stackSetDistribution,
@@ -52,7 +52,7 @@ import {
   applyDarkColors, applyLightColors, isCurrentThemeDark,
 } from './theme/theme-colors';
 import type { LayoutMode } from '../platform';
-import { getWorkbenchSettings, updateSettings, onSettingsChange, getSettingsVersion, getLastOpenTabs, getLastActiveTab, applyWorkspaceOverlay, setNumberSetting } from './settings';
+import { getWorkbenchSettings, updateSettings, onSettingsChange, getSettingsVersion, getLastOpenTabs, getLastActiveTab, getLastPinnedTabs, applyWorkspaceOverlay, setNumberSetting } from './settings';
 import { readFileSync, writeFileSync, readdirSync, isDirectory, existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { spawnBackground } from 'child_process';
@@ -64,7 +64,7 @@ import { getPlatformContext, isWebPlatform } from '../platform';
 import { registerBuiltinCommands, registerCommand } from '../commands';
 
 // Extracted modules
-import { setBg, setFg, setBtnFg, setBtnTint, hexToRGBA, getFileName, detectLanguage, getFileIcon, getFileIconColor } from './ui-helpers';
+import { setBg, setFg, setBtnFg, setBtnTint, hexToRGBA, getFileName, detectLanguage, getFileIcon, getFileIconColor, monoFont, setIconButton } from './ui-helpers';
 import {
   renderSearchPanel as renderSearchPanelImpl,
   setSearchWorkspaceRoot, setSearchFileOpener, setSearchEditorReloader,
@@ -84,6 +84,7 @@ import {
 import {
   renderExplorerPanel, refreshSidebarContent, updateSidebarSelection, revealFileInExplorer, refreshSidebarSelection,
   setSidebarWorkspaceRoot, setSidebarFileClickCallback, setSidebarOpenFolderCallback, setSidebarShowHiddenFiles,
+  setSidebarRespectGitignore,
   setSidebarNewFileCallback, setSidebarThemeColors, setSidebarCurrentEditorPath,
   setRemoteFileTree, setRemoteFileClickCallback, isRemoteExplorerMode,
   toggleRemoteDir, clickRemoteFile, getExpandedDirCount, getVisibleFileCount,
@@ -98,12 +99,15 @@ import {
   getOpenTabCount, getOpenTabPath, setActiveTabByIndex,
   markTabSaved, updateTabDirtyIcon, applyAllTabColors, closeActiveTab, renameActiveTab, closeAllOpenTabs,
   setOnBeforeTabClose, forceCloseTab, isTabDirty,
+  pinTab as pinTabImpl,
 } from './views/tabs/tab-bar';
 import {
   renderStatusBar as renderStatusBarImpl, setStatusBarCursorGetter,
   updateStatusBarBranchLabel as updateStatusBarBranchLabelImpl,
   updateStatusBarDiagnostics as updateStatusBarDiagnosticsImpl,
   updateStatusBarLanguage as updateStatusBarLanguageImpl,
+  updateStatusBarEol as updateStatusBarEolImpl,
+  updateStatusBarEncoding as updateStatusBarEncodingImpl,
   updateStatusBarIndent as statusBarUpdateIndent,
   pollCursorPosition as pollCursorPositionImpl,
   recolorStatusBar, getStatusBarWidget,
@@ -141,7 +145,9 @@ import { renderSettingsTab } from './views/settings-ui/settings-panel';
 import { setWelcomeActions, setWelcomeRecentCallback, createWelcomeContent } from './views/welcome/welcome-tab';
 import { initNotifications, showNotification } from './views/notifications/notifications';
 import { initCommandPalette, openCommandPalette, closeCommandPalette, isCommandPaletteOpen } from './views/command-palette/command-palette';
-import { initWorkspaceTrust, isWorkspaceTrusted, trustWorkspace } from './workspace-trust';
+import { openExternalUrl } from './views/ai-chat/markdown-render';
+import { HONE_VERSION } from './version';
+import { initWorkspaceTrust, isWorkspaceTrusted, trustWorkspace, revokeWorkspaceTrust } from './workspace-trust';
 import { renderReferencesPeek, showReferencesFromJson, setReferencesJumpHandler } from './views/references-peek/references-peek';
 import { renderTasksPanel, runDefaultBuildTask, runTaskByLabel, setTasksWorkspaceRoot, setTasksAppDataDir, setOnTaskRunStart, setOnTaskRunDone } from './views/tasks/tasks-panel';
 import { initRecentItems, addRecentFile, addRecentFolder, getRecentPath, getRecentType } from './views/recent/recent-store';
@@ -182,11 +188,13 @@ import {
 
 import { dispatchPluginHook, isPluginSystemEnabled, setDecorationRenderCallback } from '../plugins';
 import { getDiagFiles, getDiagLines, getDiagMessages, getDiagSeverities, getDiagCount } from './views/lsp/diagnostics-panel';
-import { lspDidOpen, lspDidSave, lspFormatDocument, lspHover, lspDefinition, lspSignatureHelp, setHoverCallback, setDefinitionCallback, setSignatureCallback, setFormatCallback, lspIsReady,
+import { lspDidOpen, lspDidClose, lspDidSave, lspFormatDocument, lspHover, lspDefinition, lspSignatureHelp, setHoverCallback, setDefinitionCallback, setSignatureCallback, setFormatCallback, lspIsReady,
   lspReferences, lspRename, lspCodeActions, setReferencesCallback, setRenameCallback, setCodeActionsCallback,
   lspDocumentSymbols, setDocumentSymbolsCallback,
+  lspWorkspaceSymbols, setWorkspaceSymbolsCallback,
 } from './views/lsp/lsp-bridge';
 import { renderOutlinePanel, setOutlineActiveFile, setOutlineJumpHandler } from './views/outline/outline-panel';
+import { renderTimelinePanel, setTimelineActiveFile, setTimelineNotifier, setTimelineWorkspaceRoot } from './views/timeline/timeline-panel';
 import { createHoverPopup, showHoverPopup, hideHoverPopup, isHoverVisible } from './views/lsp/hover-popup';
 import { createSignaturePopup, showSignaturePopup, hideSignaturePopup, isSignatureVisible } from './views/lsp/signature-popup';
 import { initInlineCompletion, setInlineEditorAccess, setInlineContextProviders, setInlineInsertCallback } from './views/ai-inline/inline-completion';
@@ -234,6 +242,10 @@ let activeActivityIdx = 0;
 let sidebarContainer: unknown = null;
 
 let editorInstance: Editor = null as any;
+// Last editor font applied — guards onSettingsChanged against redundant
+// setFont calls on every 500ms settings-version poll tick.
+let _lastEditorFontFamily: string = '';
+let _lastEditorFontSize: number = 0;
 let editorReady: number = 0;
 let editorWidget: unknown = null;
 let editorNativeHandle: number = 0;
@@ -363,7 +375,7 @@ function updateBreadcrumb(): void {
     // Folder icon in breadcrumb
     const dirIcon = Button('', () => {});
     buttonSetBordered(dirIcon, 0);
-    buttonSetImage(dirIcon, 'folder.fill');
+    setIconButton(dirIcon, 'folder.fill');
     buttonSetImagePosition(dirIcon, 1);
     textSetFontSize(dirIcon, 9);
     setBtnTint(dirIcon, '#E8AB53');
@@ -377,7 +389,7 @@ function updateBreadcrumb(): void {
     // Chevron separator
     const sepIcon = Button('', () => {});
     buttonSetBordered(sepIcon, 0);
-    buttonSetImage(sepIcon, 'chevron.right');
+    setIconButton(sepIcon, 'chevron.right');
     buttonSetImagePosition(sepIcon, 1);
     textSetFontSize(sepIcon, 7);
     setBtnTint(sepIcon, getEditorForeground());
@@ -387,7 +399,7 @@ function updateBreadcrumb(): void {
   const bcFileIcon = Button('', () => {});
   buttonSetBordered(bcFileIcon, 0);
   const bcIcon = getFileIcon(fileName);
-  buttonSetImage(bcFileIcon, bcIcon);
+  setIconButton(bcFileIcon, bcIcon);
   buttonSetImagePosition(bcFileIcon, 1);
   textSetFontSize(bcFileIcon, 9);
   const bcColor = getFileIconColor(fileName);
@@ -587,6 +599,20 @@ function applyFindBarBg(): void {
 export function saveFileAction(): void {
   if (currentEditorFilePath.length < 1) return;
   if (editorReady < 1) return;
+  // Binary files are shown as a placeholder, never the real bytes. Saving
+  // would overwrite the binary on disk with that placeholder string — hard
+  // refuse. (The tab is effectively read-only; the open-time notification
+  // already told the user.)
+  if (_currentFileIsBinary > 0) {
+    showNotification(t('Binary file — not saved.'), 'warning');
+    return;
+  }
+  // Truncated large-file view — saving would persist only the visible first
+  // 5000 lines and destroy the rest on disk. Hard refuse.
+  if (_currentFileTruncated > 0) {
+    showNotification(t('Large file is truncated/read-only — not saved (full-file editing is v1.1).'), 'warning');
+    return;
+  }
   // Untitled files → redirect to Save As
   if (isUntitledFile() > 0) {
     saveFileAsAction();
@@ -617,13 +643,19 @@ export function saveFileAction(): void {
     editorInstance.setContent(content);
     editorInstance.render();
   }
-  writeFileSync(currentEditorFilePath, content);
+  // Restore the file's original EOL before writing. `content` stays \n for
+  // the editor + dirty-poll (the buffer is always \n internally); only the
+  // bytes we persist get CRLF back. djb2Hash must hash the on-disk bytes so
+  // the next disk-watcher tick (which reads raw file content) doesn't see a
+  // phantom "changed on disk" because hash(\n) != hash(\r\n).
+  const diskContent = restoreEolForSave(content);
+  writeFileSync(currentEditorFilePath, diskContent);
   triggerDiagnostics();
   lspDidSave(currentEditorFilePath);
   markTabSaved(content.length);
   // SHIP-V1-GAPS.md #86: rehash on save so the disk watcher doesn't see our
-  // own write as an external change.
-  _externalFileHash = djb2Hash(content);
+  // own write as an external change. Hash the persisted (EOL-restored) bytes.
+  _externalFileHash = djb2Hash(diskContent);
   _externalCheckPending = 0;
   // Dispatch onDocumentSave hook to plugins
   if (isPluginSystemEnabled() > 0) {
@@ -651,7 +683,9 @@ function onSaveAsCb(path: string): void {
   if (path.length < 1) return;
   if (editorReady < 1) return;
   const content = editorInstance.getContent();
-  writeFileSync(path, content);
+  // Preserve the source file's EOL on Save As too (a Windows user saving a
+  // copy of a CRLF file expects CRLF, not a silent LF conversion).
+  writeFileSync(path, restoreEolForSave(content));
   currentEditorFilePath = path;
   setSidebarCurrentEditorPath(path);
   updateBreadcrumb();
@@ -1023,6 +1057,32 @@ function showOutlineDeferred(): void {
 }
 
 /**
+ * Timeline view (SHIP-V1-GAPS.md #85) — mount the per-file history panel in
+ * the sidebar. Reads `git log --follow` for the active file. The activity
+ * bar isn't a timeline target (no slot), so the entry point is the command
+ * palette / Edit menu / keybinding.
+ */
+export function showTimelineAction(): void {
+  setTimeout(() => { showTimelineDeferred(); }, 0);
+}
+
+function showTimelineDeferred(): void {
+  if (!sidebarContainer) return;
+  if (sidebarToggleReady > 0 && sidebarVisible < 1) {
+    sidebarVisible = 1;
+    widgetSetHidden(sidebarWidget, 0);
+    widgetSetHidden(sidebarBorderWidget, 0);
+  }
+  resetSearchPanelReady();
+  setTimelineWorkspaceRoot(workspaceRoot);
+  setTimelineNotifier((msg: string) => { showNotification(msg, 'info'); });
+  renderTimelinePanel(sidebarContainer, getActiveTheme() as any);
+  if (currentEditorFilePath.length > 0) {
+    setTimelineActiveFile(currentEditorFilePath);
+  }
+}
+
+/**
  * Tasks panel (SHIP-V1-GAPS.md #105). Reads .hone/tasks.json or
  * .vscode/tasks.json and lists tasks with run buttons.
  */
@@ -1113,6 +1173,11 @@ function goToFileDeferred(): void {
   widgetAddChild(sidebarContainer, title);
 
   goToFileText = '';
+  // SHIP-V1-GAPS.md #36: reset symbol-query state so the next `@` keystroke
+  // refetches instead of rendering stale data from a prior open.
+  _qoDocSymbolsJson = '';
+  _qoDocSymbolsActive = 0;
+  _qoWsSymbolsJson = '';
   goToFileInput = TextField(t('File name...'), (text: string) => { onGoToFileInput(text); });
   widgetAddChild(sidebarContainer, goToFileInput);
 
@@ -1152,15 +1217,276 @@ function onGoToFileInput(text: string): void {
 
 function renderGoToFileListDeferred(): void {
   // SHIP-V1-GAPS.md #36: quick-open prefix routing.
-  // ':' → line jump in the active editor.
-  // '@' → document symbols (deferred to a follow-up; the LSP request is
-  //       wired but a per-tab snapshot pipeline still needs threading).
-  // '#' → workspace symbols (same — Phase 2 wire ready, UI deferred).
+  // ':<N>' → line jump in the active editor.
+  // '@<q>' → document symbols (active file, LSP `documentSymbol`).
+  // '#<q>' → workspace symbols (project-wide, LSP `workspace/symbol`).
   if (goToFileText.length > 0 && goToFileText.charCodeAt(0) === 58) {
     renderGoToFileLineJump(goToFileText.slice(1));
     return;
   }
+  if (goToFileText.length > 0 && goToFileText.charCodeAt(0) === 64) {
+    renderGoToFileDocSymbols(goToFileText.slice(1));
+    return;
+  }
+  if (goToFileText.length > 0 && goToFileText.charCodeAt(0) === 35) {
+    renderGoToFileWorkspaceSymbols(goToFileText.slice(1));
+    return;
+  }
   renderGoToFileList(goToFileText);
+}
+
+// SHIP-V1-GAPS.md #36: cached symbol queries so render state persists across
+// keystrokes. We re-register the LSP callback on each invocation; outline
+// panel re-registers its own when it's next opened.
+let _qoDocSymbolsJson: string = '';
+let _qoDocSymbolsActive: number = 0;
+let _qoWsSymbolsJson: string = '';
+
+function renderGoToFileDocSymbols(query: string): void {
+  if (!goToFileResults) return;
+  widgetClearChildren(goToFileResults);
+  if (currentEditorFilePath.length < 1) {
+    const hint = Text(t('Open a file to search its symbols.'));
+    textSetFontSize(hint, 12);
+    setFg(hint, getSecondaryTextColor());
+    widgetAddChild(goToFileResults, hint);
+    return;
+  }
+  if (lspIsReady() < 1) {
+    const hint = Text(t('LSP not ready'));
+    textSetFontSize(hint, 12);
+    setFg(hint, getSecondaryTextColor());
+    widgetAddChild(goToFileResults, hint);
+    return;
+  }
+  if (_qoDocSymbolsActive < 1) {
+    setDocumentSymbolsCallback((json: string) => { _qoDocSymbolsJson = json; renderDocSymbolsList(query); });
+    _qoDocSymbolsActive = 1;
+    lspDocumentSymbols(currentEditorFilePath);
+    const hint = Text(t('Loading symbols…'));
+    textSetFontSize(hint, 12);
+    setFg(hint, getSecondaryTextColor());
+    widgetAddChild(goToFileResults, hint);
+    return;
+  }
+  // Already have a result — re-filter against the new query without refetching.
+  renderDocSymbolsList(query);
+}
+
+function renderDocSymbolsList(query: string): void {
+  if (!goToFileResults) return;
+  widgetClearChildren(goToFileResults);
+  const symbols = extractFlatSymbols(_qoDocSymbolsJson);
+  if (symbols.length === 0) {
+    const hint = Text(t('No symbols found.'));
+    textSetFontSize(hint, 12);
+    setFg(hint, getSecondaryTextColor());
+    widgetAddChild(goToFileResults, hint);
+    return;
+  }
+  const q = query.toLowerCase();
+  let shown = 0;
+  for (let i = 0; i < symbols.length && shown < 100; i++) {
+    const s = symbols[i];
+    if (q.length > 0) {
+      const lower = s.name.toLowerCase();
+      if (lower.indexOf(q) < 0) continue;
+    }
+    const lineNum = s.line + 1;
+    const label = s.name + '  ' + t('Line') + ' ' + String(lineNum);
+    const tline = s.line;
+    const tcol = s.character;
+    const btn = Button(label, () => { jumpToSymbolInActiveEditor(tline, tcol); });
+    setBtnFg(btn, getSideBarForeground());
+    textSetFontSize(btn, 12);
+    widgetAddChild(goToFileResults, btn);
+    shown = shown + 1;
+  }
+}
+
+function jumpToSymbolInActiveEditor(line: number, character: number): void {
+  if (editorReady < 1) return;
+  editorInstance.setCursorPosition(line, character);
+  editorInstance.render();
+}
+
+function renderGoToFileWorkspaceSymbols(query: string): void {
+  if (!goToFileResults) return;
+  widgetClearChildren(goToFileResults);
+  if (lspIsReady() < 1) {
+    const hint = Text(t('LSP not ready'));
+    textSetFontSize(hint, 12);
+    setFg(hint, getSecondaryTextColor());
+    widgetAddChild(goToFileResults, hint);
+    return;
+  }
+  if (query.length < 2) {
+    const hint = Text(t('Type 2+ chars after #'));
+    textSetFontSize(hint, 12);
+    setFg(hint, getSecondaryTextColor());
+    widgetAddChild(goToFileResults, hint);
+    return;
+  }
+  setWorkspaceSymbolsCallback((json: string) => { _qoWsSymbolsJson = json; renderWsSymbolsList(); });
+  lspWorkspaceSymbols(query);
+  const hint = Text(t('Searching workspace…'));
+  textSetFontSize(hint, 12);
+  setFg(hint, getSecondaryTextColor());
+  widgetAddChild(goToFileResults, hint);
+}
+
+function renderWsSymbolsList(): void {
+  if (!goToFileResults) return;
+  widgetClearChildren(goToFileResults);
+  const symbols = extractFlatSymbols(_qoWsSymbolsJson);
+  if (symbols.length === 0) {
+    const hint = Text(t('No symbols found.'));
+    textSetFontSize(hint, 12);
+    setFg(hint, getSecondaryTextColor());
+    widgetAddChild(goToFileResults, hint);
+    return;
+  }
+  for (let i = 0; i < symbols.length && i < 100; i++) {
+    const s = symbols[i];
+    const label = (s.location.length > 0 ? s.location + ':' : '') + s.name + '  ' + t('Line') + ' ' + String(s.line + 1);
+    const tpath = s.location;
+    const tline = s.line;
+    const tcol = s.character;
+    const btn = Button(label, () => { openSymbolAcrossFiles(tpath, tline, tcol); });
+    setBtnFg(btn, getSideBarForeground());
+    textSetFontSize(btn, 12);
+    widgetAddChild(goToFileResults, btn);
+  }
+}
+
+function openSymbolAcrossFiles(uriOrPath: string, line: number, character: number): void {
+  if (uriOrPath.length < 1) return;
+  // Strip `file://` prefix if present.
+  let path = uriOrPath;
+  if (path.length > 7 && path.slice(0, 7) === 'file://') path = path.slice(7);
+  openFileInEditor(path, '');
+  setTimeout(() => {
+    if (editorReady > 0) {
+      editorInstance.setCursorPosition(line, character);
+      editorInstance.render();
+    }
+  }, 64);
+}
+
+interface FlatSymbol {
+  name: string;
+  line: number;
+  character: number;
+  location: string;
+}
+
+// Lightweight extractor — handles both `DocumentSymbol[]` (hierarchical with
+// `range`/`selectionRange` per node) and `SymbolInformation[]` (flat with
+// `location.uri` + `location.range`). For workspace symbols we get the
+// SymbolInformation form, so `location` populates from `location.uri`.
+function extractFlatSymbols(json: string): FlatSymbol[] {
+  const out: FlatSymbol[] = [];
+  if (json.length === 0 || json === 'null' || json === '[]') return out;
+  let pos = 0;
+  while (pos < json.length) {
+    const open = json.indexOf('{', pos);
+    if (open < 0) break;
+    const end = findClosingBrace(json, open);
+    if (end < 0) break;
+    const body = json.slice(open, end + 1);
+    const name = extractJsonStringField(body, '"name"');
+    let line = -1;
+    let character = -1;
+    // selectionRange (DocumentSymbol) preferred, then range, then location.range (SymbolInformation).
+    const selIdx = body.indexOf('"selectionRange"');
+    const rangeIdx = body.indexOf('"range"');
+    const useIdx = selIdx >= 0 ? selIdx : rangeIdx;
+    if (useIdx >= 0) {
+      const slice = body.slice(useIdx);
+      line = extractJsonNumberField(slice, '"line"');
+      character = extractJsonNumberField(slice, '"character"');
+    }
+    let location = '';
+    const locIdx = body.indexOf('"location"');
+    if (locIdx >= 0) {
+      const locSlice = body.slice(locIdx);
+      location = extractJsonStringField(locSlice, '"uri"');
+    }
+    if (name.length > 0 && line >= 0) {
+      out.push({ name: name, line: line, character: character, location: location });
+    }
+    pos = end + 1;
+  }
+  return out;
+}
+
+function findClosingBrace(s: string, openPos: number): number {
+  let depth = 0;
+  let inStr = 0;
+  let escape = 0;
+  for (let i = openPos; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (escape > 0) { escape = 0; continue; }
+    if (inStr > 0) {
+      if (c === 92) escape = 1;
+      else if (c === 34) inStr = 0;
+      continue;
+    }
+    if (c === 34) inStr = 1;
+    else if (c === 123) depth = depth + 1;
+    else if (c === 125) {
+      depth = depth - 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+function extractJsonStringField(body: string, key: string): string {
+  const idx = body.indexOf(key);
+  if (idx < 0) return '';
+  // Find the colon, then the opening quote.
+  let p = idx + key.length;
+  while (p < body.length && body.charCodeAt(p) !== 58) p++;
+  if (p >= body.length) return '';
+  p = p + 1; // past ':'
+  while (p < body.length && (body.charCodeAt(p) === 32 || body.charCodeAt(p) === 9)) p++;
+  if (p >= body.length || body.charCodeAt(p) !== 34) return '';
+  p = p + 1;
+  let out = '';
+  while (p < body.length) {
+    const c = body.charCodeAt(p);
+    if (c === 92 && p + 1 < body.length) {
+      const nxt = body.charAt(p + 1);
+      out += nxt;
+      p = p + 2;
+      continue;
+    }
+    if (c === 34) break;
+    out += body.charAt(p);
+    p = p + 1;
+  }
+  return out;
+}
+
+function extractJsonNumberField(body: string, key: string): number {
+  const idx = body.indexOf(key);
+  if (idx < 0) return -1;
+  let p = idx + key.length;
+  while (p < body.length && body.charCodeAt(p) !== 58) p++;
+  if (p >= body.length) return -1;
+  p = p + 1;
+  while (p < body.length && (body.charCodeAt(p) === 32 || body.charCodeAt(p) === 9)) p++;
+  let n = 0;
+  let seen = 0;
+  while (p < body.length) {
+    const c = body.charCodeAt(p);
+    if (c < 48 || c > 57) break;
+    n = n * 10 + (c - 48);
+    seen = 1;
+    p = p + 1;
+  }
+  return seen > 0 ? n : -1;
 }
 
 function renderGoToFileLineJump(numberText: string): void {
@@ -1336,10 +1662,47 @@ function checkExternalDiskChange(): void {
     _externalFileHash = freshHash;
   } else {
     // Clean tab — reload silently and notify so the user sees it.
-    editorInstance.setContent(fresh);
-    markTabSaved(fresh.length);
+    // Strip a leading BOM the same way the open path does, else a BOM file
+    // reloaded from disk shows the phantom U+FEFF char again.
+    let freshBody = fresh;
+    _currentHadBOM = 0;
+    if (freshBody.length > 0 && freshBody.charCodeAt(0) === 0xFEFF) {
+      _currentHadBOM = 1;
+      freshBody = freshBody.slice(1);
+    }
+    // Reload loads the FULL fresh content (no 5000-line truncation), so a
+    // subsequent save is safe — clear any stale truncation flag from open.
+    _currentFileTruncated = 0;
+    // Re-evaluate binary on reload (a file could have become binary, or an
+    // already-binary file changed). Keep the placeholder + binary guard so
+    // we never dump raw bytes into the editor on reload either.
+    _currentFileIsBinary = 0;
+    let _rbScan = freshBody.length < 8000 ? freshBody.length : 8000;
+    for (let rbi = 0; rbi < _rbScan; rbi++) {
+      if (freshBody.charCodeAt(rbi) === 0) { _currentFileIsBinary = 1; break; }
+    }
+    if (_currentFileIsBinary > 0) {
+      editorInstance.setContent(t('This file is not displayed because it is binary or uses an unsupported encoding.'));
+      markTabSaved(editorInstance.getContent().length);
+      editorInstance.render();
+      _externalFileHash = freshHash;
+      showNotification(t('File changed on disk (binary — shown read-only).'), 'info');
+      return;
+    }
+    editorInstance.setContent(freshBody);
+    // markTabSaved must use the editor's NORMALIZED (\n) length, not the raw
+    // disk byte-length: the editor buffer normalizes CRLF→\n on setContent,
+    // so a CRLF file's `fresh.length` is larger than `getContent().length`
+    // and the dirty-poll would instantly flag the just-reloaded tab dirty.
+    // (Same correctness detail as the iter-62 save fix.)
+    markTabSaved(editorInstance.getContent().length);
     editorInstance.render();
     _externalFileHash = freshHash;
+    // Re-detect EOL from the new disk bytes (BOM-stripped) — an external
+    // tool may have converted line endings; without this the next save would
+    // restore the stale (pre-change) EOL via restoreEolForSave.
+    _currentEol = detectEolStyle(freshBody);
+    updateStatusBarEolImpl(_currentEol);
     showNotification(t('File reloaded from disk.'), 'info');
   }
 }
@@ -1423,7 +1786,16 @@ function shortFileName(path: string): string {
  *   1 = discard and close
  *   2 = cancel
  */
+// Returns: 0 = Save, 1 = Don't Save, 2 = Cancel.
 function promptCloseDirtyTab(filePath: string): number {
+  if (__platform__ === 3) return promptCloseDirtyTabWindows(filePath);
+  if (__platform__ === 0) return promptCloseDirtyTabMacos(filePath);
+  // iOS / Linux / web — no native dialog yet. Default to Save so we don't
+  // silently discard the user's work.
+  return 0;
+}
+
+function promptCloseDirtyTabMacos(filePath: string): number {
   const name = escapeAppleScriptString(shortFileName(filePath));
   // AppleScript: `display dialog` returns the button title in `button returned`.
   // We echo a numeric token so we don't have to parse localized button names.
@@ -1445,23 +1817,56 @@ function promptCloseDirtyTab(filePath: string): number {
     if (out === '1') return 1;
     return 2;
   } catch (_e: any) {
-    // No osascript available (non-mac, or sandboxed) → fall back to discard.
     return 1;
   }
 }
 
+// SHIP-V1-GAPS.md (followup §5). Windows MessageBox via PowerShell. The
+// YesNoCancel dialog maps to Save/Don't Save/Cancel.
+function promptCloseDirtyTabWindows(filePath: string): number {
+  const name = shortFileName(filePath).split('"').join('""'); // escape `"` for PS single-quoted string
+  let ps = '[void][System.Reflection.Assembly]::LoadWithPartialName(\'System.Windows.Forms\');';
+  ps += '$r = [System.Windows.Forms.MessageBox]::Show(';
+  ps += '\'Save changes to ' + name + '?\',\'Hone\',\'YesNoCancel\',\'Question\');';
+  ps += 'if ($r -eq \'Yes\') { [Console]::Out.Write(\'0\') } elseif ($r -eq \'No\') { [Console]::Out.Write(\'1\') } else { [Console]::Out.Write(\'2\') }';
+  try {
+    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+    if (r.status !== 0) return 2;
+    const out = r.stdout.length > 0 ? r.stdout.charAt(0) : '';
+    if (out === '0') return 0;
+    if (out === '1') return 1;
+    return 2;
+  } catch (_e: any) {
+    return 0; // safe default: Save on Windows if MessageBox failed
+  }
+}
+
 function onBeforeTabCloseImpl(idx: number, path: string): number {
-  if (isTabDirty(idx) < 1) return 0;
+  // Notify the language server the document is closing — without this it
+  // treats every file opened this session as still-open forever (unbounded
+  // server-side memory growth + stale diagnostics + LSP spec violation).
+  // CRITICAL: only when the close actually proceeds. The dirty branch below
+  // also `return 1`s on the CANCEL choice; sending didClose there would
+  // tell the server a still-open doc is gone, breaking its diagnostics/
+  // hover/completion until the next didChange. Virtual tabs (leading `_`:
+  // __settings__/__update__/__welcome__) and empties were never didOpen'd,
+  // so a didClose for them is a spurious unknown-doc notification — skip.
+  if (isTabDirty(idx) < 1) {
+    if (path.length > 0 && path.charCodeAt(0) !== 95) lspDidClose(path);
+    return 0;
+  }
   // For non-active tabs we can't easily save the right content (the editor
   // only holds one document at a time). v1 limitation: only the active tab
   // benefits from the Save path; for non-active dirty tabs we still confirm
   // but Save becomes Discard since we lack the buffered content.
   const isActive = idx === getActiveTabIdx();
   const choice = promptCloseDirtyTab(path);
-  if (choice === 2) return 1; // cancel
+  if (choice === 2) return 1; // cancel — do NOT didClose (doc stays open)
   if (choice === 0 && isActive) {
     saveFileAction();
   }
+  // Close is now confirmed (saved or discarded) — notify the LSP server.
+  if (path.length > 0 && path.charCodeAt(0) !== 95) lspDidClose(path);
   // Defer the actual close one tick so the save flush completes first.
   setTimeout(() => { forceCloseTab(idx); }, 0);
   return 1; // tell tab-bar to abort the synchronous path; we already scheduled forceCloseTab
@@ -1502,6 +1907,93 @@ function renameSymbolFromCursor(): void {
   lspRename(currentEditorFilePath, line, col, newName);
 }
 
+// SHIP-V1-GAPS.md #107: extract a window of source around the cursor line so
+// AI prompts can reason about local context, not just the bare line.
+function getEditorContextWindow(targetLine: number, halfWindow: number): string {
+  if (editorReady < 1) return '';
+  const content = editorInstance.getContent();
+  // Walk to find line offsets without allocating a full split.
+  let startLine = targetLine - halfWindow;
+  if (startLine < 0) startLine = 0;
+  const endLine = targetLine + halfWindow;
+  let currentLine = 0;
+  let startOff = -1;
+  let endOff = content.length;
+  if (startLine === 0) startOff = 0;
+  for (let i = 0; i < content.length; i++) {
+    if (content.charCodeAt(i) === 10) {
+      currentLine = currentLine + 1;
+      if (currentLine === startLine) startOff = i + 1;
+      if (currentLine === endLine + 1) { endOff = i; break; }
+    }
+  }
+  if (startOff < 0) return '';
+  return content.slice(startOff, endOff);
+}
+
+// SHIP-V1-GAPS.md #107: collect diagnostics on a specific line of the active
+// file so the "Fix with AI" prompt can include the error message verbatim.
+function collectDiagnosticsForLine(filePath: string, line: number): string {
+  const files = getDiagFiles();
+  const lines = getDiagLines();
+  const messages = getDiagMessages();
+  const severities = getDiagSeverities();
+  const n = getDiagCount();
+  let out = '';
+  for (let i = 0; i < n; i++) {
+    if (files[i] === filePath && lines[i] === line) {
+      if (out.length > 0) out += '\n';
+      out += '- [' + severities[i] + '] ' + messages[i];
+    }
+  }
+  return out;
+}
+
+function fixWithAIFromCursor(): void {
+  if (editorReady < 1 || currentEditorFilePath.length === 0) return;
+  const line = editorInstance.getCursorLine();
+  const context = getEditorContextWindow(line, 10);
+  if (context.length < 1) {
+    showNotification(t('No code context to fix.'), 'warning');
+    return;
+  }
+  const diagnostics = collectDiagnosticsForLine(currentEditorFilePath, line);
+  let prompt = 'Fix the following code. Return only the corrected code as a single block — no preamble.\n\nFile: ';
+  prompt += currentEditorFilePath;
+  prompt += '\nCursor line (0-indexed): ';
+  prompt += line + '';
+  if (diagnostics.length > 0) {
+    prompt += '\n\nDiagnostics on this line:\n';
+    prompt += diagnostics;
+  }
+  prompt += '\n\nCode:\n```\n';
+  prompt += context;
+  prompt += '\n```';
+  pendingActivityIdx = 4; // AI Chat slot
+  setTimeout(() => { onActivityClickDeferred(); }, 0);
+  setTimeout(() => { prefillChatInput(prompt); }, 64);
+  showNotification(t('Fix prompt prepared in AI Chat. Press Enter to send.'), 'info');
+}
+
+function explainWithAIFromCursor(): void {
+  if (editorReady < 1 || currentEditorFilePath.length === 0) return;
+  const line = editorInstance.getCursorLine();
+  const context = getEditorContextWindow(line, 10);
+  if (context.length < 1) {
+    showNotification(t('No code context to explain.'), 'warning');
+    return;
+  }
+  let prompt = 'Explain what the following code does. Focus on intent, side effects, and any non-obvious behavior. Keep the explanation under 200 words.\n\nFile: ';
+  prompt += currentEditorFilePath;
+  prompt += '\n\nCode:\n```\n';
+  prompt += context;
+  prompt += '\n```';
+  pendingActivityIdx = 4;
+  setTimeout(() => { onActivityClickDeferred(); }, 0);
+  setTimeout(() => { prefillChatInput(prompt); }, 64);
+  showNotification(t('Explain prompt prepared in AI Chat. Press Enter to send.'), 'info');
+}
+
 function showCodeActionsFromCursor(): void {
   if (editorReady < 1 || currentEditorFilePath.length === 0) return;
   if (lspIsReady() < 1) {
@@ -1516,8 +2008,17 @@ function showCodeActionsFromCursor(): void {
   lspCodeActions(currentEditorFilePath, line, col, line, col, '');
 }
 
-/** Native AppleScript text-prompt for the new symbol name. Returns '' if cancelled. */
+/** Cross-platform text prompt. Returns the user's input, or '' if cancelled.
+ *  Mac: AppleScript `display dialog`. Windows: PowerShell `InputBox`. Other
+ *  platforms (iOS/Linux/web): no input → return '' so callers degrade
+ *  gracefully (a perry/ui modal text-input widget is the v1.1 follow-up). */
 function promptForRename(): string {
+  if (__platform__ === 3) return promptForRenameWindows();
+  if (__platform__ === 0) return promptForRenameMacos();
+  return '';
+}
+
+function promptForRenameMacos(): string {
   let script = 'try\n';
   script += '  set result to text returned of (display dialog "New name:" default answer "" buttons {"Cancel", "Rename"} default button "Rename" cancel button "Cancel")\n';
   script += '  return result\n';
@@ -1527,7 +2028,25 @@ function promptForRename(): string {
   try {
     const r = spawnSync('osascript', ['-e', script]);
     if (r.status !== 0) return '';
-    // Trim trailing newline.
+    let out = r.stdout;
+    let end = out.length;
+    while (end > 0 && (out.charCodeAt(end - 1) === 10 || out.charCodeAt(end - 1) === 13)) end--;
+    return out.slice(0, end);
+  } catch (_e: any) {
+    return '';
+  }
+}
+
+// SHIP-V1-GAPS.md (followup §5 — Windows prompt fallback).
+// PowerShell loads the VisualBasic assembly to show a native InputBox.
+// Empty input → user clicked Cancel (InputBox returns '' on cancel).
+function promptForRenameWindows(): string {
+  let ps = '$r = [Microsoft.VisualBasic.Interaction]::InputBox(\'New name:\',\'Rename\',\'\');';
+  ps = '[void][System.Reflection.Assembly]::LoadWithPartialName(\'Microsoft.VisualBasic\');' + ps;
+  ps += '[Console]::Out.Write($r)';
+  try {
+    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+    if (r.status !== 0) return '';
     let out = r.stdout;
     let end = out.length;
     while (end > 0 && (out.charCodeAt(end - 1) === 10 || out.charCodeAt(end - 1) === 13)) end--;
@@ -1557,23 +2076,305 @@ function showReferencesPeekDeferred(json: string): void {
   showReferencesFromJson(json);
 }
 
-function onRenameResult(_json: string): void {
-  // The WorkspaceEdit JSON arrives here. v1 surfaces a hint; applying the
-  // edits across multiple files is a follow-up.
-  showNotification(t('Rename complete — review changes in the diff panel.'), 'info');
+function onRenameResult(json: string): void {
+  // SHIP-V1-GAPS.md #28 follow-up: actually apply the WorkspaceEdit. Reuses
+  // the shared `applyWorkspaceEdit` helper which iterates every URI in
+  // `changes` and applies each TextEdit in reverse offset order.
+  if (json.length === 0 || json === 'null') {
+    showNotification(t('No rename changes returned.'), 'info');
+    return;
+  }
+  const r = applyWorkspaceEdit(json);
+  if (r.appliedFiles === 0) {
+    showNotification(t('Rename returned no applicable edits.'), 'warning');
+    return;
+  }
+  let msg = t('Rename applied') + ': ' + String(r.appliedEdits);
+  msg += ' ' + t('edits across') + ' ' + String(r.appliedFiles) + ' ';
+  msg += r.appliedFiles === 1 ? t('file') : t('files');
+  if (r.skippedFiles > 0) {
+    msg += ' (' + String(r.skippedFiles) + ' ' + t('skipped') + ')';
+  }
+  showNotification(msg, 'info');
 }
 
+// SHIP-V1-GAPS.md #28 / #29: apply an LSP WorkspaceEdit. Accepts either the
+// outer envelope `{ changes: {...} }` (rename returns this directly) or the
+// inner `changes` object (call sites that pre-extracted it). Returns counts
+// for the caller to surface.
+interface WorkspaceEditResult { appliedFiles: number; appliedEdits: number; skippedFiles: number; }
+
+function applyWorkspaceEdit(json: string): WorkspaceEditResult {
+  let appliedFiles = 0;
+  let appliedEdits = 0;
+  let skippedFiles = 0;
+  if (json.length < 1) return { appliedFiles: 0, appliedEdits: 0, skippedFiles: 0 };
+
+  // Find `"changes":` — when the input already begins with `{` of a top-level
+  // WorkspaceEdit, this descends one level.
+  const changesIdx = json.indexOf('"changes"');
+  if (changesIdx < 0) {
+    return { appliedFiles: 0, appliedEdits: 0, skippedFiles: 0 };
+  }
+  const changesBraceOpen = json.indexOf('{', changesIdx);
+  if (changesBraceOpen < 0) return { appliedFiles: 0, appliedEdits: 0, skippedFiles: 0 };
+  const changesBraceClose = findClosingBrace(json, changesBraceOpen);
+  if (changesBraceClose < 0) return { appliedFiles: 0, appliedEdits: 0, skippedFiles: 0 };
+  const changesBody = json.slice(changesBraceOpen + 1, changesBraceClose);
+
+  // Walk URIs. Each URI key is followed by `:[...]` of TextEdits.
+  let pos = 0;
+  while (pos < changesBody.length) {
+    // Find next quoted key.
+    let q1 = -1;
+    let scanning = pos;
+    while (scanning < changesBody.length) {
+      if (changesBody.charCodeAt(scanning) === 34) { q1 = scanning; break; }
+      scanning = scanning + 1;
+    }
+    if (q1 < 0) break;
+    const q2 = changesBody.indexOf('"', q1 + 1);
+    if (q2 < 0) break;
+    const uri = changesBody.slice(q1 + 1, q2);
+    // Find `[`
+    const arrOpen = changesBody.indexOf('[', q2);
+    if (arrOpen < 0) break;
+    const arrEnd = findClosingBracket(changesBody, arrOpen);
+    if (arrEnd < 0) break;
+    const arrBody = changesBody.slice(arrOpen + 1, arrEnd);
+
+    // Translate URI → path.
+    let path = uri;
+    if (path.length > 7 && path.slice(0, 7) === 'file://') path = path.slice(7);
+
+    // SECURITY: the URI comes from the language server's WorkspaceEdit. A
+    // compromised / typo-squatted LSP binary (or a benign one driven by
+    // malicious project config) could return an edit targeting a file
+    // OUTSIDE the workspace — e.g. file:///home/<u>/.bashrc — and the
+    // write-back below would happily readFileSync+writeFileSync it with
+    // attacker-chosen newText (→ code-exec on next shell). Confine
+    // non-active-buffer edits to the workspace subtree. The active-buffer
+    // branch is exempt: it only edits the in-memory editor of the file the
+    // user already has open, never an arbitrary disk path.
+    if (path !== currentEditorFilePath && isPathInsideWorkspace(path) < 1) {
+      skippedFiles = skippedFiles + 1;
+      pos = arrEnd + 1;
+      continue;
+    }
+
+    // Parse TextEdits from arrBody.
+    interface TEdit { startLine: number; startChar: number; endLine: number; endChar: number; newText: string; }
+    const edits: TEdit[] = [];
+    let ep = 0;
+    while (ep < arrBody.length) {
+      const o = arrBody.indexOf('{', ep);
+      if (o < 0) break;
+      const c = findClosingBrace(arrBody, o);
+      if (c < 0) break;
+      const item = arrBody.slice(o, c + 1);
+      const newText = extractJsonStringField(item, '"newText"');
+      const startIdx = item.indexOf('"start"');
+      let startLine = -1;
+      let startChar = -1;
+      if (startIdx >= 0) {
+        const startSlice = item.slice(startIdx);
+        startLine = extractJsonNumberField(startSlice, '"line"');
+        startChar = extractJsonNumberField(startSlice, '"character"');
+      }
+      const endIdxKey = item.indexOf('"end"');
+      let endLine = -1;
+      let endChar = -1;
+      if (endIdxKey >= 0) {
+        const endSlice = item.slice(endIdxKey);
+        endLine = extractJsonNumberField(endSlice, '"line"');
+        endChar = extractJsonNumberField(endSlice, '"character"');
+      }
+      if (startLine >= 0 && endLine >= 0) {
+        edits.push({ startLine: startLine, startChar: startChar, endLine: endLine, endChar: endChar, newText: newText });
+      }
+      ep = c + 1;
+    }
+    if (edits.length === 0) {
+      skippedFiles = skippedFiles + 1;
+      pos = arrEnd + 1;
+      continue;
+    }
+
+    // Read file content (active buffer takes precedence).
+    let content = '';
+    const isActiveBuffer = path === currentEditorFilePath ? 1 : 0;
+    if (isActiveBuffer > 0 && editorReady > 0) {
+      content = editorInstance.getContent();
+    } else {
+      try { content = readFileSync(path); } catch (_e: any) { content = ''; }
+    }
+    if (content.length < 1) {
+      skippedFiles = skippedFiles + 1;
+      pos = arrEnd + 1;
+      continue;
+    }
+    // Sort edits in reverse so offsets don't shift.
+    edits.sort((a, b) => {
+      if (a.startLine !== b.startLine) return b.startLine - a.startLine;
+      return b.startChar - a.startChar;
+    });
+    const lineOffsets: number[] = [0];
+    for (let i = 0; i < content.length; i++) {
+      if (content.charCodeAt(i) === 10) lineOffsets.push(i + 1);
+    }
+    let next = content;
+    let editsAppliedHere = 0;
+    for (let i = 0; i < edits.length; i++) {
+      const e = edits[i];
+      if (e.startLine >= lineOffsets.length || e.endLine >= lineOffsets.length) continue;
+      const startOff = lineOffsets[e.startLine] + e.startChar;
+      const endOff = lineOffsets[e.endLine] + e.endChar;
+      if (startOff < 0 || endOff > next.length || startOff > endOff) continue;
+      next = next.slice(0, startOff) + e.newText + next.slice(endOff);
+      editsAppliedHere = editsAppliedHere + 1;
+    }
+    if (editsAppliedHere === 0) {
+      skippedFiles = skippedFiles + 1;
+      pos = arrEnd + 1;
+      continue;
+    }
+    // Write back.
+    if (isActiveBuffer > 0 && editorReady > 0) {
+      editorInstance.setContent(next);
+    } else {
+      try { writeFileSync(path, next); } catch (_e: any) {
+        skippedFiles = skippedFiles + 1;
+        pos = arrEnd + 1;
+        continue;
+      }
+    }
+    appliedFiles = appliedFiles + 1;
+    appliedEdits = appliedEdits + editsAppliedHere;
+    pos = arrEnd + 1;
+  }
+  return { appliedFiles: appliedFiles, appliedEdits: appliedEdits, skippedFiles: skippedFiles };
+}
+
+// SHIP-V1-GAPS.md #29: cached actions for the picker. Parsed lazily — title +
+// the slice of the original JSON for that action so we can re-extract `edit`
+// when the user picks it. Indexed alongside `_codeActionTitles` so click
+// closures can pass an idx into the source array.
+let _codeActionTitles: string[] = [];
+let _codeActionBodies: string[] = [];
+
 function onCodeActionsResult(json: string): void {
-  if (json.length === 0 || json === 'null') {
+  if (json.length === 0 || json === 'null' || json === '[]') {
     showNotification(t('No quick fixes available'), 'info');
     return;
   }
-  let count = 0;
-  for (let i = 0; i < json.length; i++) {
-    if (json.charCodeAt(i) === 123) count++;
+  _codeActionTitles = [];
+  _codeActionBodies = [];
+  // Walk the top-level array of CodeAction / Command objects. We don't have a
+  // robust JSON parser, but findClosingBrace already exists for symbols (#36).
+  let pos = 0;
+  while (pos < json.length) {
+    const open = json.indexOf('{', pos);
+    if (open < 0) break;
+    const end = findClosingBrace(json, open);
+    if (end < 0) break;
+    const body = json.slice(open, end + 1);
+    const title = extractJsonStringField(body, '"title"');
+    if (title.length > 0) {
+      _codeActionTitles.push(title);
+      _codeActionBodies.push(body);
+    }
+    pos = end + 1;
   }
-  let msg = String(count) + ' ' + t('code actions available — picker coming in v1.1.');
+  if (_codeActionTitles.length === 0) {
+    showNotification(t('No quick fixes available'), 'info');
+    return;
+  }
+  // Render into the sidebar via the existing takeover pattern.
+  showCodeActionsPicker();
+}
+
+function showCodeActionsPicker(): void {
+  if (!sidebarContainer) return;
+  if (sidebarToggleReady > 0 && sidebarVisible < 1) {
+    sidebarVisible = 1;
+    widgetSetHidden(sidebarWidget, 0);
+    widgetSetHidden(sidebarBorderWidget, 0);
+  }
+  resetSearchPanelReady();
+  widgetClearChildren(sidebarContainer);
+  const title = Text(t('CODE ACTIONS'));
+  textSetFontSize(title, 11);
+  textSetFontWeight(title, 11, 0.7);
+  setFg(title, getSideBarForeground());
+  widgetAddChild(sidebarContainer, title);
+
+  for (let i = 0; i < _codeActionTitles.length; i++) {
+    const idx = i;
+    const t1 = _codeActionTitles[i];
+    const btn = Button(t1, () => { applyCodeAction(idx); });
+    setBtnFg(btn, getSideBarForeground());
+    textSetFontSize(btn, 12);
+    widgetAddChild(sidebarContainer, btn);
+  }
+}
+
+// SHIP-V1-GAPS.md #29: apply a single code action. Honors `edit.changes`
+// across one or more files via the shared `applyWorkspaceEdit` helper.
+// Command-driven actions (no inline `edit`) surface a v1.1 hint — they need
+// `workspace/executeCommand` to be wired into the LSP bridge.
+function applyCodeAction(idx: number): void {
+  if (idx < 0 || idx >= _codeActionBodies.length) return;
+  const body = _codeActionBodies[idx];
+  const editIdx = body.indexOf('"edit"');
+  if (editIdx < 0) {
+    showNotification(t('Action requires command execution — v1.1.'), 'info');
+    return;
+  }
+  const editBraceOpen = body.indexOf('{', editIdx);
+  if (editBraceOpen < 0) {
+    showNotification(t('Action has no inline edit.'), 'info');
+    return;
+  }
+  const editBraceClose = findClosingBrace(body, editBraceOpen);
+  if (editBraceClose < 0) {
+    showNotification(t('Action edit is malformed.'), 'warning');
+    return;
+  }
+  const editBlock = body.slice(editBraceOpen, editBraceClose + 1);
+  const r = applyWorkspaceEdit(editBlock);
+  if (r.appliedFiles === 0) {
+    if (editBlock.indexOf('"documentChanges"') >= 0) {
+      showNotification(t('Action uses documentChanges — v1.1.'), 'info');
+    } else {
+      showNotification(t('Action has no applicable edits.'), 'info');
+    }
+    return;
+  }
+  let msg = t('Applied: ') + _codeActionTitles[idx];
+  msg += ' (' + String(r.appliedEdits) + ' ' + t('edits') + ')';
   showNotification(msg, 'info');
+}
+
+function findClosingBracket(s: string, openPos: number): number {
+  let depth = 0;
+  let inStr = 0;
+  let escape = 0;
+  for (let i = openPos; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (escape > 0) { escape = 0; continue; }
+    if (inStr > 0) {
+      if (c === 92) escape = 1;
+      else if (c === 34) inStr = 0;
+      continue;
+    }
+    if (c === 34) inStr = 1;
+    else if (c === 91) depth = depth + 1;
+    else if (c === 93) {
+      depth = depth - 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
 }
 
 /** Status-bar branch click — opens the Source Control sidebar panel. */
@@ -2017,6 +2818,126 @@ function safeReadFile(filePath: string): string {
   return content;
 }
 
+// SHIP-V1-GAPS.md #73: detect line endings from buffer content. Returns
+// 'LF' (just `\n`), 'CRLF' (any `\r\n` pair seen), or 'CR' (Mac classic;
+// `\r` without a following `\n`). We report whichever is dominant; on tie
+// or empty we default to LF (matches `git config core.autocrlf=input`).
+function detectEolStyle(content: string): string {
+  let lf = 0;
+  let crlf = 0;
+  for (let i = 0; i < content.length; i++) {
+    const c = content.charCodeAt(i);
+    if (c === 13) {
+      if (i + 1 < content.length && content.charCodeAt(i + 1) === 10) {
+        crlf = crlf + 1;
+        i = i + 1; // skip the LF half of the pair
+      }
+      // bare CR — Mac classic — fall through; we treat as LF for v1.
+    } else if (c === 10) {
+      lf = lf + 1;
+    }
+  }
+  if (crlf > lf) return 'CRLF';
+  return 'LF';
+}
+
+// SHIP-V1-GAPS.md #73: detect encoding by BOM. JS strings preserve U+FEFF at
+// offset 0 when the file had a UTF-8 BOM (0xEF 0xBB 0xBF). UTF-16 with BOM
+// would also appear as U+FEFF but the raw file would not be readable as UTF-8
+// text by Perry's readFileSync; if we got readable content with a BOM, it's
+// most likely UTF-8 BOM. Returns the human label for the status bar.
+function detectEncoding(content: string): string {
+  if (content.length > 0 && content.charCodeAt(0) === 0xFEFF) return 'UTF-8 BOM';
+  return 'UTF-8';
+}
+
+let _currentEol: string = 'LF';
+// 1 if the currently-open file began with a UTF-8 BOM (U+FEFF). The BOM is
+// stripped from the editor buffer so it isn't a phantom leading char, and
+// re-prepended on save via restoreEolForSave so BOM files round-trip.
+let _currentHadBOM: number = 0;
+// 1 if the currently-open file is binary (contains a NUL byte). We show a
+// placeholder instead of dumping raw bytes into the editor, and saveFileAction
+// refuses to write so the user can't overwrite the binary with the placeholder.
+let _currentFileIsBinary: number = 0;
+// 1 if the currently-open file was truncated for display (>100KB, only first
+// 5000 lines loaded). saveFileAction hard-refuses so a save can't overwrite
+// the full on-disk file with just the visible first-5000-lines slice.
+let _currentFileTruncated: number = 0;
+
+// Prepare editor content (always pure \n, BOM-stripped — see displayFileContent)
+// for writing to disk: restore the file's original EOL and re-prepend a UTF-8
+// BOM if the file had one. Without EOL restore, every save of a Windows-default
+// CRLF file silently rewrites it as LF (whole-file git churn). Without BOM
+// re-add, every save of a Notepad/Visual-Studio/PowerShell-authored UTF-8-BOM
+// file silently strips the BOM (also whole-file git churn + can break tools
+// that require the BOM). `_currentEol`/`_currentHadBOM` are set from the raw
+// bytes at file-open in displayFileContent (and refreshed on external reload).
+function restoreEolForSave(content: string): string {
+  let body = content;
+  if (_currentEol.length === 4) { // CRLF
+    let out = '';
+    for (let i = 0; i < content.length; i++) {
+      const c = content.charCodeAt(i);
+      if (c === 10) {
+        // Guard against a stray pre-existing \r so we never emit \r\r\n.
+        if (i > 0 && content.charCodeAt(i - 1) === 13) {
+          out += '\n';
+        } else {
+          out += '\r\n';
+        }
+      } else {
+        out += content.charAt(i);
+      }
+    }
+    body = out;
+  }
+  // Re-prepend the UTF-8 BOM the file was opened with (stripped for editing).
+  if (_currentHadBOM > 0 && (body.length === 0 || body.charCodeAt(0) !== 0xFEFF)) {
+    body = String.fromCharCode(0xFEFF) + body;
+  }
+  return body;
+}
+
+function cycleEolAction(): void {
+  if (editorReady < 1) return;
+  if (currentEditorFilePath.length < 1) return;
+  const content = editorInstance.getContent();
+  let next = '';
+  if (_currentEol.length === 4) {
+    // CRLF → LF. Replace every \r\n pair with \n.
+    for (let i = 0; i < content.length; i++) {
+      const c = content.charCodeAt(i);
+      if (c === 13 && i + 1 < content.length && content.charCodeAt(i + 1) === 10) {
+        next += '\n';
+        i = i + 1;
+      } else {
+        next += content.charAt(i);
+      }
+    }
+    _currentEol = 'LF';
+  } else {
+    // LF → CRLF. Replace every bare \n with \r\n.
+    for (let i = 0; i < content.length; i++) {
+      const c = content.charCodeAt(i);
+      if (c === 10) {
+        // Skip if preceded by \r (already CRLF).
+        if (i > 0 && content.charCodeAt(i - 1) === 13) {
+          next += '\n';
+        } else {
+          next += '\r\n';
+        }
+      } else {
+        next += content.charAt(i);
+      }
+    }
+    _currentEol = 'CRLF';
+  }
+  editorInstance.setContent(next);
+  updateStatusBarEolImpl(_currentEol);
+  showNotification(t('Line endings set to') + ' ' + _currentEol, 'info');
+}
+
 // Module-level refs for diff widgets currently in editorPane
 let activeDiffHeader: unknown = null;
 let activeDiffEditors: unknown = null;
@@ -2144,29 +3065,81 @@ function displayFileContent(filePath: string): void {
   const lang = detectLanguage(filePath);
   editorInstance.setLanguage(lang);
   const content = safeReadFile(filePath);
+  // Strip a leading UTF-8 BOM (U+FEFF) before it reaches the editor. Windows
+  // tools (Notepad, older Visual Studio, PowerShell `Out-File`/`>` default)
+  // write UTF-8 with a BOM. Left in the buffer it's a phantom zero-width
+  // leading char: line-1 columns shift by one, the charCodeAt(0) LFS
+  // heuristic below breaks, and the first syntax token absorbs U+FEFF.
+  // We remember it (`_currentHadBOM`) and restoreEolForSave re-prepends it
+  // so the file round-trips byte-identical. `content` (raw, BOM included) is
+  // still used for `_externalFileHash` because the disk-watcher reads raw
+  // file bytes and must hash-match.
+  _currentHadBOM = 0;
+  let body = content;
+  if (body.length > 0 && body.charCodeAt(0) === 0xFEFF) {
+    _currentHadBOM = 1;
+    body = body.slice(1);
+  }
+  // Binary-file guard. Opening a PNG/exe/zip used to dump raw bytes into the
+  // editor: mojibake render, very slow for large binaries, and — worst —
+  // saving round-tripped the bytes through the \n-normalizing buffer +
+  // EOL-restore and silently corrupted the binary. Detect via a NUL byte in
+  // the first 8000 chars (the same heuristic git uses). On binary: show a
+  // placeholder, notify, seed the disk-watcher baseline, and bail before
+  // setContent(rawBytes)/LSP/indent. saveFileAction also hard-refuses to
+  // write a binary tab (see guard there) so the placeholder can't clobber it.
+  _currentFileIsBinary = 0;
+  let _binScan = body.length < 8000 ? body.length : 8000;
+  for (let bi = 0; bi < _binScan; bi++) {
+    if (body.charCodeAt(bi) === 0) { _currentFileIsBinary = 1; break; }
+  }
+  if (_currentFileIsBinary > 0) {
+    editorInstance.setContent(t('This file is not displayed because it is binary or uses an unsupported encoding.'));
+    markTabSaved(editorInstance.getContent().length);
+    _externalFileHash = djb2Hash(content);
+    _externalCheckPending = 0;
+    _currentEol = 'LF';
+    _currentHadBOM = 0;
+    _currentFileTruncated = 0;
+    updateStatusBarEolImpl(_currentEol);
+    updateStatusBarEncodingImpl(t('Binary'));
+    showNotification(t('Binary file opened read-only — edits will not be saved.'), 'warning');
+    editorInstance.render();
+    return;
+  }
   // SHIP-V1-GAPS.md #102: LFS warning. Git-LFS stores tiny pointer files in
   // place of large binaries — opening one looks fine but you're editing the
   // pointer, not the asset. The file always starts with `version https://git-lfs.github.com/spec/`.
   // Surface a notification so the user doesn't accidentally commit garbage.
-  if (content.length > 30 && content.length < 1024
-      && content.charCodeAt(0) === 118 && content.charCodeAt(1) === 101
-      && content.indexOf('git-lfs.github.com/spec/') > 0) {
+  if (body.length > 30 && body.length < 1024
+      && body.charCodeAt(0) === 118 && body.charCodeAt(1) === 101
+      && body.indexOf('git-lfs.github.com/spec/') > 0) {
     showNotification(t('LFS pointer file. The actual asset is on the LFS server — install git-lfs and run `git lfs pull` to fetch.'), 'warning');
   }
   const t6 = Date.now();
-  // Large files (>100KB): load first 5000 lines for instant display
-  let displayContent = content;
-  if (content.length > 100000) {
+  // Large files (>100KB): load first 5000 lines for instant display.
+  // CRITICAL: when truncated, the editor only holds the first 5000 lines.
+  // Without a save guard, editing + save (or auto-save) would do
+  // getContent() (5000 lines) → writeFileSync → PERMANENTLY DESTROY every
+  // line after 5000 on disk. A user fixing a typo in a 200KB log/data file
+  // would silently lose ~75% of it. So a truncated tab is treated like a
+  // binary tab: viewable, but hard read-only (saveFileAction refuses).
+  // Full large-file editing needs windowed/virtualized save — v1.1.
+  _currentFileTruncated = 0;
+  let displayContent = body;
+  if (body.length > 100000) {
     let nlCount = 0;
-    let cutoff = content.length;
-    for (let ci = 0; ci < content.length; ci++) {
-      if (content.charCodeAt(ci) === 10) {
+    let cutoff = body.length;
+    for (let ci = 0; ci < body.length; ci++) {
+      if (body.charCodeAt(ci) === 10) {
         nlCount = nlCount + 1;
         if (nlCount >= 5000) { cutoff = ci; break; }
       }
     }
-    if (cutoff < content.length) {
-      displayContent = content.slice(0, cutoff);
+    if (cutoff < body.length) {
+      displayContent = body.slice(0, cutoff);
+      _currentFileTruncated = 1;
+      showNotification(t('Large file: showing first 5000 lines, read-only (editing the full file lands in v1.1).'), 'warning');
     }
   }
   editorInstance.setContent(displayContent);
@@ -2174,9 +3147,17 @@ function displayFileContent(filePath: string): void {
   const editorLen = editorInstance.getContent().length;
   markTabSaved(editorLen);
   // SHIP-V1-GAPS.md #86: seed the disk-watcher with the just-read content
-  // hash so the next poll has a baseline to compare against.
+  // hash so the next poll has a baseline to compare against. Raw `content`
+  // (BOM included) — the watcher reads raw file bytes.
   _externalFileHash = djb2Hash(content);
   _externalCheckPending = 0;
+  // SHIP-V1-GAPS.md #73: refresh EOL + encoding status-bar labels for the
+  // just-opened file. Encoding is detection-only in v1 — changing it is a
+  // data-destructive op that needs a confirm dialog. EOL detected from the
+  // BOM-stripped body so a BOM doesn't skew first-line detection.
+  _currentEol = detectEolStyle(body);
+  updateStatusBarEolImpl(_currentEol);
+  updateStatusBarEncodingImpl(detectEncoding(content));
   const t7 = Date.now();
   editorInstance.render();
   const t8 = Date.now();
@@ -2188,6 +3169,8 @@ function displayFileContent(filePath: string): void {
   // file. setOutlineActiveFile triggers an `lspDocumentSymbols` request; the
   // result lands via setDocumentSymbolsCallback (registered in app init).
   setOutlineActiveFile(filePath);
+  // SHIP-V1-GAPS.md #85: keep the timeline view in sync with the active file.
+  setTimelineActiveFile(filePath);
   // Write timing log
   let log = 'TIMING displayFileContent:\n';
   log += '  setSidebarPath: '; log += String(t1 - t0); log += 'ms\n';
@@ -2201,7 +3184,9 @@ function displayFileContent(filePath: string): void {
   log += '  detectIndent: '; log += String(t9 - t8); log += 'ms\n';
   log += '  lspDidOpen: '; log += String(t10 - t9); log += 'ms\n';
   log += '  TOTAL: '; log += String(t10 - t0); log += 'ms\n';
-  try { writeFileSync('/tmp/hone-timing.log', log); } catch (e: any) {}
+  // SHIP-V1-GAPS.md followup §5: route debug-log writes through the
+  // platform-aware temp dir so Windows doesn't silently swallow them.
+  try { writeFileSync(getTempDir() + '/hone-timing.log', log); } catch (e: any) {}
 }
 
 function openFileInEditor(filePath: string, fileName: string): void {
@@ -2224,7 +3209,7 @@ function openFileInEditor(filePath: string, fileName: string): void {
   olog += '  displayFileContent: '; olog += String(ot3 - ot2); olog += 'ms\n';
   olog += '  telemetry: '; olog += String(ot4 - ot3); olog += 'ms\n';
   olog += '  TOTAL: '; olog += String(ot4 - ot0); olog += 'ms\n';
-  try { writeFileSync('/tmp/hone-timing-open.log', olog); } catch (e: any) {}
+  try { writeFileSync(getTempDir() + '/hone-timing-open.log', olog); } catch (e: any) {}
   // Track in recent items — skip virtual paths (__*) and untitled files
   if (filePath.length > 2 && filePath.charCodeAt(0) !== 95) {
     if (isUntitledFile() < 1) {
@@ -2465,12 +3450,22 @@ function applyBuiltinFormat(): void {
  * Perry-safe: uses charCodeAt loops, no regex.
  */
 function applyBuiltinFormatToString(content: string, s: any): string {
+  // Preserve the file's existing EOL. Splitting only on \n leaves a trailing
+  // \r on every line in a CRLF file, which silently breaks trailing-whitespace
+  // trimming (the \r blocks the space/tab scan) and could mangle indentation.
+  // Detect once, strip \r from each split line, rejoin with the original EOL.
+  const isCRLF = detectEolStyle(content) === 'CRLF';
   // Split by \n
   const lines: string[] = [];
   let lineStart = 0;
   for (let i = 0; i <= content.length; i++) {
     if (i === content.length || content.charCodeAt(i) === 10) {
-      lines.push(content.slice(lineStart, i));
+      let seg = content.slice(lineStart, i);
+      // Drop a trailing \r so processing operates on clean content.
+      if (seg.length > 0 && seg.charCodeAt(seg.length - 1) === 13) {
+        seg = seg.slice(0, seg.length - 1);
+      }
+      lines.push(seg);
       lineStart = i + 1;
     }
   }
@@ -2524,17 +3519,21 @@ function applyBuiltinFormatToString(content: string, s: any): string {
     }
   }
 
-  // Rejoin
+  // Rejoin using the original EOL so a CRLF file stays CRLF.
+  let eol = '\n';
+  if (isCRLF) eol = '\r\n';
   let formatted = '';
   for (let i = 0; i < lines.length; i++) {
-    if (i > 0) formatted += '\n';
+    if (i > 0) formatted += eol;
     formatted += lines[i];
   }
 
-  // Insert final newline
+  // Insert final newline (in the file's own EOL style). The "already ends
+  // with newline" check looks at the last char — \n for both LF and CRLF
+  // since CRLF ends in \n too.
   if (s.editorInsertFinalNewline) {
     if (formatted.length === 0 || formatted.charCodeAt(formatted.length - 1) !== 10) {
-      formatted += '\n';
+      formatted += eol;
     }
   }
 
@@ -2546,11 +3545,19 @@ function applyBuiltinFormatToString(content: string, s: any): string {
  * Used when trim-on-save is enabled but format-on-save is not.
  */
 function inlineTrimTrailingWhitespace(content: string): string {
+  // Same CRLF caveat as applyBuiltinFormatToString (iter 60): split only on
+  // \n leaves a trailing \r on CRLF lines that blocks the space/tab trim
+  // scan, so trailing whitespace before the \r is never removed on
+  // Windows-default files. Strip \r on split, rejoin with the original EOL.
+  const isCRLF = detectEolStyle(content) === 'CRLF';
   const lines: string[] = [];
   let lineStart = 0;
   for (let i = 0; i <= content.length; i++) {
     if (i === content.length || content.charCodeAt(i) === 10) {
       let line = content.slice(lineStart, i);
+      if (line.length > 0 && line.charCodeAt(line.length - 1) === 13) {
+        line = line.slice(0, line.length - 1);
+      }
       let end = line.length;
       while (end > 0) {
         const ch = line.charCodeAt(end - 1);
@@ -2561,9 +3568,11 @@ function inlineTrimTrailingWhitespace(content: string): string {
       lineStart = i + 1;
     }
   }
+  let eol = '\n';
+  if (isCRLF) eol = '\r\n';
   let result = '';
   for (let i = 0; i < lines.length; i++) {
-    if (i > 0) result += '\n';
+    if (i > 0) result += eol;
     result += lines[i];
   }
   return result;
@@ -2865,16 +3874,13 @@ function syncInlineBlame(): void {
   blameInFlight = 1;
 
   spawn(() => {
-    let cmd = 'git blame -L ';
-    cmd += String(lineNum);
-    cmd += ',';
-    cmd += String(lineNum);
-    cmd += ' --porcelain -- ';
-    cmd += filePath;
-
+    // SHIP-V1-GAPS.md #1: argv-form spawn — filePath can contain spaces or
+    // shell metacharacters; shell concat would either fail or be exploitable.
+    const range = String(lineNum) + ',' + String(lineNum);
     let output = '';
     try {
-      output = execSync(cmd) as unknown as string;
+      const r = spawnSync('git', ['blame', '-L', range, '--porcelain', '--', filePath]);
+      if (r.status === 0) output = r.stdout;
     } catch (e) {
       return '';
     }
@@ -3322,7 +4328,7 @@ function renderActivityBarDesktop(): unknown {
     const idx = i;
     const btn = Button('', () => { onActivityClick(idx); });
     buttonSetBordered(btn, 0);
-    buttonSetImage(btn, icons[i]);
+    setIconButton(btn, icons[i]);
     buttonSetImagePosition(btn, 1);
     textSetFontSize(btn, 20);
     setBtnTint(btn, getActivityBarForeground());
@@ -3358,7 +4364,7 @@ function renderActivityBarDesktop(): unknown {
   // Settings gear icon → opens Settings tab in editor pane
   const settingsBtn = Button('', () => { openSettingsAction(); });
   buttonSetBordered(settingsBtn, 0);
-  buttonSetImage(settingsBtn, 'gearshape');
+  setIconButton(settingsBtn, 'gearshape');
   buttonSetImagePosition(settingsBtn, 1);
   textSetFontSize(settingsBtn, 20);
   setBtnTint(settingsBtn, getActivityBarInactiveForeground());
@@ -3380,7 +4386,7 @@ function renderActivityBarCompact(): unknown {
     const idx = i;
     const btn = Button('', () => { onActivityClick(idx); });
     buttonSetBordered(btn, 0);
-    buttonSetImage(btn, icons[i]);
+    setIconButton(btn, icons[i]);
     buttonSetImagePosition(btn, 1);
     textSetFontSize(btn, 20);
     setBtnTint(btn, getActivityBarForeground());
@@ -3417,11 +4423,11 @@ function renderIPadTopBar(): unknown {
   const syncBtn = Button('', () => { onBottomBarSync(); });
   const settingsBtn = Button('', () => { onBottomBarSettings(); });
 
-  buttonSetImage(filesBtn, 'folder');
-  buttonSetImage(searchBtn, 'magnifyingglass');
-  buttonSetImage(aiBtn, 'sparkles');
-  buttonSetImage(syncBtn, 'arrow.triangle.2.circlepath');
-  buttonSetImage(settingsBtn, 'gearshape');
+  setIconButton(filesBtn, 'folder');
+  setIconButton(searchBtn, 'magnifyingglass');
+  setIconButton(aiBtn, 'sparkles');
+  setIconButton(syncBtn, 'arrow.triangle.2.circlepath');
+  setIconButton(settingsBtn, 'gearshape');
 
   const allBtns = [filesBtn, searchBtn, aiBtn, syncBtn, settingsBtn];
   for (let i = 0; i < allBtns.length; i++) {
@@ -3549,12 +4555,43 @@ function renderEditorArea(): unknown {
   if (restoredCount > 1 && savedActiveIdx >= 0 && savedActiveIdx < restoredCount) {
     setActiveTabByIndex(savedActiveIdx);
   }
+  // SHIP-V1-GAPS.md #26: restore pin state. The mask is '1'/'0' chars in the
+  // same order as `lastOpenTabs`. Iterate and pin matching slots. The mask
+  // can be shorter than the restored count (if pin state was added later) —
+  // that's fine; missing slots stay unpinned.
+  const pinMask = getLastPinnedTabs();
+  if (pinMask.length > 0) {
+    for (let pi = 0; pi < restoredCount && pi < pinMask.length; pi++) {
+      if (pinMask.charCodeAt(pi) === 49) { // '1'
+        pinTabImpl(pi);
+      }
+    }
+  }
   setTabBarRestoring(0);
 
   const ed = new Editor(800, 600);
   editorInstance = ed;
   editorNativeHandle = ed.nativeHandle as number;
   editorReady = 1;
+
+  // Apply the editor font from settings. This was never wired — the
+  // Settings → Font Family / Font Size rows persisted to settings.ini and
+  // showed in the UI but had zero effect on the editor (setFont was never
+  // called, so the editor used its internal default). Also: the settings
+  // default `editorFontFamily` is the macOS-only 'Menlo'; on Windows/Linux
+  // substitute the platform mono font (Consolas / DejaVu Sans Mono) via the
+  // monoFont() helper so a fresh install on Windows gets a real monospace
+  // face instead of a serif/proportional system fallback.
+  const _edFontSettings = getWorkbenchSettings();
+  let _edFam = _edFontSettings.editorFontFamily;
+  if (_edFam.length === 0) _edFam = monoFont();
+  // 'Menlo' is the unconfigured default; only honor it on macOS.
+  if (_edFam === 'Menlo' && __platform__ !== 0) _edFam = monoFont();
+  let _edSize = _edFontSettings.editorFontSize;
+  if (_edSize < 6 || _edSize > 96) _edSize = 13;
+  try { ed.setFont(_edFam, _edSize); } catch (_e: any) {}
+  _lastEditorFontFamily = _edFam;
+  _lastEditorFontSize = _edSize;
 
   // Set syntax token colors based on current theme
   if (isCurrentThemeDark() > 0) {
@@ -3622,7 +4659,7 @@ function renderEditorArea(): unknown {
   // indent). Hidden when no scope is detected so the editor reclaims the row.
   stickyScrollLabel = Text('');
   textSetFontSize(stickyScrollLabel, 11);
-  textSetFontFamily(stickyScrollLabel, 11, 'Menlo');
+  textSetFontFamily(stickyScrollLabel, 11, monoFont());
   setFg(stickyScrollLabel, getSecondaryTextColor());
   stickyScrollRow = HStackWithInsets(4, 2, 12, 2, 12);
   setBg(stickyScrollRow, getEditorBackground());
@@ -3736,6 +4773,12 @@ function renderEditorArea(): unknown {
   menuAddItem(editorMenu, t('Find All References'), () => { findAllReferencesFromCursor(); });
   menuAddItem(editorMenu, t('Rename Symbol…'), () => { renameSymbolFromCursor(); });
   menuAddItem(editorMenu, t('Quick Fix…'), () => { showCodeActionsFromCursor(); });
+  menuAddSeparator(editorMenu);
+  // SHIP-V1-GAPS.md #107: route current-line context (+ diagnostics for Fix)
+  // into AI Chat. Full gutter-lightbulb widget needs Rust draw support; this
+  // menu path covers the same intent on every platform.
+  menuAddItem(editorMenu, t('Fix with AI'), () => { fixWithAIFromCursor(); });
+  menuAddItem(editorMenu, t('Explain with AI'), () => { explainWithAIFromCursor(); });
   menuAddSeparator(editorMenu);
   menuAddItem(editorMenu, t('Format Document'), () => { formatDocumentDeferred(); });
   widgetSetContextMenu(editorWidget, editorMenu);
@@ -3865,11 +4908,11 @@ function renderBottomToolbar(): unknown {
   const aiBtn = Button('', () => { onBottomBarAI(); });
   const settingsBtn = Button('', () => { onBottomBarSettings(); });
 
-  buttonSetImage(filesBtn, 'folder');
-  buttonSetImage(searchBtn, 'magnifyingglass');
-  buttonSetImage(gitBtn, 'arrow.triangle.branch');
-  buttonSetImage(aiBtn, 'sparkles');
-  buttonSetImage(settingsBtn, 'gearshape');
+  setIconButton(filesBtn, 'folder');
+  setIconButton(searchBtn, 'magnifyingglass');
+  setIconButton(gitBtn, 'arrow.triangle.branch');
+  setIconButton(aiBtn, 'sparkles');
+  setIconButton(settingsBtn, 'gearshape');
   buttonSetImagePosition(filesBtn, 1);
   buttonSetImagePosition(searchBtn, 1);
   buttonSetImagePosition(gitBtn, 1);
@@ -4060,7 +5103,25 @@ function onSettingsChanged(): void {
   const s = getWorkbenchSettings();
   // SHIP-V1-GAPS.md #95: push hidden-files toggle to the explorer + refresh.
   setSidebarShowHiddenFiles(s.explorerShowHiddenFiles ? 1 : 0);
+  // SHIP-V1-GAPS.md #50: push gitignore-respect toggle.
+  setSidebarRespectGitignore(s.explorerRespectGitignore ? 1 : 0);
   refreshSidebarContent();
+  // Live-apply editor font changes (family/size). Without this, changing
+  // Font Family or Font Size in Settings did nothing until an app restart.
+  // Done BEFORE the theme early-return below so a font-only change still
+  // takes effect (the theme guard returns early when the theme is unchanged).
+  if (editorReady > 0) {
+    let fam = s.editorFontFamily;
+    if (fam.length === 0) fam = monoFont();
+    if (fam === 'Menlo' && __platform__ !== 0) fam = monoFont();
+    let sz = s.editorFontSize;
+    if (sz < 6 || sz > 96) sz = 13;
+    if (fam !== _lastEditorFontFamily || sz !== _lastEditorFontSize) {
+      _lastEditorFontFamily = fam;
+      _lastEditorFontSize = sz;
+      try { editorInstance.setFont(fam, sz); editorInstance.render(); } catch (_e: any) {}
+    }
+  }
   const newTheme = s.colorTheme;
   if (newTheme.length < 1) return;
   // Check if theme changed — compare 6th char: 'D' (68) for Dark, 'L' (76) for Light
@@ -4449,20 +5510,21 @@ function initSyncSystem(layoutMode: LayoutMode): void {
   // Try to restore a previous sync session
   tryRestoreSyncSession();
 
-  // Debug auto-pair: if /tmp/hone-auto-pair exists, auto-connect to debug room
+  // Debug auto-pair: if <tempDir>/hone-auto-pair exists, auto-connect to debug room
+  // (tempDir is /tmp on POSIX, %TEMP% on Windows — touch this file before launch)
   if (syncPairedRoomId.length < 1) {
     let autoPair = 0;
     try {
-      if (existsSync('/tmp/hone-auto-pair')) autoPair = 1;
+      if (existsSync(getTempDir() + '/hone-auto-pair')) autoPair = 1;
     } catch (e: any) {}
     if (autoPair > 0) {
       syncDebugLog('Auto-pair: connecting to debug room');
-      // To detect guest: check if /tmp/hone-auto-pair-guest contains OUR device ID
+      // To detect guest: check if <tempDir>/hone-auto-pair-guest contains OUR device ID
       // (avoids race condition where host reads guest file before its own initSyncSystem)
       let isGuest = 0;
       try {
-        if (existsSync('/tmp/hone-auto-pair-guest')) {
-          const guestContent = readFileSync('/tmp/hone-auto-pair-guest');
+        if (existsSync(getTempDir() + '/hone-auto-pair-guest')) {
+          const guestContent = readFileSync(getTempDir() + '/hone-auto-pair-guest');
           if (guestContent.length < 2) {
             // Empty file = old-style flag: check if our device ID matches the guest's device-id file
             // Use heuristic: guest has HOME env pointing to a temp dir
@@ -4642,14 +5704,19 @@ function onClaudeRelayRequestFromGuest(guestId: string, prompt: string, wsRoot: 
   // Import claude-process functions dynamically won't work in Perry.
   // Instead, use execSync/spawnBackground directly here (same-module pattern).
 
-  // Find claude binary
+  // Find claude binary. SHIP-V1-GAPS.md followup §5: `which` is POSIX-only;
+  // Windows uses `where`. Both return the full path on success, multi-line
+  // when there are multiple matches.
   let claudeBin = '';
   try {
-    const whichResult = execSync('which claude') as unknown as string;
-    for (let i = 0; i < whichResult.length; i++) {
-      const ch = whichResult.charCodeAt(i);
-      if (ch === 10 || ch === 13) break;
-      claudeBin += whichResult.slice(i, i + 1);
+    const cmd = __platform__ === 3 ? 'where' : 'which';
+    const r = spawnSync(cmd, ['claude']);
+    if (r.status === 0 && r.stdout.length > 0) {
+      for (let i = 0; i < r.stdout.length; i++) {
+        const ch = r.stdout.charCodeAt(i);
+        if (ch === 10 || ch === 13) break;
+        claudeBin += r.stdout.slice(i, i + 1);
+      }
     }
   } catch (e) {}
 
@@ -4665,23 +5732,23 @@ function onClaudeRelayRequestFromGuest(guestId: string, prompt: string, wsRoot: 
     claudeRelayPollTimer = 0;
   }
   if (claudeRelayPid > 0) {
+    // SHIP-V1-GAPS.md followup §5: `kill <pid>` is POSIX-only; Windows uses
+    // `taskkill /F /PID <pid>`. Both via argv-form spawnSync so user PIDs
+    // can't influence the command parse.
     try {
-      let killCmd = 'kill ';
-      killCmd += String(claudeRelayPid);
-      execSync(killCmd);
+      const pidStr = String(claudeRelayPid);
+      if (__platform__ === 3) {
+        spawnSync('taskkill', ['/F', '/PID', pidStr]);
+      } else {
+        spawnSync('kill', [pidStr]);
+      }
     } catch (e) {}
   }
 
-  // Build log file path
+  // Build log file path. SHIP-V1-GAPS.md followup §5: use cross-platform
+  // getHomeDir() instead of `echo $HOME` which is POSIX-only.
   let logPath = '';
-  try {
-    const homeResult = execSync('echo $HOME') as unknown as string;
-    for (let i = 0; i < homeResult.length; i++) {
-      const ch = homeResult.charCodeAt(i);
-      if (ch === 10 || ch === 13) break;
-      logPath += homeResult.slice(i, i + 1);
-    }
-  } catch (e) {}
+  try { logPath = getHomeDir(); } catch (_e: any) {}
   logPath += '/.hone/claude-relay-';
   logPath += String(Date.now());
   logPath += '.log';
@@ -4701,12 +5768,23 @@ function onClaudeRelayRequestFromGuest(guestId: string, prompt: string, wsRoot: 
     return;
   }
 
-  // Build shell command — same as claude-process.ts
-  let cmd = 'unset CLAUDECODE; ';
-  cmd += claudeBin;
-  cmd += ' -p "$(cat ';
-  cmd += shellEscapeRelay(promptFile);
-  cmd += ')"';
+  // Build shell command — same platform-branch as claude-process.ts.
+  // POSIX: `unset CLAUDECODE` + `$(cat <file>)` to avoid argv-size limits.
+  // Windows: `set "VAR="` + inline prompt via shellEscapeRelay (double-quoted).
+  // cmd.exe argv cap is ~8192 chars total; typical chat prompts fit fine.
+  let cmd = '';
+  if (__platform__ === 3) {
+    cmd = 'set "CLAUDECODE=" && ';
+    cmd += claudeBin;
+    cmd += ' -p ';
+    cmd += shellEscapeRelay(prompt);
+  } else {
+    cmd = 'unset CLAUDECODE; ';
+    cmd += claudeBin;
+    cmd += ' -p "$(cat ';
+    cmd += shellEscapeRelay(promptFile);
+    cmd += ')"';
+  }
   cmd += ' --output-format stream-json';
   cmd += ' --verbose';
   cmd += ' --max-turns 25';
@@ -4726,8 +5804,13 @@ function onClaudeRelayRequestFromGuest(guestId: string, prompt: string, wsRoot: 
   cmd += shellEscapeRelay(logPath);
   cmd += ' 2>&1';
 
-  // Spawn background process
-  const result = spawnBackground('/bin/sh', ['-c', cmd], '/dev/null');
+  // SHIP-V1-GAPS.md followup §5: per-platform shell + null-device path.
+  // Windows: cmd.exe + `NUL`. Unix: /bin/sh + /dev/null. The `cmd` string
+  // already uses POSIX `>` for redirect which `cmd /c` also accepts.
+  const shellBin = __platform__ === 3 ? 'cmd.exe' : '/bin/sh';
+  const shellArg = __platform__ === 3 ? '/c' : '-c';
+  const nullDev = __platform__ === 3 ? 'NUL' : '/dev/null';
+  const result = spawnBackground(shellBin, [shellArg, cmd], nullDev);
   claudeRelayPid = result.pid;
 
   syncDebugLog('Claude relay spawned pid=' + String(claudeRelayPid));
@@ -4743,7 +5826,21 @@ function cleanupRelayPromptFile(path: string): void {
   try { unlinkSync(path); } catch (e) {}
 }
 
+// SHIP-V1-GAPS.md followup §5: per-platform quoting. POSIX wraps in single
+// quotes; Windows cmd.exe has no single-quote semantics so we wrap in double
+// quotes and double-escape any embedded `"`. The resulting string is piped
+// through `cmd.exe /c` on Windows.
 function shellEscapeRelay(s: string): string {
+  if (__platform__ === 3) {
+    let result = '"';
+    for (let i = 0; i < s.length; i++) {
+      const ch = s.charCodeAt(i);
+      if (ch === 34) result += '""';
+      else result += s.slice(i, i + 1);
+    }
+    result += '"';
+    return result;
+  }
   let result = "'";
   for (let i = 0; i < s.length; i++) {
     const ch = s.charCodeAt(i);
@@ -4775,12 +5872,20 @@ function claudeRelayPollTick(): void {
     claudeRelayNoData += 1;
     if (claudeRelayNoData > 60) {
       claudeRelayNoData = 0;
-      // Check if process exited
+      // SHIP-V1-GAPS.md followup §5: same liveness-check fix as chat-panel.
+      // POSIX `kill -0 <pid>` → exit 0 if alive. Windows: `tasklist /FI
+      // "PID eq <pid>" /NH` prints `INFO: No tasks...` when no match.
       let gone: number = 0;
       try {
-        let checkCmd = 'kill -0 ';
-        checkCmd += String(claudeRelayPid);
-        execSync(checkCmd);
+        const pidStr = String(claudeRelayPid);
+        if (__platform__ === 3) {
+          const r = spawnSync('tasklist', ['/FI', 'PID eq ' + pidStr, '/NH']);
+          if (r.status !== 0) gone = 1;
+          else if (r.stdout.length >= 5 && r.stdout.charCodeAt(0) === 73 && r.stdout.charCodeAt(1) === 78) gone = 1;
+        } else {
+          const r = spawnSync('kill', ['-0', pidStr]);
+          if (r.status !== 0) gone = 1;
+        }
       } catch (e) {
         gone = 1;
       }
@@ -5009,10 +6114,14 @@ function onClaudeRelayStopFromGuest(guestId: string, sessionId: string): void {
     claudeRelayPollTimer = 0;
   }
   if (claudeRelayPid > 0) {
+    // SHIP-V1-GAPS.md followup §5: cross-platform kill.
     try {
-      let killCmd = 'kill ';
-      killCmd += String(claudeRelayPid);
-      execSync(killCmd);
+      const pidStr = String(claudeRelayPid);
+      if (__platform__ === 3) {
+        spawnSync('taskkill', ['/F', '/PID', pidStr]);
+      } else {
+        spawnSync('kill', [pidStr]);
+      }
     } catch (e) {}
     claudeRelayPid = 0;
   }
@@ -5891,9 +7000,10 @@ function handleFileTreeResponse(payload: string): void {
     onRemoteFileClicked(firstFile);
   }
 
-  // Auto-test: if /tmp/hone-auto-test exists, run programmatic tests
+  // Auto-test: if <tempDir>/hone-auto-test exists, run programmatic tests
+  // (tempDir is /tmp on POSIX, %TEMP% on Windows — touch this file before launch)
   let doAutoTest = 0;
-  try { if (existsSync('/tmp/hone-auto-test')) doAutoTest = 1; } catch (e: any) {}
+  try { if (existsSync(getTempDir() + '/hone-auto-test')) doAutoTest = 1; } catch (e: any) {}
   if (doAutoTest > 0) {
     setTimeout(() => { runAutoTest(taggedPaths, entryCount); }, 2000);
   }
@@ -5947,7 +7057,7 @@ function runAutoTest(taggedPaths: string[], entryCount: number): void {
   const expDirs = getExpandedDirCount();
   log += 'TEST4-expandedDirs: ' + String(expDirs) + (expDirs === 0 ? ' PASS (all collapsed)' : ' NOTE (' + String(expDirs) + ' expanded)') + '\n';
 
-  try { writeFileSync('/tmp/hone-auto-test-result.log', log); } catch (e: any) {}
+  try { writeFileSync(getTempDir() + '/hone-auto-test-result.log', log); } catch (e: any) {}
 
   // Test 5: Expand a directory
   if (testDir.length > 0) {
@@ -5957,7 +7067,7 @@ function runAutoTest(taggedPaths: string[], entryCount: number): void {
 
 function runAutoTestExpand(dirPath: string, testFile2: string): void {
   let log = '';
-  try { log = readFileSync('/tmp/hone-auto-test-result.log'); } catch (e: any) {}
+  try { log = readFileSync(getTempDir() + '/hone-auto-test-result.log'); } catch (e: any) {}
 
   // Verify file click from test 2 completed
   log += 'TEST2-result: currentEditorFilePath=' + currentEditorFilePath + '\n';
@@ -5973,7 +7083,7 @@ function runAutoTestExpand(dirPath: string, testFile2: string): void {
   const toggled = toggleRemoteDir(dirPath);
   log += 'TEST5-expand: toggleRemoteDir returned ' + String(toggled) + '\n';
 
-  try { writeFileSync('/tmp/hone-auto-test-result.log', log); } catch (e: any) {}
+  try { writeFileSync(getTempDir() + '/hone-auto-test-result.log', log); } catch (e: any) {}
 
   // Wait for refresh then check
   setTimeout(() => { runAutoTestExpandCheck(dirPath, beforeCount); }, 500);
@@ -5981,7 +7091,7 @@ function runAutoTestExpand(dirPath: string, testFile2: string): void {
 
 function runAutoTestExpandCheck(dirPath: string, beforeCount: number): void {
   let log = '';
-  try { log = readFileSync('/tmp/hone-auto-test-result.log'); } catch (e: any) {}
+  try { log = readFileSync(getTempDir() + '/hone-auto-test-result.log'); } catch (e: any) {}
 
   const afterCount = getVisibleFileCount();
   const expDirs = getExpandedDirCount();
@@ -5997,13 +7107,13 @@ function runAutoTestExpandCheck(dirPath: string, beforeCount: number): void {
   // Test 6: Collapse the directory back
   toggleRemoteDir(dirPath);
 
-  try { writeFileSync('/tmp/hone-auto-test-result.log', log); } catch (e: any) {}
+  try { writeFileSync(getTempDir() + '/hone-auto-test-result.log', log); } catch (e: any) {}
   setTimeout(() => { runAutoTestCollapse(dirPath, afterCount); }, 500);
 }
 
 function runAutoTestCollapse(dirPath: string, expandedCount: number): void {
   let log = '';
-  try { log = readFileSync('/tmp/hone-auto-test-result.log'); } catch (e: any) {}
+  try { log = readFileSync(getTempDir() + '/hone-auto-test-result.log'); } catch (e: any) {}
 
   const afterCollapse = getVisibleFileCount();
   const expDirs = getExpandedDirCount();
@@ -6020,13 +7130,13 @@ function runAutoTestCollapse(dirPath: string, expandedCount: number): void {
   const clickResult = clickRemoteFile('src/app.ts');
   log += 'TEST7-clickRemoteFile: returned ' + String(clickResult) + '\n';
 
-  try { writeFileSync('/tmp/hone-auto-test-result.log', log); } catch (e: any) {}
+  try { writeFileSync(getTempDir() + '/hone-auto-test-result.log', log); } catch (e: any) {}
   setTimeout(() => { runAutoTestFinal(); }, 1500);
 }
 
 function runAutoTestFinal(): void {
   let log = '';
-  try { log = readFileSync('/tmp/hone-auto-test-result.log'); } catch (e: any) {}
+  try { log = readFileSync(getTempDir() + '/hone-auto-test-result.log'); } catch (e: any) {}
 
   log += 'TEST7-result: currentEditorFilePath=' + currentEditorFilePath + '\n';
 
@@ -6052,10 +7162,78 @@ function runAutoTestFinal(): void {
   log += 'Editor ready: ' + String(editorReady) + '\n';
   log += 'Current file: ' + currentEditorFilePath + '\n';
   log += 'AUTO-TEST END\n';
-  try { writeFileSync('/tmp/hone-auto-test-result.log', log); } catch (e: any) {}
+  try { writeFileSync(getTempDir() + '/hone-auto-test-result.log', log); } catch (e: any) {}
 }
 
 /** Host: guest sent an edited file to save to disk. */
+// Returns 1 if `abs` is an absolute path that lies inside the current
+// workspace subtree (used to confine LSP-supplied WorkspaceEdit targets).
+// Conservative: no open workspace → not inside (reject). Requires the
+// workspaceRoot prefix followed by a path separator, and rejects any `..`
+// segment so a prefix-matching-but-escaping path can't slip through.
+function isPathInsideWorkspace(abs: string): number {
+  if (workspaceRoot.length < 1) return 0;
+  if (abs.length < workspaceRoot.length) return 0;
+  for (let i = 0; i < workspaceRoot.length; i++) {
+    if (abs.charCodeAt(i) !== workspaceRoot.charCodeAt(i)) return 0;
+  }
+  if (abs.length > workspaceRoot.length) {
+    const sep = abs.charCodeAt(workspaceRoot.length);
+    if (sep !== 47 && sep !== 92) return 0; // must be '/' or '\' boundary
+  }
+  // Reject any `..` path segment (split on '/' and '\').
+  let segStart = 0;
+  for (let i = 0; i <= abs.length; i++) {
+    let atEnd = i === abs.length;
+    let isSep = 0;
+    if (!atEnd) {
+      const ch = abs.charCodeAt(i);
+      if (ch === 47 || ch === 92) isSep = 1;
+    }
+    if (atEnd || isSep > 0) {
+      if (i - segStart === 2 && abs.charCodeAt(segStart) === 46 && abs.charCodeAt(segStart + 1) === 46) {
+        return 0;
+      }
+      segStart = i + 1;
+    }
+  }
+  return 1;
+}
+
+// Returns 1 if `rel` must NOT be trusted as a workspace-relative path:
+// absolute, drive-qualified, UNC, contains a `..` traversal segment, or a
+// NUL byte. Perry-safe (charCodeAt / explicit segment scan, no regex).
+function isUnsafeRelPath(rel: string): number {
+  if (rel.length < 1) return 1;
+  const c0 = rel.charCodeAt(0);
+  // Absolute / UNC: leading '/' (47) or '\' (92).
+  if (c0 === 47 || c0 === 92) return 1;
+  // Windows drive letter: "X:" at offset 0-1 (':' = 58).
+  if (rel.length >= 2 && rel.charCodeAt(1) === 58) return 1;
+  // NUL byte anywhere.
+  for (let i = 0; i < rel.length; i++) {
+    if (rel.charCodeAt(i) === 0) return 1;
+  }
+  // `..` as a whole path segment. Walk segments split on '/' or '\'.
+  let segStart = 0;
+  for (let i = 0; i <= rel.length; i++) {
+    let atEnd = i === rel.length;
+    let sep = 0;
+    if (!atEnd) {
+      const ch = rel.charCodeAt(i);
+      if (ch === 47 || ch === 92) sep = 1;
+    }
+    if (atEnd || sep > 0) {
+      const segLen = i - segStart;
+      if (segLen === 2 && rel.charCodeAt(segStart) === 46 && rel.charCodeAt(segStart + 1) === 46) {
+        return 1; // a ".." segment
+      }
+      segStart = i + 1;
+    }
+  }
+  return 0;
+}
+
 function handleFileSave(payload: string): void {
   // FILE_SAVE|relPath\ncontent
   const prefixLen = 10; // "FILE_SAVE|".length
@@ -6069,6 +7247,17 @@ function handleFileSave(payload: string): void {
   const content = body.substring(nlIdx + 1);
   if (relPath.length < 1) return;
   if (workspaceRoot.length < 1) return;
+  // SECURITY: relPath comes from a paired remote device over the relay.
+  // Sender spoofing isn't blocked (gap #3) and the pairing code is weak
+  // (gap #4), so a hostile/buggy peer could send `../../.ssh/authorized_keys`
+  // (traversal) or an absolute path and the host would writeFileSync ANY
+  // file the process can reach. Reject anything that isn't a clean
+  // workspace-relative path before building fullPath.
+  if (isUnsafeRelPath(relPath) > 0) {
+    syncDebugLog('REJECTED unsafe FILE_SAVE relPath: ' + relPath);
+    setSyncStatusText(t('Rejected unsafe file path from peer'));
+    return;
+  }
   let fullPath = workspaceRoot;
   fullPath += '/';
   fullPath += relPath;
@@ -6270,6 +7459,13 @@ function handleFileContentRequest(payload: string): void {
   const relPath = payload.substring(9);
   if (relPath.length < 1) return;
   if (workspaceRoot.length < 1) return;
+  // SECURITY: same untrusted-peer-relPath problem as handleFileSave but for
+  // READ — an unsafe relPath here lets a peer exfiltrate ANY host file the
+  // process can read (`../../.ssh/id_rsa`, etc.) back over the relay.
+  if (isUnsafeRelPath(relPath) > 0) {
+    syncDebugLog('REJECTED unsafe FILE_REQ relPath: ' + relPath);
+    return;
+  }
   let fullPath = workspaceRoot;
   fullPath += '/';
   fullPath += relPath;
@@ -6405,6 +7601,113 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   // Register commands with real handlers (overrides stubs in commands.ts)
   registerBuiltinCommands();
   registerCommand('workbench.action.newEditor', t('New Editor'), newFileAction, { showInPalette: false });
+  // Wire the command-dispatch path to the actual palette opener. The native
+  // menu path (native-menu.ts) already calls showCommandPaletteAction
+  // directly, but the keybinding path goes view.commandPalette →
+  // executeCommand('workbench.action.showCommandPalette'), which was a no-op
+  // stub in commands.ts. Without this override, Cmd+Shift+P via any keyboard
+  // path silently did nothing.
+  //
+  // The same stub-handler pattern existed for 4 other workbench.action.*
+  // commands. The native-menu path called the actual functions directly
+  // (showOutlineAction et al.), but ANY invocation through the command
+  // palette (which dispatches via executeCommand at command-palette.ts:164)
+  // hit empty handlers and silently did nothing. Override them all here.
+  registerCommand('workbench.action.showCommandPalette', t('Show Command Palette'), showCommandPaletteAction, { showInPalette: false });
+  registerCommand('workbench.action.showOutline', t('Show Outline'), showOutlineAction, { showInPalette: false });
+  registerCommand('workbench.action.showTimeline', t('Show Timeline'), showTimelineAction, { showInPalette: false });
+  registerCommand('workbench.action.showTasks', t('Show Tasks'), showTasksAction, { showInPalette: false });
+  registerCommand('workbench.action.runBuildTask', t('Run Build Task'), runBuildTaskAction, { showInPalette: false });
+  // Direct-action palette commands. The native menu's `keyEquivalent`
+  // dispatch already covers these for keyboard shortcuts; this wiring
+  // covers the command-palette dispatch path. Items NOT wired here
+  // (edit.undo/redo/cut/copy/paste, view.zoomIn/Out, etc.) rely on the
+  // OS responder chain — invoking them from the palette without an
+  // active text-input focus is undefined, so leaving those as no-ops
+  // until a focused-element check is added.
+  registerCommand('file.save', t('Save'), saveFileAction, { category: t('File') });
+  registerCommand('file.saveAs', t('Save As...'), saveFileAsAction, { category: t('File') });
+  registerCommand('view.toggleSidebar', t('Toggle Sidebar'), toggleSidebarAction, { category: t('View') });
+  registerCommand('workbench.action.closeActiveEditor', t('Close Editor'), closeEditorAction, { category: t('View') });
+  registerCommand('edit.find', t('Find'), findAction, { category: t('Edit') });
+  registerCommand('edit.replace', t('Replace'), replaceAction, { category: t('Edit') });
+  registerCommand('view.toggleTerminal', t('Toggle Terminal'), toggleTerminalAction, { category: t('View') });
+  registerCommand('file.openFile', t('Open File...'), openFileAction, { category: t('File') });
+  registerCommand('file.openFolder', t('Open Folder...'), openFolderAction, { category: t('File') });
+  registerCommand('edit.formatDocument', t('Format Document'), formatDocumentAction, { category: t('Edit') });
+  registerCommand('editor.action.revealDefinition', t('Go to Definition'), goToDefinitionAction, { category: t('Go') });
+  registerCommand('view.zoomIn', t('Zoom In'), zoomInAction, { category: t('View') });
+  registerCommand('view.zoomOut', t('Zoom Out'), zoomOutAction, { category: t('View') });
+  registerCommand('view.resetZoom', t('Reset Zoom'), zoomResetAction, { category: t('View') });
+  registerCommand('workbench.action.quickOpen', t('Go to File...'), goToFileAction, { showInPalette: false });
+  // Trust commands target the currently-open workspace implicitly. Without
+  // an open folder they're a no-op (no scope to trust). The "Workspaces:"
+  // prefix on the user-facing IDs in commands.ts is the palette-friendly
+  // entry; these workbench.action.* IDs are the canonical action handles.
+  registerCommand('workbench.action.trustWorkspace', t('Trust Workspace'), () => {
+    if (workspaceRoot.length > 0) trustWorkspace(workspaceRoot);
+  }, { showInPalette: false });
+  registerCommand('workbench.action.revokeWorkspaceTrust', t('Revoke Workspace Trust'), () => {
+    if (workspaceRoot.length > 0) revokeWorkspaceTrust(workspaceRoot);
+  }, { showInPalette: false });
+  // Close-all uses the existing closeAllOpenTabs helper that the close-all
+  // tab-bar gesture already routes through. No prompt for dirty tabs in v1
+  // — that's the next polish step (per #25 follow-up).
+  registerCommand('workbench.action.closeAllEditors', t('Close All Editors'), () => { closeAllOpenTabs(); }, { category: t('View') });
+  // Go to Symbol opens quick-open; the existing `@`-prefix mode (iter-25 work
+  // on #36) handles document symbols once the user types `@`. Pre-filling the
+  // textfield needs a Perry TextField setText FFI — pending v1.1; today the
+  // user types `@` themselves. Aliased under both VS Code names.
+  registerCommand('editor.action.goToSymbol', t('Go to Symbol in Editor...'), goToFileAction, { category: t('Go') });
+  registerCommand('workbench.action.gotoSymbol', t('Go to Symbol in Editor...'), goToFileAction, { showInPalette: false });
+  // "Bottom Panel" is the terminal area in v1 — no separate problems pane
+  // (diagnostics live in the lsp-bridge popups). Alias to toggleTerminal.
+  registerCommand('view.toggleBottomPanel', t('Toggle Bottom Panel'), toggleTerminalAction, { category: t('View') });
+  // Activity-panel switchers — palette-discoverable so "Show File Explorer"
+  // and the like are findable by typing in the palette. Today the
+  // matchKeybinding dispatcher isn't wired (see iter-49 note), so
+  // `view.activity.files` keybindings (Cmd+1..4 on iPad) only fire if some
+  // future dispatcher reaches them; the palette path is the working route.
+  // Indices come from switchSidebarPanel: 0=Files, 1=Search, 2=Git, 3=Sync.
+  // AI Chat (idx 4) lives in the right panel and toggles separately.
+  registerCommand('view.activity.files', t('Show File Explorer'), () => { switchSidebarPanel(0); }, { category: t('View') });
+  registerCommand('view.activity.search', t('Show Search'), () => { switchSidebarPanel(1); }, { category: t('View') });
+  registerCommand('view.activity.git', t('Show Source Control'), () => { switchSidebarPanel(2); }, { category: t('View') });
+  registerCommand('view.activity.sync', t('Show Sync'), () => { switchSidebarPanel(3); }, { category: t('View') });
+  // Color Theme: the theme-loader is Perry-stubbed to a single loaded theme
+  // and the runtime palette is the hardcoded Hone Dark / Hone Light pair in
+  // render.ts (applyDarkColors / applyLightColors). A full 15-theme picker
+  // needs the theme infrastructure to actually load tokenColors at runtime
+  // (#17/#18/#20 — a big-bucket item). Until then this command honestly
+  // toggles between the two themes the IDE can actually render, routing
+  // through updateSettings so the existing settings-poll → applyThemeChangeImpl
+  // pipeline applies it (same path the Settings panel cycle uses).
+  registerCommand('workbench.action.selectTheme', t('Color Theme (toggle dark/light)'), () => {
+    const cs = getWorkbenchSettings();
+    // 'Hone Dark' has 'D'(68) at index 5; anything else → switch to dark.
+    let nextTheme = 'Hone Dark';
+    if (cs.colorTheme.length > 5 && cs.colorTheme.charCodeAt(5) === 68) nextTheme = 'Hone Light';
+    updateSettings({ colorTheme: nextTheme });
+  }, { category: t('Preferences') });
+  // Docs / About — both were menu-referenced (menu.ts) but had no action
+  // function anywhere, so they were dead menu items AND palette-invisible.
+  registerCommand('workbench.action.openDocs', t('Documentation'), () => {
+    openExternalUrl('https://hone.codes/docs');
+  }, { category: t('Help') });
+  registerCommand('workbench.action.showAbout', t('About Hone'), () => {
+    let msg = 'Hone IDE ';
+    msg += HONE_VERSION;
+    showNotification(msg, 'info');
+  }, { category: t('Help') });
+  // Palette-discoverable wrappers around the existing menu-only actions.
+  // commands.ts doesn't register these, so they were unreachable from the
+  // command palette. Each has a working render.ts function — just needs a
+  // palette entry. (`workbench.action.openDocs` and `showAbout` skipped —
+  // no underlying action function in render.ts yet.)
+  registerCommand('editor.action.goToLine', t('Go to Line...'), goToLineAction, { category: t('Go') });
+  registerCommand('workbench.action.openSettings', t('Open Settings'), openSettingsAction, { category: t('Preferences') });
+  registerCommand('workbench.action.checkForUpdates', t('Check for Updates'), checkForUpdatesAction, { category: t('Help') });
+  registerCommand('workbench.action.showWelcome', t('Welcome'), showWelcomeAction, { category: t('Help') });
 
   // Determine workspace root
   const _initSettings = getWorkbenchSettings();
@@ -6461,6 +7764,8 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   // SHIP-V1-GAPS.md #95: push hidden-files setting; refresh on change via
   // settings listener below.
   setSidebarShowHiddenFiles(getWorkbenchSettings().explorerShowHiddenFiles ? 1 : 0);
+  // SHIP-V1-GAPS.md #50: gitignore-aware explorer.
+  setSidebarRespectGitignore(getWorkbenchSettings().explorerRespectGitignore ? 1 : 0);
   setSidebarOpenFolderCallback(openFolderAction);
   setSidebarNewFileCallback(newFileAction);
   setSidebarCurrentEditorPath(currentEditorFilePath);
@@ -6527,8 +7832,10 @@ export function renderWorkbench(layoutMode: LayoutMode): unknown {
   // "coming soon" notification for the per-file pickers we haven't built yet.
   setOnBranchClick(() => { onStatusBranchClick(); });
   setOnLanguageClick(() => { showNotification(t('Language picker coming in v1.1.'), 'info'); });
-  setOnEncodingClick(() => { showNotification(t('Encoding picker coming in v1.1.'), 'info'); });
-  setOnEolClick(() => { showNotification(t('Line-ending picker coming in v1.1.'), 'info'); });
+  // SHIP-V1-GAPS.md #73: encoding change is data-destructive — defer the
+  // picker until perry/ui exposes a confirm dialog. Display-only for now.
+  setOnEncodingClick(() => { showNotification(t('Encoding shown is detected. Conversion picker arrives in v1.1.'), 'info'); });
+  setOnEolClick(() => { cycleEolAction(); });
   setOnIndentClick(() => { showNotification(t('Indent picker coming in v1.1.'), 'info'); });
 
   // Initialize auto-update checker (desktop only)

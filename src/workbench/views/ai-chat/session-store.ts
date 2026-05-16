@@ -77,18 +77,58 @@ export function getSessionFilePath(id: string): string {
 // Index I/O
 // ---------------------------------------------------------------------------
 
+function indexBackupPath(): string {
+  let p = '';
+  p += indexPath;
+  p += '.bak';
+  return p;
+}
+
 function readIndex(): string {
+  let txt = '';
   try {
-    indexCache = readFileSync(indexPath);
+    txt = readFileSync(indexPath);
   } catch (e) {
-    indexCache = '';
+    txt = '';
   }
+  // Recovery: a crash during the non-atomic writeIndex below can truncate
+  // index.txt → the chat-session sidebar goes empty even though every
+  // <id>.txt conversation file still exists on disk (and there is NO in-app
+  // way to recover orphaned message files). Fall back to the .bak written
+  // before the last overwrite. Same iters-62/88 class; proportionate here
+  // because the lost list is real user-facing data-loss with no other
+  // recovery path. (No length>=3 floor: an empty index.txt is a legitimate
+  // "no sessions yet" state; only fall back when the read itself failed —
+  // but a truncated/empty file reads as '' too, so prefer a non-empty .bak.)
+  if (txt.length < 1) {
+    try {
+      const bp = indexBackupPath();
+      if (existsSync(bp)) {
+        const b = readFileSync(bp);
+        if (b.length > 0) txt = b;
+      }
+    } catch (_re) { /* no usable backup — genuinely empty */ }
+  }
+  indexCache = txt;
   return indexCache;
 }
 
 function writeIndex(content: string): void {
-  try { writeFileSync(indexPath, content); } catch (e) {}
-  indexCache = content;
+  // Step A: snapshot the current good index → .bak BEFORE overwriting, so a
+  // crash during step B leaves the prior-good list recoverable on load.
+  try {
+    if (existsSync(indexPath)) {
+      const prev = readFileSync(indexPath);
+      if (prev.length > 0) writeFileSync(indexBackupPath(), prev);
+    }
+  } catch (_be) { /* backup best-effort */ }
+  // Step B: write the live index. Update the in-memory cache ONLY on
+  // success — the old code set indexCache unconditionally even when the
+  // write threw, diverging in-memory state from what's actually persisted.
+  try {
+    writeFileSync(indexPath, content);
+    indexCache = content;
+  } catch (e) { /* keep prior indexCache; disk still holds the old/.bak state */ }
 }
 
 // ---------------------------------------------------------------------------

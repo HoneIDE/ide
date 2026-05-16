@@ -15,10 +15,10 @@ import {
 } from 'perry/ui';
 import { t } from 'perry/i18n';
 import { readFileSync, readdirSync, isDirectory, writeFileSync } from 'fs';
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { spawn, parallelMap } from 'perry/thread';
 import { join } from 'path';
-import { hexToRGBA, setBg, setFg, setBtnFg, pathId, getFileName, toLowerCode, isTextFile } from '../../ui-helpers';
+import { hexToRGBA, setBg, setFg, setBtnFg, pathId, getFileName, toLowerCode, isTextFile, monoFont } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getSideBarForeground, getInputBackground } from '../../theme/theme-colors';
 import { telemetryTrackSearch } from '../../telemetry';
@@ -426,46 +426,36 @@ function applySearchResult(r: SearchResult, gen: number): void {
   telemetryTrackSearch();
 }
 
-/** Try to run search via ripgrep. Returns 1 if rg was available, 0 if not. */
+/** Try to run search via ripgrep. Returns 1 if rg was available, 0 if not.
+ *  SHIP-V1-GAPS.md #1 + followup §5: argv-form so the search query can't
+ *  shell-inject, and so Windows users (where rg.exe doesn't follow POSIX
+ *  single-quote escaping in cmd.exe) get the same behavior. */
 function tryRipgrepSearch(): number {
-  // Build rg command
-  let cmd = 'rg --json --max-count 500';
-  if (searchCaseSensitive > 0) {
-    cmd += ' --case-sensitive';
-  } else {
-    cmd += ' --smart-case';
-  }
-  if (searchUseRegex > 0) {
-    cmd += ' --regexp';
-  } else {
-    cmd += ' --fixed-strings';
-  }
-  // Escape the query for shell — wrap in single quotes, escape existing single quotes
-  cmd += " '";
-  for (let i = 0; i < searchQuery.length; i = i + 1) {
-    const ch = searchQuery.charCodeAt(i);
-    if (ch === 39) {
-      // Single quote → end quote, escaped quote, start quote
-      cmd += "'\\''";
-    } else {
-      cmd += searchQuery.charAt(i);
-    }
-  }
-  cmd += "' ";
-  cmd += searchWorkspaceRoot;
+  const args: string[] = ['--json', '--max-count', '500'];
+  if (searchCaseSensitive > 0) args.push('--case-sensitive');
+  else args.push('--smart-case');
+  if (searchUseRegex > 0) args.push('--regexp');
+  else args.push('--fixed-strings');
+  // The query is its own argv slot — no shell-escaping needed.
+  args.push('--');
+  args.push(searchQuery);
+  args.push(searchWorkspaceRoot);
 
   let output = '';
   try {
-    output = execSync(cmd) as unknown as string;
+    const r = spawnSync('rg', args);
+    if (r.status === 0 || r.status === 1) {
+      // rg exits 1 when no matches — still a successful invocation.
+      output = r.stdout;
+    } else {
+      return 0;
+    }
   } catch (e) {
-    // rg not found or no results (exit code 1 = no matches, 2 = error)
-    // Check if it was just "no matches" — empty output is fine
     return 0;
   }
 
-  if (output.length < 2) return 1; // No matches, but rg worked
+  if (output.length < 2) return 1;
 
-  // Parse ripgrep JSON output (newline-delimited JSON)
   parseRipgrepOutput(output);
   return 1;
 }
@@ -630,7 +620,7 @@ function updateSearchResultsUI(): void {
       const btn = Button(display, () => { onSearchResultClick(resultPath); });
       buttonSetBordered(btn, 0);
       textSetFontSize(btn, 12);
-      textSetFontFamily(btn, 12, 'Menlo');
+      textSetFontFamily(btn, 12, monoFont());
       if (panelColors) {
         setBtnFg(btn, '#888888');
       }
@@ -716,23 +706,32 @@ function replaceInFile(filePath: string): void {
 function replaceAllInFile(filePath: string): void {
   let content = '';
   try { content = readFileSync(filePath); } catch (e) { return; }
+  if (searchQuery.length < 1) return;
+  // Previous impl looped on `pos <= content.length - searchQuery.length`
+  // and only appended the trailing remainder inside the `idx < 0` branch.
+  // When the last match landed within the final `searchQuery.length - 1`
+  // chars, the loop exited via the `while` condition WITHOUT appending the
+  // tail — silently TRUNCATING everything after the last match (data loss).
+  // Rewrite: loop on `pos < content.length`, always append the remaining
+  // tail when no further match is found, and skip the write entirely when
+  // nothing was replaced (so we don't rewrite mtime / churn the file).
   let result = '';
   let pos = 0;
-  while (pos <= content.length - searchQuery.length) {
-    const idx = findInLine(content.slice(pos), searchQuery);
-    if (idx < 0) {
+  let replacedAny = 0;
+  while (pos < content.length) {
+    const rel = findInLine(content.slice(pos), searchQuery);
+    if (rel < 0) {
       result += content.slice(pos);
       break;
     }
-    result += content.slice(pos, pos + idx);
+    result += content.slice(pos, pos + rel);
     result += replaceQuery;
-    pos = pos + idx + searchQuery.length;
+    pos = pos + rel + searchQuery.length;
+    replacedAny = 1;
   }
-  if (pos < content.length && pos > 0) {
-    // remaining content already appended above when idx < 0
-  } else if (pos === 0) {
-    return;
-  }
+  // If the final match consumed content exactly to EOF, the loop exits with
+  // pos === content.length and the full result is already built (slice('')).
+  if (replacedAny < 1) return; // no occurrence — nothing to write
   try { writeFileSync(filePath, result); } catch (e) { return; }
   const curPath = _currentEditorPath();
   if (curPath.length > 0) {

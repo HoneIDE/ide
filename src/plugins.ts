@@ -94,6 +94,7 @@ import {
 import { pluginNotify } from './workbench/views/plugins/plugin-notifications';
 import { pluginStatusBarCreate, pluginStatusBarUpdate, pluginStatusBarRemove } from './workbench/views/plugins/plugin-status-bar';
 import { pluginCommandRegister, pluginCommandUnregister, setCommandHookDispatcher } from './workbench/views/plugins/plugin-commands';
+import { getAppDataDir } from './workbench/paths';
 
 let pluginsInitialized: number = 0;
 let loadedPluginCount: number = 0;
@@ -162,8 +163,12 @@ export function initPluginSystem(): void {
   pluginHostRegisterCallback(CALLBACK_COMMAND_REGISTER, onPluginCommandRegister as any);
   pluginHostRegisterCallback(CALLBACK_COMMAND_UNREGISTER, onPluginCommandUnregister as any);
 
-  // 3. Scan ~/.hone/plugins/ for installed plugins and load them
-  const pluginsDir = '~/.hone/plugins';
+  // 3. Scan {appDataDir}/plugins/ for installed plugins and load them.
+  // SHIP-V1-GAPS.md followup §5: previous literal `~/.hone/plugins` was
+  // never expanded — Rust FFI takes it verbatim, so no platform actually
+  // found the dir. `getAppDataDir()` resolves to `%USERPROFILE%/.hone` on
+  // Windows, `$HOME/.hone` on Unix.
+  const pluginsDir = getAppDataDir() + '/plugins';
   const loaded = pluginHostScanAndLoad(pluginsDir as any);
   loadedPluginCount = loaded;
 

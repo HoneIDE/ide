@@ -9,11 +9,11 @@ import {
   HStackWithInsets,
   textSetFontSize,
   textSetString,
-  buttonSetBordered, buttonSetImage, buttonSetImagePosition, buttonSetTitle,
+  buttonSetBordered, buttonSetImagePosition, buttonSetTitle,
   widgetAddChild, widgetSetHeight, widgetSetHidden,
 } from 'perry/ui';
 import { t } from 'perry/i18n';
-import { setBg, setFg, setBtnTint, setBtnFg, detectLanguage } from '../../ui-helpers';
+import { setBg, setFg, setBtnTint, setBtnFg, detectLanguage, setIconButton } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getStatusBarForeground, getStatusBarBackground } from '../../theme/theme-colors';
 
@@ -155,6 +155,22 @@ export function updateStatusBarLanguage(filePath: string): void {
     buttonSetTitle(statusBarLangBtn, display);
   } else if (statusBarLangLabel) {
     textSetString(statusBarLangLabel, display);
+  }
+}
+
+/** SHIP-V1-GAPS.md #73: refresh the EOL label ("LF" or "CRLF"). */
+export function updateStatusBarEol(label: string): void {
+  if (statusBarEolBtn) {
+    buttonSetTitle(statusBarEolBtn, label);
+  }
+}
+
+/** SHIP-V1-GAPS.md #73: refresh the encoding label (e.g. "UTF-8", "UTF-16 LE"). */
+export function updateStatusBarEncoding(label: string): void {
+  if (statusBarEncodingBtn) {
+    buttonSetTitle(statusBarEncodingBtn, label);
+  } else if (statusBarEncodingLabel) {
+    textSetString(statusBarEncodingLabel, label);
   }
 }
 
@@ -364,7 +380,7 @@ export function renderStatusBar(colors: ResolvedUIColors): unknown {
   // Branch icon + label — single borderless button so the whole row is clickable.
   const branchBtn = Button(t('main'), () => { _onBranchClick(); });
   buttonSetBordered(branchBtn, 0);
-  buttonSetImage(branchBtn, 'arrow.triangle.branch');
+  setIconButton(branchBtn, 'arrow.triangle.branch');
   buttonSetImagePosition(branchBtn, 1);
   textSetFontSize(branchBtn, 11);
   setBtnTint(branchBtn, getStatusBarForeground());

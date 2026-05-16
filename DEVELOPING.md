@@ -22,6 +22,16 @@ cd ../hone/hone-ide/tests/agentic && bash setup.sh
 bash teardown.sh
 ```
 
+On Windows, step 5 uses the PowerShell variants instead:
+
+```powershell
+cd ..\hone\hone-ide\tests\agentic; .\setup.ps1
+# ... interact via http://127.0.0.1:7676 (baked-in) and http://127.0.0.1:7677 (external CLI)
+.\teardown.ps1
+```
+
+(Step 4's `perry compile` command also takes `--target windows` to cross-compile from macOS/Linux, or build on Windows directly. See `WINDOWS_PORT_NOTES.md` for the full Windows build flow including `PERRY_RUNTIME_DIR` env-var handling.)
+
 ## Repository Layout
 
 Hone is a **monorepo of independent packages** — there is no top-level package.json or workspace manager. Each package builds and tests independently. See [`CLAUDE.md`](CLAUDE.md) for the full table.

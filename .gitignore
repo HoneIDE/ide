@@ -35,3 +35,11 @@ android-build/local.properties
 
 # Project plans (local)
 PROJECT_PLAN.md
+
+# Local debug artifacts — stderr captures from a dev session, screenshot
+# scratch from agentic UI tests, Perry's build-cache dir, Claude Code's
+# worktree dir. None of these are content we want in source control.
+stderr*.log
+screenshot*.png
+.perry/
+.claude/

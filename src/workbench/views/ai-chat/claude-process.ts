@@ -8,10 +8,12 @@
  * All state is module-level (Perry closures capture by value).
  */
 
-import { spawnBackground } from 'child_process';
-import { execSync } from 'child_process';
+import { spawnBackground, spawnSync } from 'child_process';
+
+// Platform constant — 0=macOS, 1=iOS, 3=Windows, 4=Linux, 5=web.
+declare const __platform__: number;
 import { writeFileSync, existsSync, unlinkSync } from 'fs';
-import { getAppDataDir } from '../../paths';
+import { getAppDataDir, getHomeDir } from '../../paths';
 import { setClaudeError, resetClaudeState, setClaudeStarting } from './claude-state';
 
 // ---------------------------------------------------------------------------
@@ -39,26 +41,45 @@ export function findClaudeBinary(): string {
   if (claudeBinaryChecked > 0) return claudeBinaryPath;
   claudeBinaryChecked = 1;
 
-  // Try 'which claude'
+  // SHIP-V1-GAPS.md followup §5: cross-platform `which`. POSIX `which`,
+  // Windows `where`. Both print the first hit on stdout.
   try {
-    const result = execSync('which claude') as unknown as string;
-    let path = '';
-    for (let i = 0; i < result.length; i++) {
-      const ch = result.charCodeAt(i);
-      if (ch === 10 || ch === 13) break;
-      path += result.slice(i, i + 1);
-    }
-    if (path.length > 3) {
-      claudeBinaryPath = path;
-      return path;
+    const lookup = __platform__ === 3 ? 'where' : 'which';
+    const r = spawnSync(lookup, ['claude']);
+    if (r.status === 0 && r.stdout.length > 0) {
+      let path = '';
+      for (let i = 0; i < r.stdout.length; i++) {
+        const ch = r.stdout.charCodeAt(i);
+        if (ch === 10 || ch === 13) break;
+        path += r.stdout.slice(i, i + 1);
+      }
+      if (path.length > 3) {
+        claudeBinaryPath = path;
+        return path;
+      }
     }
   } catch (e) {}
 
-  // Try common locations
-  const paths = [
-    '/usr/local/bin/claude',
-    '/opt/homebrew/bin/claude',
-  ];
+  // Try common locations per platform.
+  const home = getHomeDir();
+  const paths: string[] = [];
+  if (__platform__ === 3) {
+    // Windows npm global goes under %APPDATA% by default. Add a few common
+    // installer locations.
+    if (home.length > 0) {
+      paths.push(home + '/AppData/Roaming/npm/claude.cmd');
+      paths.push(home + '/AppData/Roaming/npm/claude.exe');
+      paths.push(home + '/.npm-global/claude.cmd');
+      paths.push(home + '/.claude/local/claude.cmd');
+    }
+  } else {
+    paths.push('/usr/local/bin/claude');
+    paths.push('/opt/homebrew/bin/claude');
+    if (home.length > 0) {
+      paths.push(home + '/.npm-global/bin/claude');
+      paths.push(home + '/.claude/local/claude');
+    }
+  }
   for (let i = 0; i < paths.length; i++) {
     try {
       if (existsSync(paths[i])) {
@@ -67,25 +88,6 @@ export function findClaudeBinary(): string {
       }
     } catch (e) {}
   }
-
-  // Try ~/.claude/local/claude (npm global install)
-  try {
-    let homePath = '';
-    const home = execSync('echo $HOME') as unknown as string;
-    for (let i = 0; i < home.length; i++) {
-      const ch = home.charCodeAt(i);
-      if (ch === 10 || ch === 13) break;
-      homePath += home.slice(i, i + 1);
-    }
-    if (homePath.length > 0) {
-      let npmGlobal = homePath;
-      npmGlobal += '/.npm-global/bin/claude';
-      if (existsSync(npmGlobal)) {
-        claudeBinaryPath = npmGlobal;
-        return npmGlobal;
-      }
-    }
-  } catch (e) {}
 
   claudeBinaryPath = '';
   return '';
@@ -99,14 +101,13 @@ export function findClaudeBinary(): string {
 export function checkClaudeAuth(): number {
   const bin = findClaudeBinary();
   if (bin.length < 3) return 0;
+  // SHIP-V1-GAPS.md followup §5: argv-form. The `bin` path may contain
+  // spaces (especially under `%APPDATA%\Roaming\npm\claude.cmd` on Windows)
+  // which would shell-break the prior `bin + ' auth status'` concat.
   try {
-    let cmd = bin;
-    cmd += ' auth status';
-    const result = execSync(cmd) as unknown as string;
-    // If it doesn't throw, auth is likely OK
-    // Check for "logged in" or "authenticated" in output
-    if (result.length > 0) return 1;
-    return 1;
+    const r = spawnSync(bin, ['auth', 'status']);
+    if (r.status === 0) return 1;
+    return 0;
   } catch (e) {
     return 0;
   }
@@ -129,14 +130,27 @@ function makeLogPath(sessionTag: string): string {
 
 /**
  * Shell-escape a string for safe embedding in shell commands.
- * Wraps in single quotes and escapes any internal single quotes.
+ * SHIP-V1-GAPS.md followup §5: per-platform quoting. POSIX wraps in single
+ * quotes (which preserve everything literally except `'`). Windows cmd.exe
+ * has no single-quote semantics — wraps in double quotes and escapes
+ * embedded double-quotes by doubling them (`""`). The string we build here
+ * is piped through `cmd.exe /c` on Windows so it MUST follow cmd quoting.
  */
 function shellEscape(s: string): string {
+  if (__platform__ === 3) {
+    let result = '"';
+    for (let i = 0; i < s.length; i++) {
+      const ch = s.charCodeAt(i);
+      if (ch === 34) result += '""';
+      else result += s.slice(i, i + 1);
+    }
+    result += '"';
+    return result;
+  }
   let result = "'";
   for (let i = 0; i < s.length; i++) {
     const ch = s.charCodeAt(i);
     if (ch === 39) {
-      // Single quote — end quote, escaped quote, restart quote
       result += "'\\''";
     } else {
       result += s.slice(i, i + 1);
@@ -187,14 +201,32 @@ export function startClaudeSession(prompt: string, workspaceRoot: string, resume
     return 0;
   }
 
-  // Build the shell command
-  // Unset CLAUDECODE to prevent "nested session" error if Hone was launched from Claude Code
-  // Read prompt from file via cat to avoid argument injection
-  let cmd = 'unset CLAUDECODE; ';
-  cmd += bin;
-  cmd += ' -p "$(cat ';
-  cmd += shellEscape(promptFile);
-  cmd += ')"';
+  // Build the shell command. Unset CLAUDECODE to prevent "nested session"
+  // error if Hone was launched from Claude Code.
+  //
+  // Platform branches:
+  // - POSIX: `unset CLAUDECODE;` clears the env var; `$(cat <file>)` substitutes
+  //   the prompt content from a temp file, avoiding argv-size limits and any
+  //   need to escape newlines/quotes in long prompts.
+  // - Windows cmd.exe: `unset` and `$(...)` don't exist. Use `set "VAR="` to
+  //   clear, and inline the prompt via shellEscape (which on Windows wraps in
+  //   double quotes and doubles internal `"`s). Note: cmd.exe argv length is
+  //   capped at ~8192 chars total, so prompts approaching that size may fail
+  //   on Windows where they would have succeeded on POSIX (the cat indirection
+  //   avoids this on POSIX). For typical chat prompts this is not a concern.
+  let cmd = '';
+  if (__platform__ === 3) {
+    cmd = 'set "CLAUDECODE=" && ';
+    cmd += bin;
+    cmd += ' -p ';
+    cmd += shellEscape(prompt);
+  } else {
+    cmd = 'unset CLAUDECODE; ';
+    cmd += bin;
+    cmd += ' -p "$(cat ';
+    cmd += shellEscape(promptFile);
+    cmd += ')"';
+  }
   cmd += ' --output-format stream-json';
   cmd += ' --verbose';
 
@@ -233,8 +265,11 @@ export function startClaudeSession(prompt: string, workspaceRoot: string, resume
   cmd += shellEscape(claudeLogFile);
   cmd += ' 2>&1';
 
-  // Spawn via background process
-  const result = spawnBackground('/bin/sh', ['-c', cmd], '/dev/null');
+  // SHIP-V1-GAPS.md followup §5: per-platform shell + null-device.
+  const shellBin = __platform__ === 3 ? 'cmd.exe' : '/bin/sh';
+  const shellArg = __platform__ === 3 ? '/c' : '-c';
+  const nullDev = __platform__ === 3 ? 'NUL' : '/dev/null';
+  const result = spawnBackground(shellBin, [shellArg, cmd], nullDev);
   claudePid = result.pid;
   claudeHandleId = result.handleId;
 
@@ -266,10 +301,14 @@ function cleanupPromptFile(path: string): void {
  */
 export function stopClaudeSession(): void {
   if (claudeAlive > 0 && claudePid > 0) {
+    // SHIP-V1-GAPS.md followup §5: cross-platform kill.
     try {
-      let killCmd = 'kill ';
-      killCmd += String(claudePid);
-      execSync(killCmd);
+      const pidStr = String(claudePid);
+      if (__platform__ === 3) {
+        spawnSync('taskkill', ['/F', '/PID', pidStr]);
+      } else {
+        spawnSync('kill', [pidStr]);
+      }
     } catch (e) {}
   }
   claudeAlive = 0;

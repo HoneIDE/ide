@@ -5,9 +5,87 @@
  */
 import {
   textSetColor,
-  buttonSetTextColor, buttonSetContentTintColor,
+  buttonSetTextColor, buttonSetContentTintColor, buttonSetImage, buttonSetTitle,
   widgetSetBackgroundColor,
 } from 'perry/ui';
+
+// Platform constant — 0=macOS, 1=iOS, 3=Windows, 4=Linux, 5=web.
+declare const __platform__: number;
+
+/**
+ * SHIP-V1-GAPS.md followup §5: per-platform monospace font name. The codebase
+ * had `'Menlo'` hardcoded in ~20 places — Menlo is macOS-only, so on Windows
+ * users got the platform's Courier New fallback (functional but ugly). This
+ * helper returns the canonical mono font per platform:
+ *   - macOS / iOS: Menlo (system mono since 10.6)
+ *   - Windows: Consolas (ships with every Windows since Vista)
+ *   - Linux / web / Android: monospace (CSS-family fallback chain)
+ *
+ * Callers do `textSetFontFamily(widget, sz, monoFont())`.
+ */
+export function monoFont(): string {
+  if (__platform__ === 3) return 'Consolas';
+  if (__platform__ === 4) return 'DejaVu Sans Mono';
+  return 'Menlo';
+}
+
+/**
+ * SHIP-V1-GAPS.md followup §5: SF Symbol → Unicode fallback table. SF Symbols
+ * are macOS-only — on Windows / Linux a `buttonSetImage(btn, 'chevron.right')`
+ * call leaves the button blank (since the icon doesn't render). Map the
+ * common symbol names to Unicode glyphs that render on every platform.
+ * Returns empty string for names we haven't mapped — caller can keep the
+ * label they passed to Button() as the visible affordance.
+ */
+export function unicodeForSymbol(symbol: string): string {
+  // Order by frequency in the codebase (chevrons + close are most common).
+  if (symbol === 'chevron.right') return '›';   // ›
+  if (symbol === 'chevron.down') return '˅';    // ˅
+  if (symbol === 'chevron.up') return '˄';      // ˄
+  if (symbol === 'xmark') return '✕';           // ✕
+  if (symbol === 'circle.fill') return '●';     // ●
+  if (symbol === 'folder') return '\u{1F4C1}';       // 📁
+  if (symbol === 'folder.fill') return '\u{1F4C1}';  // 📁
+  if (symbol === 'folder.badge.plus') return '\u{1F4C1}+';
+  if (symbol === 'doc.text') return '\u{1F4C4}';     // 📄
+  if (symbol === 'doc.badge.plus') return '\u{1F4C4}+';
+  if (symbol === 'gearshape') return '⚙';       // ⚙
+  if (symbol === 'magnifyingglass') return '\u{1F50D}'; // 🔍
+  if (symbol === 'pin.fill') return '\u{1F4CC}';     // 📌
+  if (symbol === 'sparkles') return '✨';        // ✨
+  if (symbol === 'ellipsis') return '…';        // …
+  if (symbol === 'arrow.right') return '→';     // →
+  if (symbol === 'arrow.left.arrow.right') return '↔'; // ↔
+  if (symbol === 'arrow.left.arrow.right.square') return '↔';
+  if (symbol === 'arrow.up.left') return '↖';   // ↖
+  if (symbol === 'arrow.up.left.and.arrow.down.right') return '⇄';
+  if (symbol === 'arrow.down.right') return '↘'; // ↘
+  if (symbol === 'arrow.down.right.and.arrow.up.left') return '⇄';
+  if (symbol === 'arrow.triangle.branch') return '⚡'; // ⚡ (closest mono branch)
+  if (symbol === 'arrow.triangle.2.circlepath') return '↻'; // ↻
+  if (symbol === 'play.fill') return '▶';       // ▶
+  if (symbol === 'pause.fill') return '⏸';      // ⏸
+  if (symbol === 'stop.fill') return '■';       // ■
+  if (symbol === 'doc.on.doc') return '⧉';      // ⧉
+  return '';
+}
+
+/**
+ * Per-platform icon setter — replaces bare `buttonSetImage(btn, sfSymbol)`
+ * call sites. On macOS / iOS uses the native SF Symbol via buttonSetImage.
+ * On Windows / Linux / web, sets the button's title to the Unicode glyph
+ * from `unicodeForSymbol` so the button isn't a blank clickable area.
+ * Falls back to no-op if the symbol isn't in the table — callers should
+ * provide a sensible button label in that case.
+ */
+export function setIconButton(btn: unknown, symbol: string): void {
+  if (__platform__ === 0 || __platform__ === 1) {
+    buttonSetImage(btn, symbol);
+    return;
+  }
+  const glyph = unicodeForSymbol(symbol);
+  if (glyph.length > 0) buttonSetTitle(btn, glyph);
+}
 
 // ---------------------------------------------------------------------------
 // Color helpers

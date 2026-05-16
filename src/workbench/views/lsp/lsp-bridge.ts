@@ -10,9 +10,41 @@
 
 import { LSP_BRIDGE_LIVE } from '@honeide/lsp-bridge/perry/live';
 import { readFileSync, existsSync, unlinkSync } from 'fs';
-import { spawnBackground, execSync } from 'child_process';
+import { spawnBackground, spawnSync } from 'child_process';
 import { spawn } from 'perry/thread';
-import { updateDiagnostics } from './diagnostics-panel';
+
+// Platform constant — 0=macOS, 1=iOS, 3=Windows, 4=Linux, 5=web.
+declare const __platform__: number;
+
+// SHIP-V1-GAPS.md followup §5: cross-platform `which`-equivalent. `which`
+// only exists on POSIX; Windows ships `where`. Output of `where` is the
+// full path of the matched executable (multiple lines if multiple hits —
+// we take the first).
+function findExecutableOnPath(name: string): string {
+  try {
+    if (__platform__ === 3) {
+      const r = spawnSync('where', [name]);
+      if (r.status === 0 && r.stdout.length > 0) {
+        // First non-empty line is the canonical hit.
+        for (let i = 0; i < r.stdout.length; i++) {
+          if (r.stdout.charCodeAt(i) === 10 || r.stdout.charCodeAt(i) === 13) {
+            return r.stdout.slice(0, i);
+          }
+        }
+        return r.stdout;
+      }
+    } else {
+      const r = spawnSync('which', [name]);
+      if (r.status === 0 && r.stdout.length > 0) {
+        let end = r.stdout.length;
+        while (end > 0 && (r.stdout.charCodeAt(end - 1) === 10 || r.stdout.charCodeAt(end - 1) === 13)) end--;
+        return r.stdout.slice(0, end);
+      }
+    }
+  } catch (_e: any) {}
+  return '';
+}
+import { updateDiagnostics, setFileDiagnostics, getDiagErrorCount, getDiagWarningCount } from './diagnostics-panel';
 import { getTempDir, canRunShellCommands } from '../../paths';
 
 // Trigger FFI discovery
@@ -64,7 +96,61 @@ let DIAG_DONE_FILE = '';
 
 // Current document state
 let currentFilePath: string = '';
-let currentFileVersion: number = 0;
+
+// Per-document LSP version tracking. The LSP spec requires version numbers
+// to be monotonically increasing PER DOCUMENT. The old single global
+// `currentFileVersion` broke this: edit A (→v4), open B (counter reset to
+// 1), edit A again → didChange A "version 2" while the server last saw A at
+// v4 → the server rejects/ignores the change and its document model
+// desyncs from the editor (wrong diagnostics/completion/hover on the file
+// being actively edited). Parallel arrays (Perry-safe, mirrors the
+// fileCache pattern; no dynamic object-key access).
+let _lspVerPaths: string[] = [];
+let _lspVerNums: number[] = [];
+
+function _lspVerIndex(p: string): number {
+  for (let i = 0; i < _lspVerPaths.length; i++) {
+    if (_lspVerPaths[i].length === p.length) {
+      let match = 1;
+      for (let j = 0; j < p.length; j++) {
+        if (_lspVerPaths[i].charCodeAt(j) !== p.charCodeAt(j)) { match = 0; break; }
+      }
+      if (match > 0) return i;
+    }
+  }
+  return -1;
+}
+
+/** Set a document's version (used by didOpen → 1). */
+function _lspVerReset(p: string): void {
+  const idx = _lspVerIndex(p);
+  if (idx >= 0) { _lspVerNums[idx] = 1; return; }
+  _lspVerPaths.push(p);
+  _lspVerNums.push(1);
+}
+
+/** Bump and return a document's version (used by didChange). Falls back to
+ * 1 if the doc was never opened (shouldn't happen, but never desync). */
+function _lspVerBump(p: string): number {
+  const idx = _lspVerIndex(p);
+  if (idx >= 0) { _lspVerNums[idx] = _lspVerNums[idx] + 1; return _lspVerNums[idx]; }
+  _lspVerPaths.push(p);
+  _lspVerNums.push(1);
+  return 1;
+}
+
+/** Drop a document's version entry (used by didClose) so a later reopen
+ * starts cleanly at 1 and the arrays don't grow unbounded. */
+function _lspVerDrop(p: string): void {
+  const idx = _lspVerIndex(p);
+  if (idx < 0) return;
+  for (let i = idx; i < _lspVerPaths.length - 1; i++) {
+    _lspVerPaths[i] = _lspVerPaths[i + 1];
+    _lspVerNums[i] = _lspVerNums[i + 1];
+  }
+  _lspVerPaths.pop();
+  _lspVerNums.pop();
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -103,7 +189,7 @@ export function stopLspBridge(): void {
 /** Notify LSP of a file open. */
 export function lspDidOpen(filePath: string, languageId: string, content: string): void {
   currentFilePath = filePath;
-  currentFileVersion = 1;
+  _lspVerReset(filePath); // this doc's version → 1 (per-document)
   if (lspServerHandle < 0 || lspInitialized < 1) return;
 
   // Build textDocument/didOpen notification
@@ -121,7 +207,8 @@ export function lspDidOpen(filePath: string, languageId: string, content: string
 
 /** Notify LSP of a file change (full sync). */
 export function lspDidChange(filePath: string, content: string): void {
-  currentFileVersion = currentFileVersion + 1;
+  // Per-document monotonic version (not a global counter — see _lspVer*).
+  const docVersion = _lspVerBump(filePath);
   if (lspServerHandle < 0 || lspInitialized < 1) return;
 
   let uri = 'file://';
@@ -129,7 +216,7 @@ export function lspDidChange(filePath: string, content: string): void {
   let json = '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"';
   json += uri;
   json += '","version":';
-  json += String(currentFileVersion);
+  json += String(docVersion);
   json += '},"contentChanges":[{"text":';
   json += jsonEscapeString(content);
   json += '}]}}';
@@ -143,6 +230,32 @@ export function lspDidSave(filePath: string): void {
   let uri = 'file://';
   uri += filePath;
   let json = '{"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":{"uri":"';
+  json += uri;
+  json += '"}}}';
+  hone_lsp_send(lspServerHandle, json as any);
+}
+
+/** Notify LSP that a document was closed in the editor.
+ *
+ * Without this, the language server treats every file ever opened in the
+ * session as still-open forever: its in-memory program/AST model grows
+ * unbounded over a long session (a server-side resource leak), it keeps
+ * (re)publishing diagnostics for files no longer visible, and it's an LSP
+ * spec violation (textDocument/didClose is required when a doc leaves the
+ * editor). Mirrors lspDidSave — a bare notification carrying the URI.
+ * Same un-escaped `file://` + path convention as didOpen/didChange/didSave
+ * (kept consistent deliberately; URI-escaping is a separate cross-cutting
+ * concern for all four, not this targeted close fix). */
+export function lspDidClose(filePath: string): void {
+  // Drop the per-document version entry: a later reopen of this path must
+  // restart at version 1 (didOpen), and this keeps the tracking arrays
+  // bounded over a long session. Done before the server-readiness guard so
+  // local bookkeeping stays correct even if the server isn't up.
+  _lspVerDrop(filePath);
+  if (lspServerHandle < 0 || lspInitialized < 1) return;
+  let uri = 'file://';
+  uri += filePath;
+  let json = '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"';
   json += uri;
   json += '"}}}';
   hone_lsp_send(lspServerHandle, json as any);
@@ -544,11 +657,19 @@ function startTypeScriptServer(): void {
   // Discover LSP server on a background thread (which commands can be slow)
   const wsRoot = lspWorkspaceRoot;
 
-  // First check local paths synchronously (fast — just existsSync)
-  const tsgoLocations = [
-    wsRoot + '/node_modules/.bin/tsgo',
-    '/usr/local/bin/tsgo',
-  ];
+  // First check local paths synchronously (fast — just existsSync).
+  // SHIP-V1-GAPS.md followup §5: on Windows, `node_modules/.bin/` contains
+  // `.cmd` wrappers, not bare names; check both.
+  const tsgoLocations: string[] = [];
+  if (__platform__ === 3) {
+    tsgoLocations.push(wsRoot + '/node_modules/.bin/tsgo.cmd');
+    tsgoLocations.push(wsRoot + '/node_modules/.bin/tsgo.exe');
+  }
+  tsgoLocations.push(wsRoot + '/node_modules/.bin/tsgo');
+  if (__platform__ !== 3) {
+    tsgoLocations.push('/usr/local/bin/tsgo');
+    tsgoLocations.push('/opt/homebrew/bin/tsgo');
+  }
   for (let i = 0; i < tsgoLocations.length; i = i + 1) {
     if (fileExistsSafe(tsgoLocations[i])) {
       launchLspServer(tsgoLocations[i], '--lsp');
@@ -556,9 +677,12 @@ function startTypeScriptServer(): void {
     }
   }
 
-  const tslsLocations = [
-    wsRoot + '/node_modules/.bin/typescript-language-server',
-  ];
+  const tslsLocations: string[] = [];
+  if (__platform__ === 3) {
+    tslsLocations.push(wsRoot + '/node_modules/.bin/typescript-language-server.cmd');
+    tslsLocations.push(wsRoot + '/node_modules/.bin/typescript-language-server.exe');
+  }
+  tslsLocations.push(wsRoot + '/node_modules/.bin/typescript-language-server');
   for (let i = 0; i < tslsLocations.length; i = i + 1) {
     if (fileExistsSafe(tslsLocations[i])) {
       launchLspServer(tslsLocations[i], '--stdio');
@@ -570,21 +694,17 @@ function startTypeScriptServer(): void {
   spawn(() => {
     let cmd = '';
     let args = '';
-    try {
-      const which = execSync('which tsgo') as unknown as string;
-      if (which.length > 0) {
-        cmd = which.trim();
-        args = '--lsp';
-      }
-    } catch (e) {}
+    const tsgo = findExecutableOnPath('tsgo');
+    if (tsgo.length > 0) {
+      cmd = tsgo;
+      args = '--lsp';
+    }
     if (cmd.length < 1) {
-      try {
-        const which = execSync('which typescript-language-server') as unknown as string;
-        if (which.length > 0) {
-          cmd = which.trim();
-          args = '--stdio';
-        }
-      } catch (e) {}
+      const tsls = findExecutableOnPath('typescript-language-server');
+      if (tsls.length > 0) {
+        cmd = tsls;
+        args = '--stdio';
+      }
     }
     return { cmd: cmd, args: args };
   }).then((result) => { onLspDiscoveryResult(result); });
@@ -937,8 +1057,9 @@ function handleDiagnosticsNotification(json: string): void {
   const diagStart = json.indexOf('"diagnostics":[');
   if (diagStart < 0) return;
 
-  // Parse individual diagnostics
-  let diagFiles: string[] = [];
+  // Parse individual diagnostics. (No per-entry file array — every entry in
+  // one publishDiagnostics belongs to the single `filePath` below; the
+  // aggregate keys on it via setFileDiagnostics.)
   let diagLines: number[] = [];
   let diagMessages: string[] = [];
   let diagSeverities: string[] = [];
@@ -967,7 +1088,6 @@ function handleDiagnosticsNotification(json: string): void {
     if (sevNum === 4) severity = 'hint';
 
     if (diagCount < 100) {
-      diagFiles[diagCount] = filePath;
       diagLines[diagCount] = lineNum >= 0 ? lineNum : 0;
       diagMessages[diagCount] = message;
       diagSeverities[diagCount] = severity;
@@ -977,20 +1097,14 @@ function handleDiagnosticsNotification(json: string): void {
     searchFrom = msgIdx + message.length + 12;
   }
 
-  if (diagCount > 0) {
-    updateDiagnostics(diagFiles, diagLines, diagMessages, diagSeverities, diagCount);
-    let errorCount = 0;
-    let warningCount = 0;
-    for (let i = 0; i < diagCount; i = i + 1) {
-      if (diagSeverities[i].charCodeAt(0) === 101) errorCount = errorCount + 1;
-      if (diagSeverities[i].charCodeAt(0) === 119) warningCount = warningCount + 1;
-    }
-    callStatusUpdater(errorCount, warningCount);
-  } else {
-    // Clear diagnostics for this file
-    updateDiagnostics([], [], [], [], 0);
-    callStatusUpdater(0, 0);
-  }
+  // Per-file replace within the aggregate (this notification is for ONE
+  // file — `filePath`). count===0 is a legitimate "this file is now clean"
+  // clear, correctly scoped to filePath (the old code passed [] with no
+  // file and wiped every other file's diagnostics, and reported only this
+  // notification's counts as the global total). Status bar now reflects
+  // project-wide totals across all files, not just the last published one.
+  setFileDiagnostics(filePath, diagLines, diagMessages, diagSeverities, diagCount);
+  callStatusUpdater(getDiagErrorCount(), getDiagWarningCount());
 }
 
 // ---------------------------------------------------------------------------
@@ -1125,9 +1239,21 @@ function startFallbackDiagnostics(): void {
   ensureFallbackPaths();
   try { unlinkSync(DIAG_DONE_FILE); } catch (e: any) { /* ignore */ }
 
-  const cmd = '/bin/sh';
-  const shellCmd = 'cd ' + lspWorkspaceRoot + ' && npx tsc --noEmit --pretty false > ' + DIAG_LOG_FILE + ' 2>&1; touch ' + DIAG_DONE_FILE;
-  spawnBackground(cmd, ['-c', shellCmd], '/dev/null');
+  // SHIP-V1-GAPS.md followup §5: per-platform shell + null-device path.
+  // Windows uses `cmd /c`, and POSIX `touch` is `type nul >` on Win.
+  // The `&& npx tsc... > log 2>&1` redirect form is accepted by both cmd
+  // and POSIX shells.
+  if (__platform__ === 3) {
+    const shellCmd = 'cd /d "' + lspWorkspaceRoot + '" && npx tsc --noEmit --pretty false > "' + DIAG_LOG_FILE + '" 2>&1 & type nul > "' + DIAG_DONE_FILE + '"';
+    spawnBackground('cmd.exe', ['/c', shellCmd], 'NUL');
+  } else {
+    // Quote all interpolated paths — workspace and home dirs frequently contain
+    // spaces (`/Users/Foo/My Documents/...`), and unquoted `cd /Users/Foo My
+    // Documents` parses as `cd /Users/Foo` with `My Documents` as extra argv.
+    // POSIX sh accepts single-quoted strings literally so no $-expansion.
+    const shellCmd = 'cd "' + lspWorkspaceRoot + '" && npx tsc --noEmit --pretty false > "' + DIAG_LOG_FILE + '" 2>&1; touch "' + DIAG_DONE_FILE + '"';
+    spawnBackground('/bin/sh', ['-c', shellCmd], '/dev/null');
+  }
   fallbackDiagRunning = 1;
 }
 

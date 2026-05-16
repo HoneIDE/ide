@@ -11,13 +11,16 @@ import {
   textSetFontSize, textSetFontWeight,
   textSetString, textSetColor,
   buttonSetBordered, buttonSetTitle,
-  widgetAddChild, widgetClearChildren,
+  widgetAddChild, widgetClearChildren, widgetSetHidden,
   widgetSetBackgroundColor, widgetSetWidth, widgetMatchParentWidth,
   textfieldGetString,
 } from 'perry/ui';
 import { t } from 'perry/i18n';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
 import { getSideBarForeground, getButtonForeground } from '../../theme/theme-colors';
+import { getActiveTheme } from '../../theme/theme-loader';
+import { buildTrustSettings } from './trust-settings';
+import { buildReviewPanel } from './review-panel';
 
 // --- Module-level state ---
 
@@ -38,6 +41,14 @@ let deviceContainer: unknown = null;
 // Upgrade prompt
 let upgradeContainer: unknown = null;
 let syncLimited: number = 0;
+
+// SHIP-V1-GAPS.md #14: trust-settings + review-panel host containers.
+// Lazily mounted on first reveal so the import isn't dead-weight at startup.
+let advancedContainer: unknown = null;
+let advancedExpanded: number = 0;
+let trustHost: unknown = null;
+let reviewHost: unknown = null;
+let advancedBuilt: number = 0;
 
 // Host/guest mode (0=host, 1=guest)
 let syncMode: number = 0;
@@ -131,6 +142,17 @@ export function buildSyncPanel(): unknown {
   // Upgrade prompt (hidden until limit is hit)
   upgradeContainer = VStack(4, []);
 
+  // SHIP-V1-GAPS.md #14: advanced section — Trust Settings + Review Queue.
+  // Hidden by default; toggled by the chevron button below. Lazily renders
+  // its content on first reveal so an idle sync user pays nothing for the
+  // 575 LOC of trust+review code beyond the imports.
+  const advancedToggle = Button(t('▸ Advanced'), () => { onAdvancedToggle(); });
+  buttonSetBordered(advancedToggle, 0);
+  setBtnFg(advancedToggle, getSideBarForeground());
+  textSetFontSize(advancedToggle, 10);
+  advancedContainer = VStack(8, []);
+  widgetSetHidden(advancedContainer, 1);
+
   syncContainer = VStackWithInsets(12, 8, 8, 8, 8);
   widgetAddChild(syncContainer, title);
   widgetAddChild(syncContainer, statusLabel);
@@ -140,6 +162,8 @@ export function buildSyncPanel(): unknown {
   widgetAddChild(syncContainer, devHeader);
   widgetAddChild(syncContainer, deviceContainer);
   widgetAddChild(syncContainer, upgradeContainer);
+  widgetAddChild(syncContainer, advancedToggle);
+  widgetAddChild(syncContainer, advancedContainer);
 
   // Show limit prompt if already limited
   if (syncLimited === 1) {
@@ -295,6 +319,31 @@ function onJoinClicked(): void {
 
 export function setJoinCodeText(text: string): void {
   joinCodeText = text;
+}
+
+// SHIP-V1-GAPS.md #14: advanced-section toggle. First click lazily mounts
+// the trust-settings + review-panel widgets; subsequent clicks just flip
+// visibility. The underlying state arrays in both modules persist across
+// toggles so transient proposals don't get dropped if the user collapses
+// and re-expands.
+function onAdvancedToggle(): void {
+  if (advancedContainer === null) return;
+  if (advancedExpanded > 0) {
+    widgetSetHidden(advancedContainer, 1);
+    advancedExpanded = 0;
+    return;
+  }
+  if (advancedBuilt < 1) {
+    const theme = getActiveTheme();
+    const colors: any = theme !== null ? (theme as any).uiColors : null;
+    trustHost = buildTrustSettings(colors);
+    reviewHost = buildReviewPanel(colors);
+    widgetAddChild(advancedContainer, trustHost);
+    widgetAddChild(advancedContainer, reviewHost);
+    advancedBuilt = 1;
+  }
+  widgetSetHidden(advancedContainer, 0);
+  advancedExpanded = 1;
 }
 
 function rebuildDeviceList(): void {

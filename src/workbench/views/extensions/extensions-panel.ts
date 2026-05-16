@@ -9,7 +9,7 @@ import {
   VStack, HStack, Text, Button, Spacer, TextField,
   textSetFontSize, textSetFontWeight,
   buttonSetBordered, buttonSetTitle,
-  widgetAddChild, widgetSetWidth,
+  widgetAddChild, widgetSetWidth, widgetClearChildren,
 } from 'perry/ui';
 import { t } from 'perry/i18n';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
@@ -36,6 +36,16 @@ let _enableMaskLoaded: number = 0;
 
 // Toggle button refs
 let toggleBtns: unknown[] = [];
+
+// Search-filter state (SHIP-V1-GAPS.md extensions search was a dead no-op).
+// Perry closure rule: the search TextField callback is a module-level fn that
+// reads/writes these module vars; the list lives in its own sub-container so
+// re-filtering doesn't tear down the search field (which would drop focus).
+let _extListBox: unknown = null;
+let _extColors: ResolvedUIColors = null as any;
+let _extQuery: string = '';
+let _extNames: string[] = [];
+let _extDescs: string[] = [];
 
 function toggleExt(idx: number): void {
   if (idx === 0) { ext0on = ext0on > 0 ? 0 : 1; }
@@ -103,13 +113,62 @@ function isExtOn(idx: number): number {
 }
 
 function updateToggleLabel(idx: number): void {
-  if (idx < toggleBtns.length) {
+  if (idx < toggleBtns.length && toggleBtns[idx] !== null) {
     const on = isExtOn(idx);
     if (on > 0) {
       buttonSetTitle(toggleBtns[idx], t('Disable'));
     } else {
       buttonSetTitle(toggleBtns[idx], t('Enable'));
     }
+  }
+}
+
+// Search input handler — module-level per Perry closure rule.
+function onExtSearchInput(txt: string): void {
+  _extQuery = txt.toLowerCase();
+  rebuildExtList();
+}
+
+// Rebuild the filtered built-in list into _extListBox. toggleBtns stays a
+// fixed 11-slot array indexed by extension index (null for filtered-out
+// rows) so toggleExt/updateToggleLabel index math stays correct.
+function rebuildExtList(): void {
+  if (_extListBox === null) return;
+  widgetClearChildren(_extListBox);
+  toggleBtns = [];
+  for (let i = 0; i < _extNames.length; i++) {
+    const idx = i;
+    let visible = 1;
+    if (_extQuery.length > 0) {
+      const nameMatch = _extNames[i].toLowerCase().indexOf(_extQuery) >= 0;
+      const descMatch = _extDescs[i].toLowerCase().indexOf(_extQuery) >= 0;
+      if (nameMatch !== true && descMatch !== true) visible = 0;
+    }
+    if (visible < 1) {
+      toggleBtns.push(null);
+      continue;
+    }
+    const nameLabel = Text(_extNames[i]);
+    textSetFontSize(nameLabel, 13);
+    textSetFontWeight(nameLabel, 13, 0.5);
+    setFg(nameLabel, _extColors.sideBarForeground);
+
+    const descLabel = Text(_extDescs[i]);
+    textSetFontSize(descLabel, 11);
+    setFg(descLabel, _extColors.sideBarForeground);
+
+    const on = isExtOn(i);
+    let btnLabel = t('Disable');
+    if (on < 1) btnLabel = t('Enable');
+    const toggleBtn = Button(btnLabel, () => { toggleExt(idx); });
+    buttonSetBordered(toggleBtn, 0);
+    textSetFontSize(toggleBtn, 11);
+    setBtnFg(toggleBtn, _extColors.sideBarForeground);
+    toggleBtns.push(toggleBtn);
+
+    const infoCol = VStack(1, [nameLabel, descLabel]);
+    const row = HStack(8, [infoCol, Spacer(), toggleBtn]);
+    widgetAddChild(_extListBox, row);
   }
 }
 
@@ -126,13 +185,14 @@ export function renderExtensionsPanel(container: unknown, colors: ResolvedUIColo
   setFg(title, colors.sideBarForeground);
   widgetAddChild(container, title);
 
-  // Search field
-  const search = TextField(t('Search extensions'), (txt: string) => {});
+  // Search field — filters the built-in list live. Was a dead no-op.
+  const search = TextField(t('Search extensions'), (txt: string) => { onExtSearchInput(txt); });
   widgetAddChild(container, search);
 
-  // Built-in extensions
-  const names = [t('TypeScript'), t('Python'), t('Rust'), t('Go'), t('C/C++'), t('HTML/CSS'), t('JSON'), t('Markdown'), t('Git'), t('Docker'), t('TOML/YAML')];
-  const descs = [
+  // Built-in extensions — names/descs held at module level so the
+  // module-level rebuild fn can re-filter without recapturing.
+  _extNames = [t('TypeScript'), t('Python'), t('Rust'), t('Go'), t('C/C++'), t('HTML/CSS'), t('JSON'), t('Markdown'), t('Git'), t('Docker'), t('TOML/YAML')];
+  _extDescs = [
     t('Language support for TypeScript and JavaScript'),
     t('Language support for Python'),
     t('Language support for Rust'),
@@ -146,31 +206,14 @@ export function renderExtensionsPanel(container: unknown, colors: ResolvedUIColo
     t('TOML and YAML language support'),
   ];
 
-  toggleBtns = [];
-  for (let i = 0; i < names.length; i++) {
-    const idx = i;
-    const nameLabel = Text(names[i]);
-    textSetFontSize(nameLabel, 13);
-    textSetFontWeight(nameLabel, 13, 0.5);
-    setFg(nameLabel, colors.sideBarForeground);
-
-    const descLabel = Text(descs[i]);
-    textSetFontSize(descLabel, 11);
-    setFg(descLabel, colors.sideBarForeground);
-
-    const on = isExtOn(i);
-    let btnLabel = t('Disable');
-    if (on < 1) btnLabel = t('Enable');
-    const toggleBtn = Button(btnLabel, () => { toggleExt(idx); });
-    buttonSetBordered(toggleBtn, 0);
-    textSetFontSize(toggleBtn, 11);
-    setBtnFg(toggleBtn, colors.sideBarForeground);
-    toggleBtns.push(toggleBtn);
-
-    const infoCol = VStack(1, [nameLabel, descLabel]);
-    const row = HStack(8, [infoCol, Spacer(), toggleBtn]);
-    widgetAddChild(container, row);
-  }
+  // Dedicated list sub-container so re-filtering on each keystroke doesn't
+  // tear down the search field (which would drop keyboard focus).
+  _extColors = colors;
+  _extQuery = '';
+  const listBox = VStack(0, []);
+  _extListBox = listBox;
+  widgetAddChild(container, listBox);
+  rebuildExtList();
 
   // Plugin management section — only when compiled with --features plugins
   if (__plugins__) {

@@ -2,21 +2,34 @@
 
 This file contains instructions for running all agentic test scenarios against the Hone IDE.
 
+> **Windows note.** The scenario files use Unix paths (`/tmp/test/foo.png`).
+> On Windows, substitute `$env:TEMP\hone-test\foo.png` (or any writable
+> dir) — `curl` ships with Windows 10+ so the `curl -o <path>` syntax in
+> scenarios works as-is once the destination path is platform-correct.
+
 ## Prerequisites
 
 1. The IDE binary must be built with geisterhand baked in:
    ```bash
+   # macOS / Linux:
    cd ../perry && perry compile ../hone/hone-ide/src/app.ts --output ../hone/hone-ide/hone-ide --enable-geisterhand
+
+   # Windows (PowerShell):
+   cd ..\perry; perry compile ..\hone\hone-ide\src\app.ts --target windows --output ..\hone\hone-ide\hone-ide --enable-geisterhand
    ```
 2. `geisterhand` CLI must be installed and in PATH (for accessibility tree, keyboard, scroll)
-3. `curl` must be available
+3. `curl` must be available (default on macOS, Linux, Windows 10+)
 
 ## Setup
 
 Run the setup script to create a temp project with git state and launch both APIs:
 
 ```bash
+# macOS / Linux:
 cd hone-ide/tests/agentic && bash setup.sh
+
+# Windows (PowerShell):
+cd hone-ide/tests/agentic; .\setup.ps1
 ```
 
 This starts:
@@ -27,7 +40,12 @@ See `API.md` for the full endpoint routing guide.
 
 Create the screenshot output directory:
 ```bash
+# macOS / Linux:
 mkdir -p /tmp/test
+
+# Windows (PowerShell):
+New-Item -ItemType Directory -Force -Path $env:TEMP\hone-test | Out-Null
+# Then use $env:TEMP\hone-test\ wherever scenarios reference /tmp/test/
 ```
 
 ## Running All Scenarios
@@ -43,6 +61,13 @@ The IDE is running with two API ports:
   Port 7677 (external) — keyboard shortcuts, scroll, accessibility tree, wait
 
 See tests/agentic/API.md for the full endpoint reference.
+
+PATHS: On macOS/Linux the screenshot dir is /tmp/test/. On Windows it is
+$env:TEMP\hone-test\ (which expands to something like
+C:\Users\<You>\AppData\Local\Temp\hone-test\). Wherever the steps below say
+/tmp/test/, substitute the platform-appropriate path. Same for shortcut
+modifiers: macOS uses "cmd", Windows/Linux use "ctrl" for the equivalent
+default shortcut (Save, Open, etc.).
 
 Run ALL scenarios sequentially, in order, from:
   /path/to/hone-ide/tests/agentic/scenarios/
@@ -121,17 +146,26 @@ You MUST Read every screenshot you take — it is your proof for evaluation.
 After collecting results, clean up:
 
 ```bash
+# macOS / Linux:
 cd hone-ide/tests/agentic && bash teardown.sh
+
+# Windows (PowerShell):
+cd hone-ide/tests/agentic; .\teardown.ps1
 ```
 
 This kills the IDE and external server processes, removes the temp project directory. Results are preserved.
 
 ## Troubleshooting
 
-- **Baked-in API not responding (port 7676)**: Was the binary built with `--enable-geisterhand`? Check `lsof -i :7676`.
-- **External API not responding (port 7677)**: Is the `geisterhand` CLI in PATH? Check `lsof -i :7677`.
-- **Screenshots are black**: The IDE may not have finished rendering. Add `sleep 2` after startup.
+- **Baked-in API not responding (port 7676)**: Was the binary built with `--enable-geisterhand`?
+  - macOS / Linux: `lsof -i :7676`
+  - Windows (PowerShell): `Get-NetTCPConnection -LocalPort 7676 -ErrorAction SilentlyContinue`
+- **External API not responding (port 7677)**: Is the `geisterhand` CLI in PATH?
+  - macOS / Linux: `lsof -i :7677`
+  - Windows: `Get-NetTCPConnection -LocalPort 7677 -ErrorAction SilentlyContinue`
+- **Screenshots are black**: The IDE may not have finished rendering. Add `sleep 2` (or `Start-Sleep -Seconds 2`) after startup.
 - **Widget clicks don't work**: Get fresh widget list (`/widgets`) before each click — handles can change after UI updates.
-- **Keyboard shortcuts not working**: Use the external API (port 7677): `POST /key {"key":"b","modifiers":["cmd"]}`.
+- **Keyboard shortcuts not working**: Use the external API (port 7677): `POST /key {"key":"b","modifiers":["cmd"]}` on macOS, `{"key":"b","modifiers":["ctrl"]}` on Windows/Linux.
 - **Search returns no results**: Ensure the search text field handle is correct. Some text fields may need a delay after typing.
 - **Git panel empty**: Verify the project dir has a `.git` directory and that files were modified as expected.
+- **PowerShell setup.ps1 fails to parse on Windows**: Was the script saved as UTF-16 LE or with garbled ASCII? It must be UTF-8 (no BOM, ASCII-only is safest). PS 5.1 reads BOM-less files as ANSI/Windows-1252 — any em-dash/curly-quote/other non-ASCII chars will cause parse errors.
