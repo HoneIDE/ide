@@ -150,11 +150,18 @@ export function revealFileInExplorer(filePath: string): void {
   if (rootMatch < 1) return;
 
   // Expand each parent directory from root down to the file's parent
-  // e.g. /root/a/b/file.ts → expand /root/a, /root/a/b
+  // e.g. /root/a/b/file.ts → expand /root/a, /root/a/b  (POSIX)
+  //   or  C:\root\a\b\file.ts → expand C:\root\a, C:\root\a\b  (Windows)
+  // Must accept BOTH separators: Windows OS paths are backslash-delimited,
+  // so a `=== 47`-only scan finds ZERO boundaries on Windows and the whole
+  // reveal-active-file feature (file open, "reveal in explorer", search /
+  // diagnostic result clicks) silently does nothing. Mirrors the dual
+  // 47/92 separator check already used elsewhere in this module.
   let changed = 0;
   for (let i = rootLen + 1; i < filePath.length; i++) {
-    if (filePath.charCodeAt(i) === 47) {
-      // Slash found — this is a directory boundary
+    const cc = filePath.charCodeAt(i);
+    if (cc === 47 || cc === 92) {
+      // Separator found — this is a directory boundary
       const dirPath = filePath.slice(0, i);
       const id = pathId(dirPath);
       if (!expandedDirs.has(id)) {

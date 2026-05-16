@@ -369,16 +369,28 @@ export function renderTerminalPanel(container: unknown, colors: any): void {
   // to feel like a real terminal but small enough to fit a half-width panel.
   let rows = s.terminalRows > 0 ? s.terminalRows : 30;
   let cols = s.terminalCols > 0 ? s.terminalCols : 120;
-  // Defensive: never overwrite a live PTY handle. Today renderTerminalPanel
-  // has a single startup call site so this can't trigger, but it sits
+  // Defensive: never overwrite a live PTY handle OR its poll timer. Today
+  // renderTerminalPanel has a single startup call site (renderWorkbench is
+  // invoked once per session — app.ts and the setup path are mutually
+  // exclusive and both single-shot) so this can't trigger, but it sits
   // directly in the path of #51 (multiple terminals / splits) which will
   // add more open-calls — without this, a second render would orphan the
   // previous shell process (handle lost; destroyTerminalPanel can only
-  // close the current one). Mirrors the stopClaudeSession-before-start
-  // guard pattern. Leak-safe by default for the future expansion.
+  // close the current one) AND leak its 16ms poll interval (the
+  // `pollInterval = setInterval(...)` below reassigns the variable, so the
+  // prior interval keeps firing doPoll() forever against a replaced handle;
+  // destroy can only clear the latest). The handle clear was already here;
+  // the matching pollInterval clear was the missing symmetric half — both
+  // are siblings of the same resource and must be torn down together.
+  // Mirrors the stopClaudeSession-before-start guard pattern. Leak-safe by
+  // default for the future expansion.
   if (termHandle !== 0) {
     hone_terminal_close(termHandle);
     termHandle = 0;
+  }
+  if (pollInterval !== 0) {
+    clearInterval(pollInterval);
+    pollInterval = 0;
   }
   termHandle = hone_terminal_open(rows, cols, shell as any, cwd as any);
   // Record so settings-change handler knows whether a resize is needed.

@@ -203,9 +203,15 @@ function confirmWindows(title: string, message: string): number {
 // ---------------------------------------------------------------------------
 
 function getParentDir(path: string): string {
+  // FUNCTIONAL (not cosmetic): accept '/' (47) AND '\' (92). On Windows
+  // (backslash OS paths) the /-only scan left lastSlash=-1, so this
+  // returned `_workspaceRoot` instead of the selected item's real parent —
+  // New File / New Folder / rename from the explorer context menu created
+  // the entry in the WORKSPACE ROOT rather than the chosen directory.
   let lastSlash = -1;
   for (let i = 0; i < path.length; i++) {
-    if (path.charCodeAt(i) === 47) lastSlash = i;
+    const c = path.charCodeAt(i);
+    if (c === 47 || c === 92) lastSlash = i;
   }
   if (lastSlash > 0) return path.slice(0, lastSlash);
   return _workspaceRoot;

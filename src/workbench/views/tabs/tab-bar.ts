@@ -130,10 +130,15 @@ export function openTab(filePath: string, fileName: string): number {
     }
   }
 
-  // Extract display name
+  // Extract display name. Accept '/' (47) AND '\' (92): Windows OS paths
+  // are backslash-delimited, so a /-only scan left lastSlash=-1 and the
+  // tab showed the entire `C:\Users\…\foo.ts` (the `fileName` fallback
+  // below only saved it when a caller happened to pass one — load-bearing
+  // by accident). Now the primary extraction works on Windows directly.
   let lastSlash = -1;
   for (let i = 0; i < filePath.length; i++) {
-    if (filePath.charCodeAt(i) === 47) lastSlash = i;
+    const c = filePath.charCodeAt(i);
+    if (c === 47 || c === 92) lastSlash = i;
   }
   let displayName = filePath;
   if (lastSlash >= 0) {

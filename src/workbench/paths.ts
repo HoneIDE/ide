@@ -215,7 +215,33 @@ export function getChatsDir(): string {
   return _chatsDir;
 }
 
+// Recursive directory creation. The single-level `mkdirSync(dir)` this
+// replaced silently failed (error swallowed) whenever an intermediate
+// component was missing — and the Windows temp fallback below builds a
+// 3-deep path (`<home>/AppData/Local/Temp`) created in one call, so a
+// missing parent left `_tempDir` pointing at a nonexistent dir and every
+// settings/chat/device-id write after that failed silently. We walk the
+// components in order and create each missing prefix. Crucially this also
+// fixes Windows MIXED separators: `getHomeDir()` returns a `\`-delimited
+// `%USERPROFILE%` (e.g. `C:\Users\Ralph`) while this module appends
+// `/`-delimited segments, so a real path looks like
+// `C:\Users\Ralph/.hone/chats` — we must treat BOTH 0x2F and 0x5C as
+// separators or the whole path is seen as one uncreatable component.
+// No `{recursive:true}` option object: the native Perry fs binding uses
+// the bare-arg `mkdirSync(path)` convention everywhere else (proven to
+// compile); the ordered walk supplies the recursion itself.
 function ensureDirExists(dir: string): void {
+  if (dir.length < 1) return;
+  if (existsSync(dir)) return;
+  for (let i = 1; i < dir.length; i++) {
+    const c = dir.charCodeAt(i);
+    if (c === 47 || c === 92) {
+      const prefix = dir.slice(0, i);
+      if (prefix.length > 0 && !existsSync(prefix)) {
+        try { mkdirSync(prefix); } catch (e: any) { /* ignore */ }
+      }
+    }
+  }
   if (!existsSync(dir)) {
     try { mkdirSync(dir); } catch (e: any) { /* ignore */ }
   }

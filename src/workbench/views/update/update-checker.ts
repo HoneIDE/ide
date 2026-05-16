@@ -718,6 +718,24 @@ function performUpdateWindows(): void {
   ps += "if ($h -ne '";
   ps += _sha256;
   ps += "') { throw 'Hash mismatch' }; ";
+  // Make the backup rename idempotent. On Windows `Rename-Item` ERRORS if
+  // the destination already exists (POSIX `mv` silently overwrites — which
+  // is why the macOS/Linux paths don't need this). And unlike those paths,
+  // Windows CANNOT delete the .bak inline after relaunch: it's the old
+  // running process's own image and the file stays delete-locked until that
+  // process exits. So a stale `<exe>.bak` from the *previous* update
+  // survives, and the NEXT update's Rename-Item fails on it — auto-update
+  // works exactly once on Windows then is permanently bricked, surfaced as
+  // the misleading "Download or verification failed" (the rollback rename
+  // collides on the same stale file too). The only viable Windows cleanup
+  // point is here, at the start of the next update: a fresh process is
+  // running, so the prior `.bak` is no longer a locked running image and
+  // can be removed. This restores POSIX `mv`-overwrite semantics.
+  ps += "if (Test-Path '";
+  ps += exePath;
+  ps += ".bak') { Remove-Item '";
+  ps += exePath;
+  ps += ".bak' -Force }; ";
   ps += "Rename-Item '";
   ps += exePath;
   ps += "' '";

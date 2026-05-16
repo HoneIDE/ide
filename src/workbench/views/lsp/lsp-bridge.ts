@@ -44,6 +44,83 @@ function findExecutableOnPath(name: string): string {
   } catch (_e: any) {}
   return '';
 }
+
+/**
+ * Build an LSP `file://` URI from an OS-native absolute path.
+ *
+ * The old inline `let uri = 'file://'; uri += filePath;` was correct ONLY on
+ * POSIX (`/abs/x` → `file://` + `/abs/x` = `file:///abs/x`, valid). On
+ * Windows `filePath` is a backslash drive path (`C:\Users\x\f.ts`), so it
+ * produced `file://C:\Users\x\f.ts` — a malformed URI whose authority parses
+ * as `C:`. typescript-language-server / tsgo cannot resolve that back to a
+ * filesystem path, so EVERY outbound LSP message (didOpen/Change/Save/Close,
+ * hover, definition, references, completion, formatting, codeAction, rename,
+ * documentSymbol, …) referenced a document the server never accepted —
+ * LSP was entirely non-functional on Windows (no diagnostics/hover/etc.).
+ *
+ * Correct Windows form is `file:///C:/Users/x/f.ts`: backslashes → forward
+ * slashes, and a leading `/` before the drive so the URI has an empty
+ * authority + absolute path. POSIX behavior is preserved EXACTLY (path
+ * already starts with `/`, so we emit `file://` + `/abs` unchanged).
+ * Percent-encoding is intentionally NOT added here: the prior code never
+ * encoded on any platform and the servers in use tolerate raw paths;
+ * introducing encoding now would be an orthogonal behavior change that
+ * could regress the currently-working POSIX path. Tracked separately.
+ */
+function pathToFileUri(p: string): string {
+  let s = '';
+  for (let i = 0; i < p.length; i++) {
+    if (p.charCodeAt(i) === 92) s += '/'; // '\' → '/'
+    else s += p.charAt(i);
+  }
+  let uri = 'file://';
+  if (s.length > 0 && s.charCodeAt(0) === 47) {
+    uri += s;           // POSIX '/abs' → 'file:///abs' (unchanged)
+  } else {
+    uri += '/';         // Windows 'C:/..' → 'file:///C:/..'
+    uri += s;
+  }
+  return uri;
+}
+
+/**
+ * Inverse of pathToFileUri: a server-sent `file://` URI → OS-native path.
+ *
+ * The old inline `if (uri.indexOf('file://')===0) filePath = uri.slice(7)`
+ * was correct ONLY on POSIX (`file:///abs` → `/abs`). On Windows the server
+ * (now that iter-103 sends well-formed `file:///C:/…`) echoes that form, and
+ * a bare slice(7) yields `/C:/Users/x` — a leading-slash-before-drive path
+ * Win32 cannot open, so go-to-definition jumped nowhere and inbound
+ * diagnostics keyed every file under a bogus path (Problems panel + squiggle
+ * mapping silently wrong on Windows).
+ *
+ * Deliberately MINIMAL: returns exactly the old `uri.slice(7)` for every
+ * non-Windows-drive shape (so the working POSIX path is byte-identical and
+ * carries zero regression risk — same scoping rule as iter-103's forward
+ * helper), and diverges ONLY for the precise `/<letter>:` drive pattern
+ * that was 100% broken before, stripping the spurious leading slash and
+ * switching `/`→`\` so it matches the OS-native form used everywhere else.
+ * Percent-decoding intentionally not added here (orthogonal; never done on
+ * any platform; tracked with the same note as iter-103).
+ */
+function fileUriToPath(uri: string): string {
+  if (uri.indexOf('file://') !== 0) return uri;
+  const rest = uri.slice(7);
+  if (rest.length >= 3 && rest.charCodeAt(0) === 47) {
+    const d = rest.charCodeAt(1);
+    const isLetter = (d >= 65 && d <= 90) || (d >= 97 && d <= 122);
+    if (isLetter && rest.charCodeAt(2) === 58) { // '<letter>' ':'
+      const drivePart = rest.slice(1);           // 'C:/Users/x'
+      let out = '';
+      for (let i = 0; i < drivePart.length; i++) {
+        if (drivePart.charCodeAt(i) === 47) out += '\\';
+        else out += drivePart.charAt(i);
+      }
+      return out;                                // 'C:\Users\x'
+    }
+  }
+  return rest;                                   // POSIX: identical to old slice(7)
+}
 import { updateDiagnostics, setFileDiagnostics, getDiagErrorCount, getDiagWarningCount } from './diagnostics-panel';
 import { getTempDir, canRunShellCommands } from '../../paths';
 
@@ -193,8 +270,7 @@ export function lspDidOpen(filePath: string, languageId: string, content: string
   if (lspServerHandle < 0 || lspInitialized < 1) return;
 
   // Build textDocument/didOpen notification
-  let uri = 'file://';
-  uri += filePath;
+  let uri = pathToFileUri(filePath);
   let json = '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"';
   json += uri;
   json += '","languageId":"';
@@ -211,8 +287,7 @@ export function lspDidChange(filePath: string, content: string): void {
   const docVersion = _lspVerBump(filePath);
   if (lspServerHandle < 0 || lspInitialized < 1) return;
 
-  let uri = 'file://';
-  uri += filePath;
+  let uri = pathToFileUri(filePath);
   let json = '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"';
   json += uri;
   json += '","version":';
@@ -227,8 +302,7 @@ export function lspDidChange(filePath: string, content: string): void {
 export function lspDidSave(filePath: string): void {
   if (lspServerHandle < 0 || lspInitialized < 1) return;
 
-  let uri = 'file://';
-  uri += filePath;
+  let uri = pathToFileUri(filePath);
   let json = '{"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":{"uri":"';
   json += uri;
   json += '"}}}';
@@ -253,8 +327,7 @@ export function lspDidClose(filePath: string): void {
   // local bookkeeping stays correct even if the server isn't up.
   _lspVerDrop(filePath);
   if (lspServerHandle < 0 || lspInitialized < 1) return;
-  let uri = 'file://';
-  uri += filePath;
+  let uri = pathToFileUri(filePath);
   let json = '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"';
   json += uri;
   json += '"}}}';
@@ -268,8 +341,7 @@ export function lspFormatDocument(filePath: string, tabSize: number, insertSpace
   const id = lspNextRequestId;
   lspNextRequestId = lspNextRequestId + 1;
 
-  let uri = 'file://';
-  uri += filePath;
+  let uri = pathToFileUri(filePath);
   let json = '{"jsonrpc":"2.0","id":';
   json += String(id);
   json += ',"method":"textDocument/formatting","params":{"textDocument":{"uri":"';
@@ -291,8 +363,7 @@ export function lspHover(filePath: string, line: number, character: number): voi
   const id = lspNextRequestId;
   lspNextRequestId = lspNextRequestId + 1;
 
-  let uri = 'file://';
-  uri += filePath;
+  let uri = pathToFileUri(filePath);
   let json = '{"jsonrpc":"2.0","id":';
   json += String(id);
   json += ',"method":"textDocument/hover","params":{"textDocument":{"uri":"';
@@ -314,8 +385,7 @@ export function lspDefinition(filePath: string, line: number, character: number)
   const id = lspNextRequestId;
   lspNextRequestId = lspNextRequestId + 1;
 
-  let uri = 'file://';
-  uri += filePath;
+  let uri = pathToFileUri(filePath);
   let json = '{"jsonrpc":"2.0","id":';
   json += String(id);
   json += ',"method":"textDocument/definition","params":{"textDocument":{"uri":"';
@@ -366,8 +436,7 @@ export function lspSignatureHelp(filePath: string, line: number, character: numb
   const id = lspNextRequestId;
   lspNextRequestId = lspNextRequestId + 1;
 
-  let uri = 'file://';
-  uri += filePath;
+  let uri = pathToFileUri(filePath);
   let json = '{"jsonrpc":"2.0","id":';
   json += String(id);
   json += ',"method":"textDocument/signatureHelp","params":{"textDocument":{"uri":"';
@@ -420,8 +489,7 @@ export function lspReferences(filePath: string, line: number, character: number,
   if (lspServerHandle < 0 || lspInitialized < 1) return;
   const id = lspNextRequestId;
   lspNextRequestId = lspNextRequestId + 1;
-  let uri = 'file://';
-  uri += filePath;
+  let uri = pathToFileUri(filePath);
   let json = '{"jsonrpc":"2.0","id":';
   json += String(id);
   json += ',"method":"textDocument/references","params":{"textDocument":{"uri":"';
@@ -442,8 +510,7 @@ export function lspRename(filePath: string, line: number, character: number, new
   if (lspServerHandle < 0 || lspInitialized < 1) return;
   const id = lspNextRequestId;
   lspNextRequestId = lspNextRequestId + 1;
-  let uri = 'file://';
-  uri += filePath;
+  let uri = pathToFileUri(filePath);
   // Escape " and \ in newName so the JSON-RPC payload stays valid.
   let escaped = '';
   for (let i = 0; i < newName.length; i++) {
@@ -473,8 +540,7 @@ export function lspDocumentSymbols(filePath: string): void {
   if (lspServerHandle < 0 || lspInitialized < 1) return;
   const id = lspNextRequestId;
   lspNextRequestId = lspNextRequestId + 1;
-  let uri = 'file://';
-  uri += filePath;
+  let uri = pathToFileUri(filePath);
   let json = '{"jsonrpc":"2.0","id":';
   json += String(id);
   json += ',"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":"';
@@ -522,8 +588,7 @@ export function lspCodeActions(
   if (lspServerHandle < 0 || lspInitialized < 1) return;
   const id = lspNextRequestId;
   lspNextRequestId = lspNextRequestId + 1;
-  let uri = 'file://';
-  uri += filePath;
+  let uri = pathToFileUri(filePath);
   let json = '{"jsonrpc":"2.0","id":';
   json += String(id);
   json += ',"method":"textDocument/codeAction","params":{"textDocument":{"uri":"';
@@ -557,8 +622,7 @@ export function lspSemanticTokens(filePath: string): void {
   if (lspServerHandle < 0 || lspInitialized < 1) return;
   const id = lspNextRequestId;
   lspNextRequestId = lspNextRequestId + 1;
-  let uri = 'file://';
-  uri += filePath;
+  let uri = pathToFileUri(filePath);
   let json = '{"jsonrpc":"2.0","id":';
   json += String(id);
   json += ',"method":"textDocument/semanticTokens/full","params":{"textDocument":{"uri":"';
@@ -579,8 +643,7 @@ export function lspInlayHints(
   if (lspServerHandle < 0 || lspInitialized < 1) return;
   const id = lspNextRequestId;
   lspNextRequestId = lspNextRequestId + 1;
-  let uri = 'file://';
-  uri += filePath;
+  let uri = pathToFileUri(filePath);
   let json = '{"jsonrpc":"2.0","id":';
   json += String(id);
   json += ',"method":"textDocument/inlayHint","params":{"textDocument":{"uri":"';
@@ -733,8 +796,7 @@ function sendInitialize(): void {
   const id = lspNextRequestId;
   lspNextRequestId = lspNextRequestId + 1;
 
-  let rootUri = 'file://';
-  rootUri += lspWorkspaceRoot;
+  let rootUri = pathToFileUri(lspWorkspaceRoot);
 
   let json = '{"jsonrpc":"2.0","id":';
   json += String(id);
@@ -997,11 +1059,8 @@ function handleDefinitionResponse(json: string): void {
   const uri = extractJsonString(resultStr, '"uri":"');
   if (uri.length < 1) return;
 
-  // Convert URI to file path
-  let filePath = uri;
-  if (uri.indexOf('file://') === 0) {
-    filePath = uri.slice(7);
-  }
+  // Convert URI to file path (Windows-aware: file:///C:/x → C:\x).
+  let filePath = fileUriToPath(uri);
 
   // Extract start line
   const startIdx = resultStr.indexOf('"start"');
@@ -1065,11 +1124,8 @@ function handleDiagnosticsNotification(json: string): void {
   let diagSeverities: string[] = [];
   let diagCount = 0;
 
-  // Convert URI to file path
-  let filePath = uri;
-  if (uri.indexOf('file://') === 0) {
-    filePath = uri.slice(7);
-  }
+  // Convert URI to file path (Windows-aware: file:///C:/x → C:\x).
+  let filePath = fileUriToPath(uri);
 
   // Find each diagnostic object { "range": ..., "message": ..., "severity": ... }
   let searchFrom = diagStart;

@@ -133,11 +133,14 @@ export function getContextTokenEstimate(): number {
   return Math.floor(total / 4);
 }
 
-/** Get file name from full path. */
+/** Get file name from full path. Accepts '/' (47) and '\' (92) — Windows
+ *  OS paths are backslash-delimited; a /-only scan returned the entire
+ *  absolute path, so context chips showed `C:\Users\…\foo.ts`. */
 function getFileName(path: string): string {
   let lastSlash = -1;
   for (let i = 0; i < path.length; i++) {
-    if (path.charCodeAt(i) === 47) lastSlash = i;
+    const c = path.charCodeAt(i);
+    if (c === 47 || c === 92) lastSlash = i;
   }
   if (lastSlash >= 0) return path.slice(lastSlash + 1);
   return path;

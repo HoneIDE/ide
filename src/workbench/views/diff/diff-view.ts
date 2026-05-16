@@ -322,26 +322,35 @@ function buildInlineEditor(): unknown {
   while (pos < diffText.length) {
     let lineEnd = pos;
     while (lineEnd < diffText.length && diffText.charCodeAt(lineEnd) !== 10) lineEnd = lineEnd + 1;
-    const lineLen = lineEnd - pos;
+    // Strip a trailing CR so CRLF-committed files (the Git-for-Windows
+    // core.autocrlf=true default) don't render a stray control glyph at the
+    // end of every diff line. git diff terminates its OWN lines with \n, but
+    // reproduces file content verbatim — so each +/-/context line of a CRLF
+    // file arrives as "<content>\r" before that \n. The buffer's insert()
+    // (unlike its constructor) does NOT normalize line endings, so the \r
+    // would land in the editor as-is. Invisible on macOS/Linux (LF-only).
+    let contentEnd = lineEnd;
+    if (contentEnd > pos && diffText.charCodeAt(contentEnd - 1) === 13) contentEnd = contentEnd - 1;
+    const lineLen = contentEnd - pos;
 
     if (lineLen >= 2 && diffText.charCodeAt(pos) === 64 && diffText.charCodeAt(pos + 1) === 64) {
       inHunk = 1;
       // Emit the hunk header as a separator line.
-      body += diffText.slice(pos, lineEnd);
+      body += diffText.slice(pos, contentEnd);
       body += '\n';
       lineTypes.push(2); // hunk header
     } else if (inHunk > 0 && lineLen >= 1) {
       const c = diffText.charCodeAt(pos);
       if (c === 45) { // '-'
-        body += diffText.slice(pos, lineEnd);
+        body += diffText.slice(pos, contentEnd);
         body += '\n';
         lineTypes.push(1); // deletion
       } else if (c === 43) { // '+'
-        body += diffText.slice(pos, lineEnd);
+        body += diffText.slice(pos, contentEnd);
         body += '\n';
         lineTypes.push(3); // addition
       } else if (c === 32) { // ' '
-        body += diffText.slice(pos, lineEnd);
+        body += diffText.slice(pos, contentEnd);
         body += '\n';
         lineTypes.push(0); // context
       } else if (c === 92) {

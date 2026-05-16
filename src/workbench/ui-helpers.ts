@@ -142,8 +142,15 @@ export function pathId(path: string): number {
 export function getFileName(filePath: string): string {
   let lastSlash = -1;
   for (let i = 0; i < filePath.length; i++) {
-    // 47 = '/' char code
-    if (filePath.charCodeAt(i) === 47) lastSlash = i;
+    // 47 = '/', 92 = '\' — must accept BOTH. Windows OS paths are
+    // backslash-delimited, so a `/`-only scan finds no separator and this
+    // canonical helper returns the ENTIRE absolute path as the "filename".
+    // It backs ~27 call sites (tab labels, git changed-files, AI context
+    // chips, search results, Problems panel, explorer, timeline, terminal),
+    // so every filename on every Windows surface rendered as the full
+    // `C:\Users\…\foo.ts`. Fixing the shared helper fixes them all at once.
+    const c = filePath.charCodeAt(i);
+    if (c === 47 || c === 92) lastSlash = i;
   }
   if (lastSlash >= 0) {
     return filePath.slice(lastSlash + 1);

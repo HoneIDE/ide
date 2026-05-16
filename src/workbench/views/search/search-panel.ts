@@ -486,11 +486,37 @@ function parseRipgrepLine(json: string): void {
   const pathIdx = json.indexOf('"path":{"text":"');
   if (pathIdx < 0) return;
   const pathStart = pathIdx + 16;
+  // Escape-aware terminator scan — a backslash escapes the next char, so a
+  // JSON-escaped quote (\") inside the string doesn't end it early. This is
+  // the same logic the line-text extraction below already uses; the path
+  // extraction was missing it.
   let pathEnd = pathStart;
+  let pEsc = 0;
   for (let i = pathStart; i < json.length; i = i + 1) {
+    if (pEsc > 0) { pEsc = 0; continue; }
+    if (json.charCodeAt(i) === 92) { pEsc = 1; continue; }
     if (json.charCodeAt(i) === 34) { pathEnd = i; break; }
   }
-  const filePath = json.slice(pathStart, pathEnd);
+  const rawPath = json.slice(pathStart, pathEnd);
+  // JSON-unescape the path. On Windows, rg --json emits paths with
+  // backslashes escaped as \\, so without this every result path comes back
+  // as C:\\Users\\... (doubled backslashes) — fragile for file-open and
+  // broken for any path-equality (result grouping / already-open checks).
+  // serde_json (rg's encoder) only ever emits \\ \" \n \r \t \b \f for a
+  // path; map them all back, pass everything else through.
+  let filePath = '';
+  for (let i = 0; i < rawPath.length; i = i + 1) {
+    if (rawPath.charCodeAt(i) === 92 && i + 1 < rawPath.length) {
+      const nx = rawPath.charCodeAt(i + 1);
+      if (nx === 92) { filePath += '\\'; i = i + 1; continue; }
+      if (nx === 34) { filePath += '"'; i = i + 1; continue; }
+      if (nx === 47) { filePath += '/'; i = i + 1; continue; }
+      if (nx === 110) { filePath += '\n'; i = i + 1; continue; }
+      if (nx === 114) { filePath += '\r'; i = i + 1; continue; }
+      if (nx === 116) { filePath += '\t'; i = i + 1; continue; }
+    }
+    filePath += rawPath.charAt(i);
+  }
 
   // Extract line number: "line_number":N
   const lnIdx = json.indexOf('"line_number":');

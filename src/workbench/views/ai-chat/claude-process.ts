@@ -101,10 +101,22 @@ export function findClaudeBinary(): string {
 export function checkClaudeAuth(): number {
   const bin = findClaudeBinary();
   if (bin.length < 3) return 0;
-  // SHIP-V1-GAPS.md followup §5: argv-form. The `bin` path may contain
-  // spaces (especially under `%APPDATA%\Roaming\npm\claude.cmd` on Windows)
-  // which would shell-break the prior `bin + ' auth status'` concat.
+  // SHIP-V1-GAPS.md followup §5: argv-form so a space-containing `bin`
+  // doesn't shell-break. POSIX can exec the binary directly (argv-form is
+  // already injection-safe). Windows CANNOT: `findClaudeBinary` returns
+  // `claude.cmd` (the npm-global shim — the normal install), and neither
+  // the Rust process API nor Node can execute a .cmd/.bat directly — it
+  // must go through `cmd.exe /c` with the (usually space-containing) path
+  // quoted, exactly like the session-spawn path below. The prior direct
+  // `spawnSync(bin, ...)` always failed on a normal Windows install, so
+  // Hone reported "Claude Code not authenticated" even when it was, which
+  // silently disabled the entire AI chat feature on Windows.
   try {
+    if (__platform__ === 3) {
+      const rw = spawnSync('cmd.exe', ['/c', shellEscape(bin) + ' auth status']);
+      if (rw.status === 0) return 1;
+      return 0;
+    }
     const r = spawnSync(bin, ['auth', 'status']);
     if (r.status === 0) return 1;
     return 0;
@@ -217,12 +229,12 @@ export function startClaudeSession(prompt: string, workspaceRoot: string, resume
   let cmd = '';
   if (__platform__ === 3) {
     cmd = 'set "CLAUDECODE=" && ';
-    cmd += bin;
+    cmd += shellEscape(bin);
     cmd += ' -p ';
     cmd += shellEscape(prompt);
   } else {
     cmd = 'unset CLAUDECODE; ';
-    cmd += bin;
+    cmd += shellEscape(bin);
     cmd += ' -p "$(cat ';
     cmd += shellEscape(promptFile);
     cmd += ')"';
