@@ -1359,11 +1359,40 @@ function renderWsSymbolsList(): void {
   }
 }
 
+/**
+ * Server-sent `file://` URI → OS-native path. Same minimal Windows-aware
+ * logic as lsp-bridge.ts fileUriToPath (iters 103/104): byte-identical to
+ * the old `slice(7)` for every non-Windows-drive shape (POSIX preserved
+ * exactly, zero regression), diverging ONLY for the `/<letter>:` drive
+ * pattern that a bare slice(7) turned into the unopenable `/C:/Users/x`.
+ * Without this, server URIs broke cross-file symbol nav (here) and LSP
+ * rename / code-action apply (applyWorkspaceEdit) on Windows — the latter
+ * because `/C:/…` fails the workspace-confinement check so even legitimate
+ * in-workspace refactors silently no-op.
+ */
+function stripFileUriToPath(uri: string): string {
+  if (uri.length <= 7 || uri.slice(0, 7) !== 'file://') return uri;
+  const rest = uri.slice(7);
+  if (rest.length >= 3 && rest.charCodeAt(0) === 47) {
+    const d = rest.charCodeAt(1);
+    const isLetter = (d >= 65 && d <= 90) || (d >= 97 && d <= 122);
+    if (isLetter && rest.charCodeAt(2) === 58) { // '<letter>' ':'
+      const drivePart = rest.slice(1);
+      let out = '';
+      for (let i = 0; i < drivePart.length; i++) {
+        if (drivePart.charCodeAt(i) === 47) out += '\\';
+        else out += drivePart.charAt(i);
+      }
+      return out;
+    }
+  }
+  return rest;
+}
+
 function openSymbolAcrossFiles(uriOrPath: string, line: number, character: number): void {
   if (uriOrPath.length < 1) return;
-  // Strip `file://` prefix if present.
-  let path = uriOrPath;
-  if (path.length > 7 && path.slice(0, 7) === 'file://') path = path.slice(7);
+  // Strip `file://` prefix if present (Windows-aware: file:///C:/x → C:\x).
+  const path = stripFileUriToPath(uriOrPath);
   openFileInEditor(path, '');
   setTimeout(() => {
     if (editorReady > 0) {
@@ -2143,9 +2172,10 @@ function applyWorkspaceEdit(json: string): WorkspaceEditResult {
     if (arrEnd < 0) break;
     const arrBody = changesBody.slice(arrOpen + 1, arrEnd);
 
-    // Translate URI → path.
-    let path = uri;
-    if (path.length > 7 && path.slice(0, 7) === 'file://') path = path.slice(7);
+    // Translate URI → path (Windows-aware: file:///C:/x → C:\x — the bare
+    // slice(7) yielded /C:/x which failed the workspace-confinement check
+    // below, silently no-op'ing legitimate LSP rename/code-action edits).
+    let path = stripFileUriToPath(uri);
 
     // SECURITY: the URI comes from the language server's WorkspaceEdit. A
     // compromised / typo-squatted LSP binary (or a benign one driven by

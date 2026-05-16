@@ -268,6 +268,24 @@ function uriToPath(uri: string): string {
     // "file:"
     let p = 5;
     while (p < uri.length && uri.charCodeAt(p) === 47) p++;
+    // Windows: file:///C:/x → C:\x. After skipping the slash run p sits at
+    // the drive letter; emit WITHOUT the spurious leading slash and with
+    // '\' separators. Same minimal logic as lsp-bridge fileUriToPath (iter
+    // 104) — the POSIX branches below are untouched (zero regression). The
+    // old code unconditionally re-prepended '/', producing the unopenable
+    // `/C:/x` so go-to-references navigated nowhere on Windows.
+    if (p < uri.length) {
+      const d = uri.charCodeAt(p);
+      const isLetter = (d >= 65 && d <= 90) || (d >= 97 && d <= 122);
+      if (isLetter && p + 1 < uri.length && uri.charCodeAt(p + 1) === 58) {
+        let out = '';
+        for (let i = p; i < uri.length; i++) {
+          if (uri.charCodeAt(i) === 47) out += '\\';
+          else out += uri.charAt(i);
+        }
+        return out;
+      }
+    }
     if (p > 5) {
       // Restore the leading slash on POSIX (file:///abs → /abs)
       return '/' + uri.slice(p);
