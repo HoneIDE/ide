@@ -6,8 +6,9 @@
  */
 import { menuCreate, menuAddItem, menuAddSeparator, clipboardWrite } from 'perry/ui';
 import { t } from 'perry/i18n';
-import { spawnSync } from 'child_process';
-import { writeFileSync, unlinkSync, mkdirSync, isDirectory, existsSync } from 'fs';
+import { spawnText } from '../../../process-compat';
+import { isDirectory } from '../../../fs-compat';
+import { writeFileSync, unlinkSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 
 // Platform constant — 0=macOS, 1=iOS, 3=Windows, 4=Linux, 5=web.
@@ -95,7 +96,7 @@ function promptInputMac(title: string, defaultValue: string): string {
   script += '  return ""\n';
   script += 'end try\n';
   try {
-    const r = spawnSync('osascript', ['-e', script]);
+    const r = spawnText('osascript', ['-e', script]);
     if (r.status !== 0) return '';
     let out = r.stdout;
     let end = out.length;
@@ -124,7 +125,7 @@ function promptInputWindows(title: string, defaultValue: string): string {
   ps += '$r = [Microsoft.VisualBasic.Interaction]::InputBox(\'' + safeTitle + '\',\'Hone\',\'' + safeDefault + '\');';
   ps += '[Console]::Out.Write($r)';
   try {
-    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+    const r = spawnText('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
     if (r.status !== 0) return '';
     let out = r.stdout;
     let end = out.length;
@@ -165,7 +166,7 @@ function confirmMac(title: string, message: string): number {
   script += '  return "0"\n';
   script += 'end try\n';
   try {
-    const r = spawnSync('osascript', ['-e', script]);
+    const r = spawnText('osascript', ['-e', script]);
     if (r.status !== 0) return 0;
     return r.stdout.length > 0 && r.stdout.charAt(0) === '1' ? 1 : 0;
   } catch (_e: any) {
@@ -190,7 +191,7 @@ function confirmWindows(title: string, message: string): number {
   ps += '$r = [System.Windows.Forms.MessageBox]::Show(\'' + safeMsg + '\',\'' + safeTitle + '\',\'OKCancel\',\'Question\');';
   ps += 'if ($r -eq \'OK\') { [Console]::Out.Write(\'1\') } else { [Console]::Out.Write(\'0\') }';
   try {
-    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+    const r = spawnText('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
     if (r.status !== 0) return 0;
     return r.stdout.length > 0 && r.stdout.charAt(0) === '1' ? 1 : 0;
   } catch (_e: any) {
@@ -292,11 +293,11 @@ function doReveal(): void {
   // Explorer). Linux: best-effort `xdg-open` on the parent dir — there's no
   // standard file-manager reveal flag.
   if (__platform__ === 3) {
-    try { spawnSync('explorer', ['/select,' + _pendingPath]); } catch (_e: any) {}
+    try { spawnText('explorer', ['/select,' + _pendingPath]); } catch (_e: any) {}
   } else if (__platform__ === 0) {
-    try { spawnSync('open', ['-R', _pendingPath]); } catch (_e: any) {}
+    try { spawnText('open', ['-R', _pendingPath]); } catch (_e: any) {}
   } else {
-    try { spawnSync('xdg-open', [getParentDir(_pendingPath)]); } catch (_e: any) {}
+    try { spawnText('xdg-open', [getParentDir(_pendingPath)]); } catch (_e: any) {}
   }
 }
 
@@ -360,11 +361,11 @@ function doRename(): void {
   // shell-string concatenation of user-controlled paths.
   if (__platform__ === 3) {
     try {
-      spawnSync('cmd', ['/c', 'move', '/Y', _pendingPath, newPath]);
+      spawnText('cmd', ['/c', 'move', '/Y', _pendingPath, newPath]);
     } catch (_e: any) { return; }
   } else {
     try {
-      spawnSync('mv', [_pendingPath, newPath]);
+      spawnText('mv', [_pendingPath, newPath]);
     } catch (_e: any) { return; }
   }
   _refreshSidebar();
@@ -387,7 +388,7 @@ function moveToTrash(p: string): number {
     }
     const ps = "Add-Type -AssemblyName Microsoft.VisualBasic; if (Test-Path -LiteralPath '" + pe + "' -PathType Container) { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory('" + pe + "','OnlyErrorDialogs','SendToRecycleBin') } else { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('" + pe + "','OnlyErrorDialogs','SendToRecycleBin') }";
     try {
-      const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+      const r = spawnText('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
       if (r.status === 0) return 1;
     } catch (_e: any) {}
     return 0;
@@ -403,14 +404,14 @@ function moveToTrash(p: string): number {
     }
     const script = 'tell application "Finder" to delete (POSIX file "' + ae + '" as alias)';
     try {
-      const r = spawnSync('osascript', ['-e', script]);
+      const r = spawnText('osascript', ['-e', script]);
       if (r.status === 0) return 1;
     } catch (_e: any) {}
     return 0;
   }
   // Linux / other
   try {
-    const r = spawnSync('gio', ['trash', p]);
+    const r = spawnText('gio', ['trash', p]);
     if (r.status === 0) return 1;
   } catch (_e: any) {}
   return 0;
@@ -439,11 +440,11 @@ function doDeleteItem(): void {
     try { unlinkSync(_pendingPath); } catch (_e: any) {}
   } else if (__platform__ === 3) {
     try {
-      spawnSync('cmd', ['/c', 'rmdir', '/S', '/Q', _pendingPath]);
+      spawnText('cmd', ['/c', 'rmdir', '/S', '/Q', _pendingPath]);
     } catch (_e: any) {}
   } else {
     try {
-      spawnSync('rm', ['-rf', _pendingPath]);
+      spawnText('rm', ['-rf', _pendingPath]);
     } catch (_e: any) {}
   }
   _refreshSidebar();

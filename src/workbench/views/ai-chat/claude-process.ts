@@ -8,7 +8,7 @@
  * All state is module-level (Perry closures capture by value).
  */
 
-import { spawnBackground, spawnSync } from 'child_process';
+import { spawnText, spawnBackground } from '../../../process-compat';
 
 // Platform constant — 0=macOS, 1=iOS, 3=Windows, 4=Linux, 5=web.
 declare const __platform__: number;
@@ -45,7 +45,7 @@ export function findClaudeBinary(): string {
   // Windows `where`. Both print the first hit on stdout.
   try {
     const lookup = __platform__ === 3 ? 'where' : 'which';
-    const r = spawnSync(lookup, ['claude']);
+    const r = spawnText(lookup, ['claude']);
     if (r.status === 0 && r.stdout.length > 0) {
       let path = '';
       for (let i = 0; i < r.stdout.length; i++) {
@@ -108,16 +108,16 @@ export function checkClaudeAuth(): number {
   // the Rust process API nor Node can execute a .cmd/.bat directly — it
   // must go through `cmd.exe /c` with the (usually space-containing) path
   // quoted, exactly like the session-spawn path below. The prior direct
-  // `spawnSync(bin, ...)` always failed on a normal Windows install, so
+  // `spawnText(bin, ...)` always failed on a normal Windows install, so
   // Hone reported "Claude Code not authenticated" even when it was, which
   // silently disabled the entire AI chat feature on Windows.
   try {
     if (__platform__ === 3) {
-      const rw = spawnSync('cmd.exe', ['/c', shellEscape(bin) + ' auth status']);
+      const rw = spawnText('cmd.exe', ['/c', shellEscape(bin) + ' auth status']);
       if (rw.status === 0) return 1;
       return 0;
     }
-    const r = spawnSync(bin, ['auth', 'status']);
+    const r = spawnText(bin, ['auth', 'status']);
     if (r.status === 0) return 1;
     return 0;
   } catch (e) {
@@ -317,9 +317,9 @@ export function stopClaudeSession(): void {
     try {
       const pidStr = String(claudePid);
       if (__platform__ === 3) {
-        spawnSync('taskkill', ['/F', '/PID', pidStr]);
+        spawnText('taskkill', ['/F', '/PID', pidStr]);
       } else {
-        spawnSync('kill', [pidStr]);
+        spawnText('kill', [pidStr]);
       }
     } catch (e) {}
   }

@@ -2,8 +2,9 @@
  * Perry-native tool implementations for the AI agent.
  * All tools validate paths against workspace root.
  */
-import { readFileSync, writeFileSync, readdirSync, isDirectory, existsSync } from 'fs';
-import { spawnSync } from 'child_process';
+import { readFileSync, writeFileSync, readdirSync, existsSync } from 'fs';
+import { spawnText } from '../../../process-compat';
+import { isDirectory } from '../../../fs-compat';
 import { jsonEscape } from './sse-parser';
 import { getTempDir, canRunShellCommands } from '../../paths';
 
@@ -257,7 +258,7 @@ function executeToolSearch(query: string, searchRoot: string): string {
 function executeToolGitStatus(): string {
   if (toolWorkspaceRoot.length < 1) return 'Error: No workspace root';
   try {
-    const r = spawnSync('git', ['-C', toolWorkspaceRoot, 'status', '--short']);
+    const r = spawnText('git', ['-C', toolWorkspaceRoot, 'status', '--short']);
     if (r.status !== 0) return 'Error: git status failed';
     if (r.stdout.length > 4000) return r.stdout.slice(0, 4000);
     return r.stdout;
@@ -279,7 +280,7 @@ function executeToolGitDiff(staged: number, filePath: string): string {
       args.push('--');
       args.push(filePath);
     }
-    const r = spawnSync('git', args);
+    const r = spawnText('git', args);
     if (r.status !== 0) return 'Error: git diff failed';
     if (r.stdout.length > 8000) return r.stdout.slice(0, 8000) + '\n... (truncated)';
     return r.stdout;

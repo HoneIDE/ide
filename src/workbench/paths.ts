@@ -9,7 +9,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { execSync } from 'child_process';
+import { execText } from '../process-compat';
 
 declare const __platform__: number;
 
@@ -91,7 +91,7 @@ export function getHomeDir(): string {
       if (envHome && envHome.length > 0) { _homeDir = envHome; return _homeDir; }
     } catch (_e: any) {}
     try {
-      const result = execSync('/bin/echo $HOME') as unknown as string;
+      const result = execText('/bin/echo $HOME') as unknown as string;
       const dir = trimNewline(result);
       if (dir.length > 0) { _homeDir = dir; return _homeDir; }
     } catch (e: any) {}
@@ -105,7 +105,7 @@ export function getHomeDir(): string {
       if (envUP && envUP.length > 0) { _homeDir = envUP; return _homeDir; }
     } catch (_e: any) {}
     try {
-      const result = execSync('echo %USERPROFILE%') as unknown as string;
+      const result = execText('echo %USERPROFILE%') as unknown as string;
       const dir = trimNewline(result);
       if (dir.length > 0) { _homeDir = dir; return _homeDir; }
     } catch (e: any) {}
@@ -267,13 +267,13 @@ export function getCwd(): string {
   // that prints the working directory when called with no args).
   if (__platform__ === 3) {
     try {
-      const result = execSync('cd') as unknown as string;
+      const result = execText('cd') as unknown as string;
       const dir = trimNewline(result);
       if (dir.length > 0) return dir;
     } catch (e: any) {}
   } else {
     try {
-      const result = execSync('pwd') as unknown as string;
+      const result = execText('pwd') as unknown as string;
       const dir = trimNewline(result);
       if (dir.length > 0) return dir;
     } catch (e: any) {}

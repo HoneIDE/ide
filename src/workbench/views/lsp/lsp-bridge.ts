@@ -10,7 +10,7 @@
 
 import { LSP_BRIDGE_LIVE } from '@honeide/lsp-bridge/perry/live';
 import { readFileSync, existsSync, unlinkSync } from 'fs';
-import { spawnBackground, spawnSync } from 'child_process';
+import { spawnText, spawnBackground } from '../../../process-compat';
 import { spawn } from 'perry/thread';
 
 // Platform constant — 0=macOS, 1=iOS, 3=Windows, 4=Linux, 5=web.
@@ -23,7 +23,7 @@ declare const __platform__: number;
 function findExecutableOnPath(name: string): string {
   try {
     if (__platform__ === 3) {
-      const r = spawnSync('where', [name]);
+      const r = spawnText('where', [name]);
       if (r.status === 0 && r.stdout.length > 0) {
         // First non-empty line is the canonical hit.
         for (let i = 0; i < r.stdout.length; i++) {
@@ -34,7 +34,7 @@ function findExecutableOnPath(name: string): string {
         return r.stdout;
       }
     } else {
-      const r = spawnSync('which', [name]);
+      const r = spawnText('which', [name]);
       if (r.status === 0 && r.stdout.length > 0) {
         let end = r.stdout.length;
         while (end > 0 && (r.stdout.charCodeAt(end - 1) === 10 || r.stdout.charCodeAt(end - 1) === 13)) end--;

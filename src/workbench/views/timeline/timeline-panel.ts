@@ -18,7 +18,7 @@ import {
   widgetAddChild, widgetClearChildren,
 } from 'perry/ui';
 import { t } from 'perry/i18n';
-import { spawnSync } from 'child_process';
+import { spawnText } from '../../../process-compat';
 import { clipboardWrite } from 'perry/ui';
 import { setFg, setBtnFg, getFileName, monoFont } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
@@ -172,7 +172,7 @@ function readGitFileLog(filePath: string): string[] {
   }
   let out = '';
   try {
-    const r = spawnSync('git', [
+    const r = spawnText('git', [
       '-C', _workspaceRoot,
       'log', '--follow', '-n', '50',
       '--format=%h|%an|%ar|%s',

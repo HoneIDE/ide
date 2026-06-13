@@ -18,7 +18,7 @@ import {
 } from 'perry/ui';
 import { setFg, setBtnFg, setBg } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
-import { spawnSync } from 'child_process';
+import { spawnText } from '../../../process-compat';
 
 // Marketplace plugin listing (inline type — Perry can't import from marketplace package)
 interface MarketplaceListing {
@@ -207,7 +207,7 @@ function marketplaceFetch(urlPath: string): string {
   let fullUrl = apiBase;
   fullUrl += urlPath;
   try {
-    const r = spawnSync('curl', ['-s', '--connect-timeout', '3', '--max-time', '5', fullUrl]);
+    const r = spawnText('curl', ['-s', '--connect-timeout', '3', '--max-time', '5', fullUrl]);
     if (r.status === 0 && r.stdout !== undefined && r.stdout !== null) {
       return String(r.stdout);
     }

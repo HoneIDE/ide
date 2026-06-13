@@ -16,7 +16,7 @@ import {
   widgetSetBackgroundColor,
 } from 'perry/ui';
 import { t } from 'perry/i18n';
-import { execSync } from 'child_process';
+import { execText } from '../../../process-compat';
 import { existsSync } from 'fs';
 import { spawn } from 'perry/thread';
 import { setFg, setBtnFg, setBtnTint, monoFont, setIconButton } from '../../ui-helpers';
@@ -644,7 +644,7 @@ function debugStart(): void {
     }
 
     try {
-      stdout = execSync(fullCmd) as unknown as string;
+      stdout = execText(fullCmd) as unknown as string;
       exitCode = 0;
     } catch (e: any) {
       // On non-zero exit, execSync throws. Try to get output from error.
@@ -982,7 +982,7 @@ export function renderDebugPanel(container: unknown, colors: ResolvedUIColors): 
   // (breakpoints, step over/in/out, variables, call stack live) is wired
   // through `hone-core/src/protocols/dap/` in code but the IDE doesn't yet
   // spawn an adapter or transport DAP messages. The buttons act on a local
-  // `execSync(buildRunCommand(...))` flow that runs the file without a
+  // `execText(buildRunCommand(...))` flow that runs the file without a
   // debugger attached. The "DAP wiring" item lands in v1.1; renaming the
   // panel header keeps the v1.0 framing honest.
   const title = Text(t('RUN'));

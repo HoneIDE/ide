@@ -10,7 +10,7 @@ import {
   buttonSetBordered,
   widgetAddChild, widgetClearChildren,
 } from 'perry/ui';
-import { spawnSync } from 'child_process';
+import { spawnText } from '../../../process-compat';
 import { spawn } from 'perry/thread';
 import { setFg, setBtnFg, monoFont } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
@@ -52,7 +52,7 @@ export function refreshGitLog(): void {
     try {
       // SHIP-V1-GAPS.md #103: %P = parent hashes (space-separated, 2+ = merge),
       // %D = ref decorations (HEAD -> main, tag: v1.0, origin/main).
-      const r = spawnSync('git', ['-C', wsRoot, 'log', '--decorate=short', '--format=%h|%P|%an|%ar|%D|%s', '-50']);
+      const r = spawnText('git', ['-C', wsRoot, 'log', '--decorate=short', '--format=%h|%P|%an|%ar|%D|%s', '-50']);
       if (r.status === 0) output = r.stdout;
     } catch (e) {
       return { hashes: [] as string[], authors: [] as string[], dates: [] as string[], messages: [] as string[], decorations: [] as string[], parents: [] as string[], count: 0 };

@@ -13,8 +13,8 @@
       "abiVersion": "0.5",
       "module": "@honeide/lsp-bridge",
       "functions": [
-        { "name": "hone_lsp_start", "params": ["i64", "i64", "i64"], "returns": "f64" },
-        { "name": "hone_lsp_send", "params": ["f64", "i64"], "returns": "f64" },
+        { "name": "hone_lsp_start", "params": ["string", "string", "string"], "returns": "f64" },
+        { "name": "hone_lsp_send", "params": ["f64", "string"], "returns": "f64" },
         { "name": "hone_lsp_poll", "params": ["f64"], "returns": "i64" },
         { "name": "hone_lsp_is_alive", "params": ["f64"], "returns": "f64" },
         { "name": "hone_lsp_stop", "params": ["f64"], "returns": "f64" }

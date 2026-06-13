@@ -14,8 +14,9 @@ import {
   textfieldSetString, textfieldFocus, textfieldSetBorderless, textfieldSetBackgroundColor, textfieldSetFontSize, textfieldSetOnSubmit,
 } from 'perry/ui';
 import { t } from 'perry/i18n';
-import { readFileSync, readdirSync, isDirectory, writeFileSync } from 'fs';
-import { spawnSync } from 'child_process';
+import { readFileSync, readdirSync, writeFileSync } from 'fs';
+import { spawnText } from '../../../process-compat';
+import { isDirectory } from '../../../fs-compat';
 import { spawn, parallelMap } from 'perry/thread';
 import { join } from 'path';
 import { hexToRGBA, setBg, setFg, setBtnFg, pathId, getFileName, toLowerCode, isTextFile, monoFont } from '../../ui-helpers';
@@ -443,7 +444,7 @@ function tryRipgrepSearch(): number {
 
   let output = '';
   try {
-    const r = spawnSync('rg', args);
+    const r = spawnText('rg', args);
     if (r.status === 0 || r.status === 1) {
       // rg exits 1 when no matches — still a successful invocation.
       output = r.stdout;

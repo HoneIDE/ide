@@ -53,10 +53,10 @@ import {
 } from './theme/theme-colors';
 import type { LayoutMode } from '../platform';
 import { getWorkbenchSettings, updateSettings, onSettingsChange, getSettingsVersion, getLastOpenTabs, getLastActiveTab, getLastPinnedTabs, applyWorkspaceOverlay, setNumberSetting } from './settings';
-import { readFileSync, writeFileSync, readdirSync, isDirectory, existsSync, unlinkSync } from 'fs';
+import { readFileSync, writeFileSync, readdirSync, existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
-import { spawnBackground } from 'child_process';
-import { execSync, spawnSync } from 'child_process';
+import { execText, spawnText, spawnBackground } from '../process-compat';
+import { isDirectory } from '../fs-compat';
 import { spawn } from 'perry/thread';
 import { getTempDir, getCwd, getHomeDir, getAppDataDir } from './paths';
 import { getPlatformContext, isWebPlatform } from '../platform';
@@ -151,7 +151,7 @@ import { initWorkspaceTrust, isWorkspaceTrusted, trustWorkspace, revokeWorkspace
 import { renderReferencesPeek, showReferencesFromJson, setReferencesJumpHandler } from './views/references-peek/references-peek';
 import { renderTasksPanel, runDefaultBuildTask, runTaskByLabel, setTasksWorkspaceRoot, setTasksAppDataDir, setOnTaskRunStart, setOnTaskRunDone } from './views/tasks/tasks-panel';
 import { initRecentItems, addRecentFile, addRecentFolder, getRecentPath, getRecentType } from './views/recent/recent-store';
-import { createFindBar, setFindEditorCallbacks, showFindBar, showFindBarWithReplace, hideFindBar, isFindBarVisible } from './views/find/find-bar';
+import { createFindBar, setFindEditorCallbacks, showFindBar, showFindBarWithReplace, hideFindBar, isFindBarVisible, getFindMatchCount, getFindCurrentMatch, getFindMatchLine, getFindMatchCol, getFindMatchLen } from './views/find/find-bar';
 import { setLspWorkspaceRoot, initLspBridge, triggerDiagnostics, getCompletions, setDiagnosticsStatusUpdater } from './views/lsp/lsp-bridge';
 import { setDiagnosticsFileOpener } from './views/lsp/diagnostics-panel';
 import { createAutocompletePopup, setAutocompleteAcceptHandler } from './views/lsp/autocomplete-popup';
@@ -489,7 +489,7 @@ function toggleSidebarLocation(): void {
 function copyBranchNameToClipboard(): void {
   if (workspaceRoot.length === 0) return;
   try {
-    const r = spawnSync('git', ['-C', workspaceRoot, 'rev-parse', '--abbrev-ref', 'HEAD']);
+    const r = spawnText('git', ['-C', workspaceRoot, 'rev-parse', '--abbrev-ref', 'HEAD']);
     if (r.status !== 0) return;
     let s = r.stdout;
     let end = s.length;
@@ -1839,7 +1839,7 @@ function promptCloseDirtyTabMacos(filePath: string): number {
   script += '  return "2"\n';
   script += 'end try\n';
   try {
-    const r = spawnSync('osascript', ['-e', script]);
+    const r = spawnText('osascript', ['-e', script]);
     if (r.status !== 0) return 2;
     const out = r.stdout.length > 0 ? r.stdout.charAt(0) : '';
     if (out === '0') return 0;
@@ -1859,7 +1859,7 @@ function promptCloseDirtyTabWindows(filePath: string): number {
   ps += '\'Save changes to ' + name + '?\',\'Hone\',\'YesNoCancel\',\'Question\');';
   ps += 'if ($r -eq \'Yes\') { [Console]::Out.Write(\'0\') } elseif ($r -eq \'No\') { [Console]::Out.Write(\'1\') } else { [Console]::Out.Write(\'2\') }';
   try {
-    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+    const r = spawnText('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
     if (r.status !== 0) return 2;
     const out = r.stdout.length > 0 ? r.stdout.charAt(0) : '';
     if (out === '0') return 0;
@@ -2055,7 +2055,7 @@ function promptForRenameMacos(): string {
   script += '  return ""\n';
   script += 'end try\n';
   try {
-    const r = spawnSync('osascript', ['-e', script]);
+    const r = spawnText('osascript', ['-e', script]);
     if (r.status !== 0) return '';
     let out = r.stdout;
     let end = out.length;
@@ -2074,7 +2074,7 @@ function promptForRenameWindows(): string {
   ps = '[void][System.Reflection.Assembly]::LoadWithPartialName(\'Microsoft.VisualBasic\');' + ps;
   ps += '[Console]::Out.Write($r)';
   try {
-    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+    const r = spawnText('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
     if (r.status !== 0) return '';
     let out = r.stdout;
     let end = out.length;
@@ -2421,12 +2421,12 @@ function onGenerateCommitMessageImpl(): void {
   // Prefer staged diff; fall back to working tree if nothing is staged.
   let diff = '';
   try {
-    const r = spawnSync('git', ['-C', workspaceRoot, 'diff', '--cached', '--no-color', '--stat=80,80']);
+    const r = spawnText('git', ['-C', workspaceRoot, 'diff', '--cached', '--no-color', '--stat=80,80']);
     if (r.status === 0) diff = r.stdout;
   } catch (_e: any) {}
   if (diff.length < 5) {
     try {
-      const r = spawnSync('git', ['-C', workspaceRoot, 'diff', '--no-color', '--stat=80,80']);
+      const r = spawnText('git', ['-C', workspaceRoot, 'diff', '--no-color', '--stat=80,80']);
       if (r.status === 0) diff = r.stdout;
     } catch (_e: any) {}
   }
@@ -2437,12 +2437,12 @@ function onGenerateCommitMessageImpl(): void {
   // Include the patch body too, capped at ~6KB so we don't blow the context.
   let body = '';
   try {
-    const r = spawnSync('git', ['-C', workspaceRoot, 'diff', '--cached', '--no-color', '-U2']);
+    const r = spawnText('git', ['-C', workspaceRoot, 'diff', '--cached', '--no-color', '-U2']);
     if (r.status === 0) body = r.stdout;
   } catch (_e: any) {}
   if (body.length < 5) {
     try {
-      const r = spawnSync('git', ['-C', workspaceRoot, 'diff', '--no-color', '-U2']);
+      const r = spawnText('git', ['-C', workspaceRoot, 'diff', '--no-color', '-U2']);
       if (r.status === 0) body = r.stdout;
     } catch (_e: any) {}
   }
@@ -2478,18 +2478,18 @@ function onGeneratePRDescriptionImpl(): void {
   // Resolve the base ref.
   let baseRef = '';
   try {
-    const r = spawnSync('git', ['-C', workspaceRoot, 'rev-parse', '--verify', 'main']);
+    const r = spawnText('git', ['-C', workspaceRoot, 'rev-parse', '--verify', 'main']);
     if (r.status === 0) baseRef = 'main';
   } catch (_e: any) {}
   if (baseRef.length === 0) {
     try {
-      const r = spawnSync('git', ['-C', workspaceRoot, 'rev-parse', '--verify', 'master']);
+      const r = spawnText('git', ['-C', workspaceRoot, 'rev-parse', '--verify', 'master']);
       if (r.status === 0) baseRef = 'master';
     } catch (_e: any) {}
   }
   if (baseRef.length === 0) {
     try {
-      const r = spawnSync('git', ['-C', workspaceRoot, 'rev-parse', '--abbrev-ref', 'origin/HEAD']);
+      const r = spawnText('git', ['-C', workspaceRoot, 'rev-parse', '--abbrev-ref', 'origin/HEAD']);
       if (r.status === 0) {
         // Output is e.g. "origin/main\n" — slice off the "origin/" prefix.
         let s = r.stdout;
@@ -2508,7 +2508,7 @@ function onGeneratePRDescriptionImpl(): void {
   // Current branch — used in the prompt header.
   let branch = '';
   try {
-    const r = spawnSync('git', ['-C', workspaceRoot, 'rev-parse', '--abbrev-ref', 'HEAD']);
+    const r = spawnText('git', ['-C', workspaceRoot, 'rev-parse', '--abbrev-ref', 'HEAD']);
     if (r.status === 0) {
       branch = r.stdout;
       let end = branch.length;
@@ -2533,7 +2533,7 @@ function onGeneratePRDescriptionImpl(): void {
 
   let log = '';
   try {
-    const r = spawnSync('git', ['-C', workspaceRoot, 'log', '--no-color', '--pretty=%h %s', range]);
+    const r = spawnText('git', ['-C', workspaceRoot, 'log', '--no-color', '--pretty=%h %s', range]);
     if (r.status === 0) log = r.stdout;
   } catch (_e: any) {}
   if (log.length < 1) {
@@ -2543,13 +2543,13 @@ function onGeneratePRDescriptionImpl(): void {
 
   let stat = '';
   try {
-    const r = spawnSync('git', ['-C', workspaceRoot, 'diff', '--no-color', '--stat=80,80', range]);
+    const r = spawnText('git', ['-C', workspaceRoot, 'diff', '--no-color', '--stat=80,80', range]);
     if (r.status === 0) stat = r.stdout;
   } catch (_e: any) {}
 
   let body = '';
   try {
-    const r = spawnSync('git', ['-C', workspaceRoot, 'diff', '--no-color', '-U2', range]);
+    const r = spawnText('git', ['-C', workspaceRoot, 'diff', '--no-color', '-U2', range]);
     if (r.status === 0) body = r.stdout;
   } catch (_e: any) {}
   if (body.length > 8000) body = body.slice(0, 8000) + '\n[…truncated]';
@@ -3089,11 +3089,13 @@ function displayFileContent(filePath: string): void {
   const t1 = Date.now();
   updateBreadcrumb();
   const t2 = Date.now();
+  const t3 = Date.now();
   updateStatusBarLanguageImpl(filePath);
   const t4 = Date.now();
   if (editorReady < 1) return;
   const lang = detectLanguage(filePath);
   editorInstance.setLanguage(lang);
+  const t5 = Date.now();
   const content = safeReadFile(filePath);
   // Strip a leading UTF-8 BOM (U+FEFF) before it reaches the editor. Windows
   // tools (Notepad, older Visual Studio, PowerShell `Out-File`/`>` default)
@@ -3909,7 +3911,7 @@ function syncInlineBlame(): void {
     const range = String(lineNum) + ',' + String(lineNum);
     let output = '';
     try {
-      const r = spawnSync('git', ['blame', '-L', range, '--porcelain', '--', filePath]);
+      const r = spawnText('git', ['blame', '-L', range, '--porcelain', '--', filePath]);
       if (r.status === 0) output = r.stdout;
     } catch (e) {
       return '';
@@ -5740,7 +5742,7 @@ function onClaudeRelayRequestFromGuest(guestId: string, prompt: string, wsRoot: 
   let claudeBin = '';
   try {
     const cmd = __platform__ === 3 ? 'where' : 'which';
-    const r = spawnSync(cmd, ['claude']);
+    const r = spawnText(cmd, ['claude']);
     if (r.status === 0 && r.stdout.length > 0) {
       for (let i = 0; i < r.stdout.length; i++) {
         const ch = r.stdout.charCodeAt(i);
@@ -5768,9 +5770,9 @@ function onClaudeRelayRequestFromGuest(guestId: string, prompt: string, wsRoot: 
     try {
       const pidStr = String(claudeRelayPid);
       if (__platform__ === 3) {
-        spawnSync('taskkill', ['/F', '/PID', pidStr]);
+        spawnText('taskkill', ['/F', '/PID', pidStr]);
       } else {
-        spawnSync('kill', [pidStr]);
+        spawnText('kill', [pidStr]);
       }
     } catch (e) {}
   }
@@ -5909,11 +5911,11 @@ function claudeRelayPollTick(): void {
       try {
         const pidStr = String(claudeRelayPid);
         if (__platform__ === 3) {
-          const r = spawnSync('tasklist', ['/FI', 'PID eq ' + pidStr, '/NH']);
+          const r = spawnText('tasklist', ['/FI', 'PID eq ' + pidStr, '/NH']);
           if (r.status !== 0) gone = 1;
           else if (r.stdout.length >= 5 && r.stdout.charCodeAt(0) === 73 && r.stdout.charCodeAt(1) === 78) gone = 1;
         } else {
-          const r = spawnSync('kill', ['-0', pidStr]);
+          const r = spawnText('kill', ['-0', pidStr]);
           if (r.status !== 0) gone = 1;
         }
       } catch (e) {
@@ -6148,9 +6150,9 @@ function onClaudeRelayStopFromGuest(guestId: string, sessionId: string): void {
     try {
       const pidStr = String(claudeRelayPid);
       if (__platform__ === 3) {
-        spawnSync('taskkill', ['/F', '/PID', pidStr]);
+        spawnText('taskkill', ['/F', '/PID', pidStr]);
       } else {
-        spawnSync('kill', [pidStr]);
+        spawnText('kill', [pidStr]);
       }
     } catch (e) {}
     claudeRelayPid = 0;

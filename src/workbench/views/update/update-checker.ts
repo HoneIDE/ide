@@ -11,9 +11,8 @@
 
 import { streamStart, streamPoll, streamStatus, streamClose } from 'node-fetch';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { execSync } from 'child_process';
+import { execText, spawnBackground } from '../../../process-compat';
 import { spawn } from 'perry/thread';
-import { spawnBackground } from 'child_process';
 import { HONE_VERSION } from '../../version';
 import { getAppDataDir } from '../../paths';
 
@@ -73,7 +72,7 @@ function getPlatformKey(): string {
   // Get architecture via uname -m (macOS / Linux)
   if (_archStr.length === 0) {
     try {
-      const raw = execSync('uname -m') as unknown as string;
+      const raw = execText('uname -m') as unknown as string;
       // Trim newline
       let arch = '';
       for (let i = 0; i < raw.length; i++) {
@@ -443,7 +442,7 @@ function getBinaryPath(): string {
   try {
     if (__platform__ === 0) {
       // macOS: use ps to get the executable path
-      const raw = execSync('ps -o comm= -p $$') as unknown as string;
+      const raw = execText('ps -o comm= -p $$') as unknown as string;
       let path = '';
       for (let i = 0; i < raw.length; i++) {
         const ch = raw.charCodeAt(i);
@@ -454,7 +453,7 @@ function getBinaryPath(): string {
     }
     if (__platform__ === 4) {
       // Linux: readlink /proc/self/exe
-      const raw = execSync('readlink /proc/self/exe') as unknown as string;
+      const raw = execText('readlink /proc/self/exe') as unknown as string;
       let path = '';
       for (let i = 0; i < raw.length; i++) {
         const ch = raw.charCodeAt(i);
@@ -605,7 +604,7 @@ function performUpdateMacOS(): void {
   script += '" && rm /tmp/hone-update.tar.gz';
 
   try {
-    execSync(script);
+    execText(script);
   } catch (e: any) {
     // Rollback
     try {
@@ -614,7 +613,7 @@ function performUpdateMacOS(): void {
       rollback += '.bak" "';
       rollback += appPath;
       rollback += '"';
-      execSync(rollback);
+      execText(rollback);
     } catch (e2: any) {}
     _updateState = 5;
     _errorMessage = 'Download or verification failed';
@@ -633,7 +632,7 @@ function performUpdateMacOS(): void {
     let rmCmd = 'rm -rf "';
     rmCmd += appPath;
     rmCmd += '.bak"';
-    execSync(rmCmd);
+    execText(rmCmd);
   } catch (e: any) {}
 }
 
@@ -661,7 +660,7 @@ function performUpdateLinux(): void {
   script += '" && rm /tmp/hone-update.tar.gz';
 
   try {
-    execSync(script);
+    execText(script);
   } catch (e: any) {
     // Rollback
     try {
@@ -670,7 +669,7 @@ function performUpdateLinux(): void {
       rollback += '.bak" "';
       rollback += binPath;
       rollback += '"';
-      execSync(rollback);
+      execText(rollback);
     } catch (e2: any) {}
     _updateState = 5;
     _errorMessage = 'Download or verification failed';
@@ -684,7 +683,7 @@ function performUpdateLinux(): void {
     let rmCmd = 'rm -f "';
     rmCmd += binPath;
     rmCmd += '.bak"';
-    execSync(rmCmd);
+    execText(rmCmd);
   } catch (e: any) {}
 }
 
@@ -751,7 +750,7 @@ function performUpdateWindows(): void {
   ps += "'\"";
 
   try {
-    execSync(ps);
+    execText(ps);
   } catch (e: any) {
     // Rollback
     try {
@@ -760,7 +759,7 @@ function performUpdateWindows(): void {
       rollback += ".bak' '";
       rollback += exePath;
       rollback += "'\"";
-      execSync(rollback);
+      execText(rollback);
     } catch (e2: any) {}
     _updateState = 5;
     _errorMessage = 'Download or verification failed';

@@ -14,7 +14,7 @@ import {
   textfieldSetString,
 } from 'perry/ui';
 import { t } from 'perry/i18n';
-import { spawnSync } from 'child_process';
+import { spawnText } from '../../../process-compat';
 import { spawn } from 'perry/thread';
 import { join } from 'path';
 import { readFileSync } from 'fs';
@@ -249,7 +249,7 @@ function gitRun(args: string[]): string {
   if (gitWorkspaceRoot.length < 1) return '';
   let result = '';
   try {
-    const r = spawnSync('git', args);
+    const r = spawnText('git', args);
     if (r.status === 0) result = r.stdout;
   } catch (e) {
     return '';
@@ -477,7 +477,7 @@ export function refreshGitStateAsync(): void {
 
     let check = '';
     try {
-      const r = spawnSync('git', ['-C', wsRoot, 'rev-parse', '--is-inside-work-tree']);
+      const r = spawnText('git', ['-C', wsRoot, 'rev-parse', '--is-inside-work-tree']);
       if (r.status === 0) check = r.stdout;
     } catch (e) { check = ''; }
     if (check.length < 1) {
@@ -487,7 +487,7 @@ export function refreshGitStateAsync(): void {
 
     let branchOut = '';
     try {
-      const r = spawnSync('git', ['-C', wsRoot, 'rev-parse', '--abbrev-ref', 'HEAD']);
+      const r = spawnText('git', ['-C', wsRoot, 'rev-parse', '--abbrev-ref', 'HEAD']);
       if (r.status === 0) branchOut = r.stdout;
     } catch (e) { branchOut = ''; }
     for (let i = 0; i < branchOut.length; i++) {
@@ -498,7 +498,7 @@ export function refreshGitStateAsync(): void {
 
     let statusOut = '';
     try {
-      const r = spawnSync('git', ['-C', wsRoot, 'status', '--porcelain=v2', '--ignored']);
+      const r = spawnText('git', ['-C', wsRoot, 'status', '--porcelain=v2', '--ignored']);
       if (r.status === 0) statusOut = r.stdout;
     } catch (e) { statusOut = ''; }
 
@@ -669,7 +669,7 @@ function gitStageFile(filePath: string): void {
   const wsRoot = gitWorkspaceRoot;
   const fp = filePath;
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'add', '--', fp]); } catch (e) {}
+    try { spawnText('git', ['-C', wsRoot, 'add', '--', fp]); } catch (e) {}
     return 0;
   }).then((_) => { onGitActionComplete(); });
 }
@@ -678,7 +678,7 @@ function gitUnstageFile(filePath: string): void {
   const wsRoot = gitWorkspaceRoot;
   const fp = filePath;
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'restore', '--staged', '--', fp]); } catch (e) {}
+    try { spawnText('git', ['-C', wsRoot, 'restore', '--staged', '--', fp]); } catch (e) {}
     return 0;
   }).then((_) => { onGitActionComplete(); });
 }
@@ -687,7 +687,7 @@ function gitDiscardFile(filePath: string): void {
   const wsRoot = gitWorkspaceRoot;
   const fp = filePath;
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'checkout', '--', fp]); } catch (e) {}
+    try { spawnText('git', ['-C', wsRoot, 'checkout', '--', fp]); } catch (e) {}
     return 0;
   }).then((_) => { onGitActionComplete(); });
 }
@@ -727,7 +727,7 @@ function gitCommit(): void {
     args.push('--no-edit');
   }
   spawn(() => {
-    try { spawnSync('git', args); } catch (e) {}
+    try { spawnText('git', args); } catch (e) {}
     return 0;
   }).then((_) => { onGitCommitComplete(); });
 }
@@ -766,7 +766,7 @@ function gitPush(): void {
   const wsRoot = gitWorkspaceRoot;
   gitSpinnerBegin(t('Pushing…'));
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'push']); } catch (e) {}
+    try { spawnText('git', ['-C', wsRoot, 'push']); } catch (e) {}
     return 0;
   }).then((_) => { gitSpinnerEnd(); onGitActionComplete(); });
 }
@@ -775,7 +775,7 @@ function gitPull(): void {
   const wsRoot = gitWorkspaceRoot;
   gitSpinnerBegin(t('Pulling…'));
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'pull']); } catch (e) {}
+    try { spawnText('git', ['-C', wsRoot, 'pull']); } catch (e) {}
     return 0;
   }).then((_) => { gitSpinnerEnd(); onGitActionComplete(); });
 }
@@ -784,7 +784,7 @@ function gitFetch(): void {
   const wsRoot = gitWorkspaceRoot;
   gitSpinnerBegin(t('Fetching…'));
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'fetch']); } catch (e) {}
+    try { spawnText('git', ['-C', wsRoot, 'fetch']); } catch (e) {}
     return 0;
   }).then((_) => { gitSpinnerEnd(); updateStatusBarBranch(); });
 }
@@ -792,7 +792,7 @@ function gitFetch(): void {
 function gitStash(): void {
   const wsRoot = gitWorkspaceRoot;
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'stash']); } catch (e) {}
+    try { spawnText('git', ['-C', wsRoot, 'stash']); } catch (e) {}
     return 0;
   }).then((_) => { onGitActionComplete(); });
 }
@@ -800,7 +800,7 @@ function gitStash(): void {
 function gitStashPop(): void {
   const wsRoot = gitWorkspaceRoot;
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'stash', 'pop']); } catch (e) {}
+    try { spawnText('git', ['-C', wsRoot, 'stash', 'pop']); } catch (e) {}
     return 0;
   }).then((_) => { onGitActionComplete(); });
 }
@@ -811,7 +811,7 @@ function listGitStashes(): string[] {
   if (gitWorkspaceRoot.length === 0) return [];
   let out = '';
   try {
-    const r = spawnSync('git', ['-C', gitWorkspaceRoot, 'stash', 'list']);
+    const r = spawnText('git', ['-C', gitWorkspaceRoot, 'stash', 'list']);
     if (r.status === 0) out = r.stdout;
   } catch (_e: any) {}
   if (out.length === 0) return [];
@@ -832,7 +832,7 @@ function gitStashApply(ref: string): void {
   const refName = ref;
   gitSpinnerBegin(t('Applying stash…'));
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'stash', 'apply', refName]); } catch (e) {}
+    try { spawnText('git', ['-C', wsRoot, 'stash', 'apply', refName]); } catch (e) {}
     return 0;
   }).then((_) => { gitSpinnerEnd(); onGitActionComplete(); });
 }
@@ -843,7 +843,7 @@ function gitStashDrop(ref: string): void {
   const refName = ref;
   gitSpinnerBegin(t('Dropping stash…'));
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'stash', 'drop', refName]); } catch (e) {}
+    try { spawnText('git', ['-C', wsRoot, 'stash', 'drop', refName]); } catch (e) {}
     return 0;
   }).then((_) => { gitSpinnerEnd(); rerenderStashesList(); });
 }
@@ -860,7 +860,7 @@ function listGitBranches(): string[] {
   if (gitWorkspaceRoot.length === 0) return [];
   let out = '';
   try {
-    const r = spawnSync('git', ['-C', gitWorkspaceRoot, 'for-each-ref', '--sort=-committerdate', '--count=50', '--format=%(HEAD) %(refname:short)', 'refs/heads']);
+    const r = spawnText('git', ['-C', gitWorkspaceRoot, 'for-each-ref', '--sort=-committerdate', '--count=50', '--format=%(HEAD) %(refname:short)', 'refs/heads']);
     if (r.status === 0) out = r.stdout;
   } catch (_e: any) {}
   if (out.length === 0) return [];
@@ -889,7 +889,7 @@ function gitCheckoutBranch(branchName: string): void {
   const wsRoot = gitWorkspaceRoot;
   const bName = b;
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'checkout', bName]); } catch (e) {}
+    try { spawnText('git', ['-C', wsRoot, 'checkout', bName]); } catch (e) {}
     return 0;
   }).then((_) => { onGitActionComplete(); });
 }
@@ -902,7 +902,7 @@ function gitBranchCreate(name: string): void {
   const bName = name;
   gitSpinnerBegin(t('Creating branch…'));
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'checkout', '-b', bName]); } catch (e) {}
+    try { spawnText('git', ['-C', wsRoot, 'checkout', '-b', bName]); } catch (e) {}
     return 0;
   }).then((_) => { gitSpinnerEnd(); onGitActionComplete(); rerenderBranchesList(); });
 }
@@ -915,7 +915,7 @@ function gitBranchDelete(name: string): void {
   const bName = name;
   gitSpinnerBegin(t('Deleting branch…'));
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'branch', '-d', bName]); } catch (e) {}
+    try { spawnText('git', ['-C', wsRoot, 'branch', '-d', bName]); } catch (e) {}
     return 0;
   }).then((_) => { gitSpinnerEnd(); onGitActionComplete(); rerenderBranchesList(); });
 }
@@ -932,7 +932,7 @@ function listGitTags(): string[] {
   if (gitWorkspaceRoot.length === 0) return [];
   let out = '';
   try {
-    const r = spawnSync('git', ['-C', gitWorkspaceRoot, 'for-each-ref', '--sort=-creatordate', '--count=20', '--format=%(refname:short)', 'refs/tags']);
+    const r = spawnText('git', ['-C', gitWorkspaceRoot, 'for-each-ref', '--sort=-creatordate', '--count=20', '--format=%(refname:short)', 'refs/tags']);
     if (r.status === 0) out = r.stdout;
   } catch (_e: any) {}
   if (out.length === 0) return [];
@@ -952,7 +952,7 @@ function gitCheckoutTag(tag: string): void {
   const wsRoot = gitWorkspaceRoot;
   const tagName = tag;
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'checkout', tagName]); } catch (e) {}
+    try { spawnText('git', ['-C', wsRoot, 'checkout', tagName]); } catch (e) {}
     return 0;
   }).then((_) => { onGitActionComplete(); });
 }
@@ -973,7 +973,7 @@ function gitInitRepo(): void {
   if (wsRoot.length === 0) return;
   gitSpinnerBegin(t('Initializing repository…'));
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'init']); } catch (e) {}
+    try { spawnText('git', ['-C', wsRoot, 'init']); } catch (e) {}
     return 0;
   }).then((_) => { gitSpinnerEnd(); onGitActionComplete(); });
 }
@@ -984,7 +984,7 @@ function gitTagCreate(name: string): void {
   const tagName = name;
   gitSpinnerBegin(t('Creating tag…'));
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'tag', tagName]); } catch (e) {}
+    try { spawnText('git', ['-C', wsRoot, 'tag', tagName]); } catch (e) {}
     return 0;
   }).then((_) => { gitSpinnerEnd(); rerenderTagsList(); });
 }
@@ -995,7 +995,7 @@ function gitTagDelete(name: string): void {
   const tagName = name;
   gitSpinnerBegin(t('Deleting tag…'));
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'tag', '-d', tagName]); } catch (e) {}
+    try { spawnText('git', ['-C', wsRoot, 'tag', '-d', tagName]); } catch (e) {}
     return 0;
   }).then((_) => { gitSpinnerEnd(); rerenderTagsList(); });
 }
@@ -1006,7 +1006,7 @@ function gitTagPush(name: string): void {
   const tagName = name;
   gitSpinnerBegin(t('Pushing tag…'));
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'push', 'origin', tagName]); } catch (e) {}
+    try { spawnText('git', ['-C', wsRoot, 'push', 'origin', tagName]); } catch (e) {}
     return 0;
   }).then((_) => { gitSpinnerEnd(); });
 }
@@ -1030,7 +1030,7 @@ function listGitGraph(): string[] {
   if (gitWorkspaceRoot.length === 0) return [];
   let out = '';
   try {
-    const r = spawnSync('git', [
+    const r = spawnText('git', [
       '-C', gitWorkspaceRoot,
       'log', '--graph', '--decorate=short',
       '--pretty=format:%h %s', '--all', '-n', '60', '--color=never',
@@ -1092,7 +1092,7 @@ function listGitSubmodulePaths(): string[] {
   if (gitWorkspaceRoot.length === 0) return [];
   let out = '';
   try {
-    const r = spawnSync('git', ['-C', gitWorkspaceRoot, 'submodule', 'status']);
+    const r = spawnText('git', ['-C', gitWorkspaceRoot, 'submodule', 'status']);
     if (r.status === 0) out = r.stdout;
   } catch (_e: any) {}
   if (out.length === 0) return [];
@@ -1128,7 +1128,7 @@ function gitSubmoduleUpdate(path: string): void {
   const wsRoot = gitWorkspaceRoot;
   const sub = path;
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'submodule', 'update', '--init', '--recursive', sub]); } catch (e) {}
+    try { spawnText('git', ['-C', wsRoot, 'submodule', 'update', '--init', '--recursive', sub]); } catch (e) {}
     return 0;
   }).then((_) => { onGitActionComplete(); });
 }
@@ -1136,7 +1136,7 @@ function gitSubmoduleUpdate(path: string): void {
 function gitSubmoduleUpdateAll(): void {
   const wsRoot = gitWorkspaceRoot;
   spawn(() => {
-    try { spawnSync('git', ['-C', wsRoot, 'submodule', 'update', '--init', '--recursive']); } catch (e) {}
+    try { spawnText('git', ['-C', wsRoot, 'submodule', 'update', '--init', '--recursive']); } catch (e) {}
     return 0;
   }).then((_) => { onGitActionComplete(); });
 }

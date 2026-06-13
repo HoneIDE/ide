@@ -14,7 +14,8 @@ import {
   widgetSetContextMenu,
 } from 'perry/ui';
 import { t } from 'perry/i18n';
-import { readdirSync, isDirectory } from 'fs';
+import { readdirSync } from 'fs';
+import { isDirectory } from '../../../fs-compat';
 import { join } from 'path';
 import { setBg, setFg, setBtnFg, setBtnTint, pathId, getFileName, getFileIcon, getFileIconColor, truncateName, setIconButton } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';

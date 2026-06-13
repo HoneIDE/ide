@@ -19,7 +19,7 @@ import {
 } from 'perry/ui';
 import { Editor } from '@honeide/editor/perry';
 import { readFileSync } from 'fs';
-import { spawnSync } from 'child_process';
+import { spawnText } from '../../../process-compat';
 import { spawn } from 'perry/thread';
 import { parseDiffOutput, countLines } from './diff-parser';
 import { setBg, setFg } from '../../ui-helpers';
@@ -145,7 +145,7 @@ export function openDiffForFile(filePath: string, relPath: string, wsRoot: strin
     // metacharacters; previous shell-string form was an injection vector.
     let oldContent = '';
     try {
-      const r = spawnSync('git', ['-C', ws, 'show', 'HEAD:' + rp]);
+      const r = spawnText('git', ['-C', ws, 'show', 'HEAD:' + rp]);
       if (r.status === 0) oldContent = r.stdout;
     } catch (e) { oldContent = ''; }
 
@@ -155,12 +155,12 @@ export function openDiffForFile(filePath: string, relPath: string, wsRoot: strin
     let diffText = '';
     if (stg > 0) {
       try {
-        const r = spawnSync('git', ['-C', ws, 'diff', '--cached', '--', rp]);
+        const r = spawnText('git', ['-C', ws, 'diff', '--cached', '--', rp]);
         if (r.status === 0) diffText = r.stdout;
       } catch (e) { diffText = ''; }
     } else {
       try {
-        const r = spawnSync('git', ['-C', ws, 'diff', '--', rp]);
+        const r = spawnText('git', ['-C', ws, 'diff', '--', rp]);
         if (r.status === 0) diffText = r.stdout;
       } catch (e) { diffText = ''; }
     }

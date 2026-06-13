@@ -19,7 +19,7 @@ import {
 import { t } from 'perry/i18n';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { spawnBackground } from 'child_process';
+import { spawnBackground } from '../../../process-compat';
 import { setFg, setBtnFg } from '../../ui-helpers';
 import { getTempDir } from '../../paths';
 import type { ResolvedUIColors } from '../../theme/theme-loader';

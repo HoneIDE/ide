@@ -8,7 +8,7 @@ import {
   buttonSetBordered,
   widgetAddChild, widgetSetBackgroundColor, widgetSetWidth,
 } from 'perry/ui';
-import { spawnSync } from 'child_process';
+import { spawnText } from '../../../process-compat';
 import { setFg, setBtnFg, monoFont } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
 import { getSideBarForeground, getSecondaryTextColor, isCurrentThemeDark } from '../../theme/theme-colors';
@@ -25,11 +25,11 @@ export function openExternalUrl(url: string): void {
     if (__platform__ === 3) {
       // Windows: `start` is a cmd builtin. First "" is the window title slot,
       // required so URLs starting with `"` parse correctly.
-      spawnSync('cmd', ['/c', 'start', '', url]);
+      spawnText('cmd', ['/c', 'start', '', url]);
     } else if (__platform__ === 0) {
-      spawnSync('open', [url]);
+      spawnText('open', [url]);
     } else {
-      spawnSync('xdg-open', [url]);
+      spawnText('xdg-open', [url]);
     }
   } catch (_e: any) {}
 }

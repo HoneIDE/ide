@@ -19,8 +19,9 @@ import {
   saveFileDialog,
 } from 'perry/ui';
 import { t } from 'perry/i18n';
-import { execSync, spawnSync } from 'child_process';
-import { readFileSync, writeFileSync, readdirSync, isDirectory } from 'fs';
+import { execText, spawnText } from '../../../process-compat';
+import { isDirectory } from '../../../fs-compat';
+import { readFileSync, writeFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { setFg, setBtnFg, setBg, monoFont } from '../../ui-helpers';
 import { telemetryTrackAiChat, telemetryTrackAiAgent } from '../../telemetry';
@@ -708,7 +709,7 @@ function loadProviderApiKey(providerIdx: number): string {
   } catch (e) {}
 
   // Fallback: try environment variables for common providers
-  // SHIP-V1-GAPS.md followup §5: was `execSync('echo $VAR')` which is POSIX-
+  // SHIP-V1-GAPS.md followup §5: was `execText('echo $VAR')` which is POSIX-
   // only. `process.env` works identically on every platform Perry targets,
   // and skips an entire shell roundtrip. canRunShellCommands gate kept so
   // we don't try this on iOS / web where env access may be restricted.
@@ -1938,7 +1939,7 @@ function promptSessionTitleMacos(currentTitle: string): string {
   script += '  return ""\n';
   script += 'end try\n';
   try {
-    const r = spawnSync('osascript', ['-e', script]);
+    const r = spawnText('osascript', ['-e', script]);
     if (r.status !== 0) return '';
     let out = r.stdout;
     let end = out.length;
@@ -1961,7 +1962,7 @@ function promptSessionTitleWindows(currentTitle: string): string {
   ps += '$r = [Microsoft.VisualBasic.Interaction]::InputBox(\'Rename chat:\',\'Hone\',\'' + escaped + '\');';
   ps += '[Console]::Out.Write($r)';
   try {
-    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+    const r = spawnText('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
     if (r.status !== 0) return '';
     let out = r.stdout;
     let end = out.length;
@@ -3289,7 +3290,7 @@ function claudePollTick(): void {
       try {
         const pidStr = String(claudeSpawnedPid);
         if (__platform__ === 3) {
-          const r = spawnSync('tasklist', ['/FI', 'PID eq ' + pidStr, '/NH']);
+          const r = spawnText('tasklist', ['/FI', 'PID eq ' + pidStr, '/NH']);
           if (r.status !== 0) {
             processGone = 1;
           } else if (r.stdout.length >= 5 && r.stdout.charCodeAt(0) === 73 && r.stdout.charCodeAt(1) === 78) {
@@ -3297,7 +3298,7 @@ function claudePollTick(): void {
             processGone = 1;
           }
         } else {
-          const r = spawnSync('kill', ['-0', pidStr]);
+          const r = spawnText('kill', ['-0', pidStr]);
           if (r.status !== 0) processGone = 1;
         }
       } catch (e) {
