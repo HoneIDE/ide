@@ -42,4 +42,23 @@ PROJECT_PLAN.md
 stderr*.log
 screenshot*.png
 .perry/
+.perry-cache/
 .claude/
+
+# Ad-hoc Perry compile outputs (app bundles, web/html, JS bundle, debug PE)
+*.app/
+*.html
+__perry_js_bundle.js
+hone-ide-debug
+
+# Bare-name one-off Perry compile outputs
+HoneIDE
+editor-component
+hone-ide-baseline
+hone-min
+paths
+render
+settings
+sidebar-render
+telemetry
+ui-helpers
