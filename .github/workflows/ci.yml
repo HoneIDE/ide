@@ -34,6 +34,22 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+      # @honeide/core|editor|terminal are `file:../hone-*` siblings that live in
+      # their own repos, so a lone checkout of this repo cannot resolve them and
+      # the typecheck fails with TS2307 on CI while passing on a dev machine.
+      # That mismatch is why the old noise filter listed `@honeide/.+/perry/live`
+      # as "expected" — it was papering over a broken CI environment, not a
+      # broken import. release.yml already clones these; do the same here.
+      - name: Clone dependencies
+        run: |
+          git clone --depth 1 "$HONE_CORE_REPO" ../hone-core
+          git clone --depth 1 "$HONE_EDITOR_REPO" ../hone-editor
+          git clone --depth 1 "$HONE_TERMINAL_REPO" ../hone-terminal
+          rm -rf ../hone-core/.git ../hone-editor/.git ../hone-terminal/.git
+        env:
+          HONE_CORE_REPO: ${{ secrets.HONE_CORE_REPO }}
+          HONE_EDITOR_REPO: ${{ secrets.HONE_EDITOR_REPO }}
+          HONE_TERMINAL_REPO: ${{ secrets.HONE_TERMINAL_REPO }}
       - run: bun install --no-save || true
       # The typecheck is clean and gates for real. The previous version of this
       # step piped tsc through a ~30-pattern "known noise" filter, but the pipe

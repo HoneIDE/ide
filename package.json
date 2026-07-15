@@ -16,6 +16,7 @@
   "dependencies": {
     "@honeide/core": "file:../hone-core",
     "@honeide/editor": "file:../hone-editor",
+    "@honeide/lsp-bridge": "file:./native/lsp",
     "@honeide/terminal": "file:../hone-terminal"
   },
   "devDependencies": {
