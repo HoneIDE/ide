@@ -77,7 +77,15 @@ declare module 'perry/ui' {
   // ScrollView mutations
   export function scrollViewSetChild(scrollView: unknown, child: unknown): void;
   /** Scroll to coordinates. */
-  export function scrollViewScrollTo(scrollView: unknown, x: number, y: number): void;
+  /** Scroll so `child` is visible. Perry's 8 platform runtimes all implement
+   *  perry_ui_scrollview_scroll_to(scroll_handle, child_handle) — this 2-arg
+   *  form is the real signature.
+   *
+   *  ⚠️ It does not currently work: Perry's dispatch table wrongly declares
+   *  [Widget, F64, F64], and an arity mismatch lowers to a silent no-op. There
+   *  is no (scrollView, x, y) variant to use instead — the runtime takes two
+   *  handles, so a numeric x would be read as a widget. Blocked upstream; see
+   *  scrollToBottom() in views/ai-chat/chat-panel.ts. */
   /** Scroll to make a widget visible. */
   export function scrollViewScrollTo(scrollView: unknown, widget: unknown): void;
 
@@ -105,7 +113,11 @@ declare module 'perry/ui' {
   // Dialogs
   export function openFolderDialog(callback: (path: string) => void): void;
   export function openFileDialog(callback: (path: string) => void): void;
-  export function saveFileDialog(callback: (path: string) => void, defaultName?: string, directory?: string): void;
+  /** All three args are REQUIRED — Perry's table declares [Closure, Str, Str].
+   *  They were marked optional here, but omitting one is an arity mismatch, and
+   *  Perry lowers those to a silent no-op rather than an error: the dialog would
+   *  simply never open. Pass '' rather than dropping an argument. */
+  export function saveFileDialog(callback: (path: string) => void, defaultName: string, directory: string): void;
   export function pollOpenFile(): string;
 
   // Menu

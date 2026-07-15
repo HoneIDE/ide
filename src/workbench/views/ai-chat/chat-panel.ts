@@ -618,6 +618,25 @@ function decodeContent(s: string): string {
 // Auto-scroll helper
 // ---------------------------------------------------------------------------
 
+// KNOWN BROKEN — blocked on an upstream Perry bug, do not "fix" by adding a
+// third argument.
+//
+// This call is correct: every one of Perry's 8 platform runtimes implements
+// perry_ui_scrollview_scroll_to(scroll_handle, child_handle) — scroll-to-child,
+// exactly what's written here. But Perry's dispatch table
+// (perry-dispatch/src/ui_table/part_a.rs:206) wrongly declares the signature as
+// [Widget, F64, F64], and codegen lowers a declared-arity mismatch to
+// side-effect-only evaluation — the runtime call is never emitted
+// (perry-codegen/src/lower_call/ui_tables.rs:433-440). So this silently does
+// nothing and the chat does not auto-scroll to new messages.
+//
+// Passing (scrollView, x, y) to satisfy the table would compile, but the runtime
+// takes 2 params — x would be reinterpreted as a child widget handle. Worse.
+// scrollViewSetOffset is not a workaround either: its table entry and the
+// platform runtimes disagree with each other (iOS takes 3 params, macOS 2).
+//
+// Fix belongs upstream: table -> args: &[Widget, Widget]. Then this line works
+// as written, with no change here.
 function scrollToBottom(): void {
   if (!chatScrollView) return;
   if (!lastAddedWidget) return;
