@@ -872,7 +872,7 @@ function updateCallStackUI(): void {
     const frameBtn = Button(label, () => { onStackFrameClick(frameFile, frameLine); });
     buttonSetBordered(frameBtn, 0);
     textSetFontSize(frameBtn, 11);
-    textSetFontFamily(frameBtn, 11, monoFont());
+    textSetFontFamily(frameBtn, monoFont());
     setBtnFg(frameBtn, getSideBarForeground());
     widgetAddChild(csContainer, frameBtn);
   }
@@ -901,7 +901,7 @@ function updateOutputUI(): void {
   for (let i = 0; i < displayCount; i = i + 1) {
     const lineText = Text(outputLines[i]);
     textSetFontSize(lineText, 11);
-    textSetFontFamily(lineText, 11, monoFont());
+    textSetFontFamily(lineText, monoFont());
 
     // Color error lines (exit status, error keywords) differently
     let isErrorLine = 0;

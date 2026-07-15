@@ -184,7 +184,7 @@ function refreshProblemsView(): void {
 
     const sevLabel = Text(severityChar);
     textSetFontSize(sevLabel, 11);
-    textSetFontFamily(sevLabel, 11, monoFont());
+    textSetFontFamily(sevLabel, monoFont());
     setFg(sevLabel, severityColor);
 
     const fname = getFileName(files[i]);

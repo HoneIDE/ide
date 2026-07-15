@@ -12,13 +12,31 @@
 // ---------------------------------------------------------------------------
 
 declare module 'fs' {
+  /** Node-shaped stat result. Perry populates the standard predicate methods
+   *  and *Ms timestamp fields (perry-runtime/src/fs/stats.rs). */
+  export interface Stats {
+    isFile(): boolean;
+    isDirectory(): boolean;
+    isSymbolicLink(): boolean;
+    size: number;
+    mtimeMs: number;
+    ctimeMs: number;
+    birthtimeMs: number;
+    mode: number;
+  }
+
   export function readFileSync(path: string, encoding?: string): string;
   export function writeFileSync(path: string, data: string, encoding?: string): void;
   export function readdirSync(path: string): string[];
   export function existsSync(path: string): boolean;
   export function mkdirSync(path: string, options?: { recursive?: boolean }): void;
   export function unlinkSync(path: string): void;
-  /** Perry extension — check if path is a directory. */
+  export function statSync(path: string, options?: object): Stats;
+  export function lstatSync(path: string, options?: object): Stats;
+  /** Open a file and return its fd. Used to redirect background-process output. */
+  export function openSync(path: string, flags: string): number;
+  /** Perry extension — check if path is a directory. Prefer `../fs-compat`'s
+   *  `isDirectory`, which shims this over statSync for the current toolchain. */
   export function isDirectory(path: string): boolean;
 }
 
@@ -54,10 +72,21 @@ declare module 'node:path' {
 }
 
 declare module 'child_process' {
+  /** Handle returned by `spawn`. Only the members hone actually uses are
+   *  declared — see `../process-compat`'s spawnBackground. */
+  export interface ChildProcess {
+    pid?: number;
+    unref(): void;
+  }
+
   export function execSync(command: string, options?: object): string;
   /** Argv-array spawn — no shell, args passed directly to the executable. Safe for untrusted inputs. */
   export function spawnSync(command: string, args: string[], options?: object): { stdout: string; stderr: string; status: number };
-  /** Perry extension — spawn a background process. */
+  /** Node-standard async spawn. Prefer `../process-compat`'s `spawnBackground`
+   *  wrapper for fire-and-forget launches. */
+  export function spawn(command: string, args: string[], options?: object): ChildProcess;
+  /** Perry extension — spawn a background process. Prefer `../process-compat`'s
+   *  `spawnBackground`, which reimplements this over standard `spawn`. */
   export function spawnBackground(command: string, args: string[], options?: string | object): { pid: number; handleId: number };
 }
 
@@ -120,6 +149,28 @@ declare module 'perry/thread' {
   /** Filter an array in parallel across all CPU cores. Returns a new array
    *  containing only elements where the predicate returned truthy. Order preserved. */
   export function parallelFilter<T>(data: T[], predicate: (item: T) => boolean): T[];
+}
+
+// ---------------------------------------------------------------------------
+// Perry i18n (compile-time localization)
+// ---------------------------------------------------------------------------
+
+declare module 'perry/i18n' {
+  /** Localize a string key. With no [i18n] config in perry.toml the key is
+   *  returned as-is. `{param}` placeholders are filled from `params`; a `count`
+   *  param selects the CLDR plural variant for the active locale. */
+  export function t(key: string, params?: { [key: string]: string | number }): string;
+
+  /** Locale-aware format wrappers. Each returns a display string for the
+   *  active locale (default `en`). Date/time wrappers take epoch milliseconds. */
+  export function Currency(value: number): string;
+  export function Percent(value: number): string;
+  export function FormatNumber(value: number): string;
+  export function ShortDate(epochMs: number): string;
+  export function LongDate(epochMs: number): string;
+  export function FormatTime(epochMs: number): string;
+  /** Bypass locale formatting — emit the value verbatim. */
+  export function Raw(value: number): string;
 }
 
 // ---------------------------------------------------------------------------

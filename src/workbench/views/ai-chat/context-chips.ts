@@ -184,7 +184,7 @@ export function renderChips(container: unknown, colors: ResolvedUIColors): void 
 
     const chipLabel = Text(label);
     textSetFontSize(chipLabel, 10);
-    textSetFontFamily(chipLabel, 10, monoFont());
+    textSetFontFamily(chipLabel, monoFont());
     setFg(chipLabel, getSideBarForeground());
 
     const removeFn = getRemoveFn(i);

@@ -471,7 +471,7 @@ export function handleClaudeRelayEvent(operation: string, data: string): void {
       }
       claudeCostLabel = Text(costLabel);
       textSetFontSize(claudeCostLabel, 10);
-      textSetFontFamily(claudeCostLabel, 10, monoFont());
+      textSetFontFamily(claudeCostLabel, monoFont());
       setFg(claudeCostLabel, getSideBarForeground());
       widgetAddChild(chatMessagesContainer, claudeCostLabel);
       lastAddedWidget = claudeCostLabel;
@@ -1439,7 +1439,7 @@ function onAgentToolStart(name: string, id: string): void {
   toolLabel += name;
   const toolText = Text(toolLabel);
   textSetFontSize(toolText, 11);
-  textSetFontFamily(toolText, 11, monoFont());
+  textSetFontFamily(toolText, monoFont());
   setFg(toolText, getSideBarForeground());
 
   toolDisplayContainer = VStackWithInsets(2, 4, 8, 4, 8);
@@ -1460,7 +1460,7 @@ function onAgentToolResult(name: string, result: string): void {
   }
   const resultText = Text(displayResult);
   textSetFontSize(resultText, 10);
-  textSetFontFamily(resultText, 10, monoFont());
+  textSetFontFamily(resultText, monoFont());
   textSetWraps(resultText, 300);
   setFg(resultText, getSideBarForeground());
   widgetAddChild(toolDisplayContainer, resultText);
@@ -1496,7 +1496,7 @@ function onAgentApprovalNeeded(name: string, args: string): void {
   if (argsPreview.length > 200) argsPreview = args.slice(0, 200) + '...';
   const argsText = Text(argsPreview);
   textSetFontSize(argsText, 10);
-  textSetFontFamily(argsText, 10, monoFont());
+  textSetFontFamily(argsText, monoFont());
   setFg(argsText, getSideBarForeground());
   widgetAddChild(approvalContainer, argsText);
 
@@ -1585,7 +1585,7 @@ function onClaudeToolActivity(name: string, status: string, inputDetail: string)
     }
     const toolText = Text(toolLabel);
     textSetFontSize(toolText, 11);
-    textSetFontFamily(toolText, 11, monoFont());
+    textSetFontFamily(toolText, monoFont());
     textSetWraps(toolText, 300);
     setFg(toolText, getSideBarForeground());
 
@@ -1600,7 +1600,7 @@ function onClaudeToolActivity(name: string, status: string, inputDetail: string)
     if (claudeToolContainer) {
       const doneText = Text('\u2713 ' + t('done'));
       textSetFontSize(doneText, 10);
-      textSetFontFamily(doneText, 10, monoFont());
+      textSetFontFamily(doneText, monoFont());
       setFg(doneText, getSideBarForeground());
       widgetAddChild(claudeToolContainer, doneText);
       claudeToolContainer = null;
@@ -1616,7 +1616,7 @@ function onClaudeToolResult(output: string, isError: number, filePath: string): 
   if (filePath.length > 0) {
     let fpLabel = Text(filePath);
     textSetFontSize(fpLabel, 10);
-    textSetFontFamily(fpLabel, 10, monoFont());
+    textSetFontFamily(fpLabel, monoFont());
     setFg(fpLabel, getSecondaryTextColor());
     widgetAddChild(claudeToolContainer, fpLabel);
   }
@@ -1634,7 +1634,7 @@ function onClaudeToolResult(output: string, isError: number, filePath: string): 
       if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(errContainer, 0.3, 0.12, 0.12, 1.0); } else { widgetSetBackgroundColor(errContainer, 1.0, 0.9, 0.9, 1.0); };
       let errLabel = Text(displayOutput);
       textSetFontSize(errLabel, 10);
-      textSetFontFamily(errLabel, 10, monoFont());
+      textSetFontFamily(errLabel, monoFont());
       textSetWraps(errLabel, 300);
       setFg(errLabel, getSideBarForeground());
       widgetAddChild(errContainer, errLabel);
@@ -1642,7 +1642,7 @@ function onClaudeToolResult(output: string, isError: number, filePath: string): 
     } else {
       let resultLabel = Text(displayOutput);
       textSetFontSize(resultLabel, 10);
-      textSetFontFamily(resultLabel, 10, monoFont());
+      textSetFontFamily(resultLabel, monoFont());
       textSetWraps(resultLabel, 300);
       setFg(resultLabel, getSecondaryTextColor());
       widgetAddChild(claudeToolContainer, resultLabel);
@@ -2194,7 +2194,7 @@ function refreshSessionList(): void {
     if (smode === 3) badge = 'CC';
     const badgeLabel = Text(badge);
     textSetFontSize(badgeLabel, 9);
-    textSetFontFamily(badgeLabel, 9, monoFont());
+    textSetFontFamily(badgeLabel, monoFont());
     setFg(badgeLabel, getSideBarForeground());
 
     // Click handler for the row
@@ -2666,7 +2666,7 @@ function handleClaudeLine(line: string): void {
       if (infoStr.length > 0) {
         claudeInfoRow = Text(infoStr);
         textSetFontSize(claudeInfoRow, 10);
-        textSetFontFamily(claudeInfoRow, 10, monoFont());
+        textSetFontFamily(claudeInfoRow, monoFont());
         setFg(claudeInfoRow, getSecondaryTextColor());
         widgetAddChild(chatMessagesContainer, claudeInfoRow);
       }
@@ -2698,7 +2698,7 @@ function handleClaudeLine(line: string): void {
         if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(rlBlock, 0.35, 0.25, 0.05, 1.0); } else { widgetSetBackgroundColor(rlBlock, 1.0, 0.95, 0.85, 1.0); };
         claudeRateLimitLabel = Text(t('Rate limited. Waiting...'));
         textSetFontSize(claudeRateLimitLabel, 12);
-        textSetFontFamily(claudeRateLimitLabel, 12, monoFont());
+        textSetFontFamily(claudeRateLimitLabel, monoFont());
         setFg(claudeRateLimitLabel, getSideBarForeground());
         widgetAddChild(rlBlock, claudeRateLimitLabel);
         widgetAddChild(chatMessagesContainer, rlBlock);
@@ -2856,7 +2856,7 @@ function handleClaudeLine(line: string): void {
       if (statsStr.length > 0) {
         claudeCostLabel = Text(statsStr);
         textSetFontSize(claudeCostLabel, 10);
-        textSetFontFamily(claudeCostLabel, 10, monoFont());
+        textSetFontFamily(claudeCostLabel, monoFont());
         setFg(claudeCostLabel, getSecondaryTextColor());
         widgetAddChild(chatMessagesContainer, claudeCostLabel);
         lastAddedWidget = claudeCostLabel;
@@ -3142,7 +3142,7 @@ function showThinkingBlock(text: string): void {
   // Content — hidden by default
   let contentLabel = Text(text);
   textSetFontSize(contentLabel, 10);
-  textSetFontFamily(contentLabel, 10, monoFont());
+  textSetFontFamily(contentLabel, monoFont());
   textSetWraps(contentLabel, 300);
   setFg(contentLabel, getSecondaryTextColor());
   widgetSetHidden(contentLabel, 1);
@@ -3183,7 +3183,7 @@ function onClaudeToolActivityWithDiff(toolName: string, filePath: string, block:
   }
   let toolText = Text(toolLabel);
   textSetFontSize(toolText, 11);
-  textSetFontFamily(toolText, 11, monoFont());
+  textSetFontFamily(toolText, monoFont());
   textSetWraps(toolText, 300);
   setFg(toolText, getSideBarForeground());
 
@@ -3202,7 +3202,7 @@ function onClaudeToolActivityWithDiff(toolName: string, filePath: string, block:
     if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(oldBlock, 0.25, 0.10, 0.10, 1.0); } else { widgetSetBackgroundColor(oldBlock, 1.0, 0.92, 0.92, 1.0); };
     let oldLabel = Text('- ' + oldTrunc);
     textSetFontSize(oldLabel, 10);
-    textSetFontFamily(oldLabel, 10, monoFont());
+    textSetFontFamily(oldLabel, monoFont());
     textSetWraps(oldLabel, 280);
     setFg(oldLabel, getSideBarForeground());
     widgetAddChild(oldBlock, oldLabel);
@@ -3215,7 +3215,7 @@ function onClaudeToolActivityWithDiff(toolName: string, filePath: string, block:
     if (isCurrentThemeDark() > 0) { widgetSetBackgroundColor(newBlock, 0.10, 0.25, 0.10, 1.0); } else { widgetSetBackgroundColor(newBlock, 0.92, 1.0, 0.92, 1.0); };
     let newLabel = Text('+ ' + newTrunc);
     textSetFontSize(newLabel, 10);
-    textSetFontFamily(newLabel, 10, monoFont());
+    textSetFontFamily(newLabel, monoFont());
     textSetWraps(newLabel, 280);
     setFg(newLabel, getSideBarForeground());
     widgetAddChild(newBlock, newLabel);
@@ -3822,7 +3822,7 @@ function updateMessages(): void {
           setChatBgCode(toolBlock);
           const toolLabel = Text('\u2699 ' + t('Tool result'));
           textSetFontSize(toolLabel, 10);
-          textSetFontFamily(toolLabel, 10, monoFont());
+          textSetFontFamily(toolLabel, monoFont());
           setFg(toolLabel, getSideBarForeground());
           widgetAddChild(toolBlock, toolLabel);
 
@@ -3839,7 +3839,7 @@ function updateMessages(): void {
           if (resultPreview.length > 200) resultPreview = resultPreview.slice(0, 200) + '...';
           const resultText = Text(resultPreview);
           textSetFontSize(resultText, 10);
-          textSetFontFamily(resultText, 10, monoFont());
+          textSetFontFamily(resultText, monoFont());
           setFg(resultText, getSideBarForeground());
           widgetAddChild(toolBlock, resultText);
           widgetAddChild(chatMessagesContainer, toolBlock);

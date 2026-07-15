@@ -21,7 +21,9 @@ declare const __platform__: number;
  *   - Windows: Consolas (ships with every Windows since Vista)
  *   - Linux / web / Android: monospace (CSS-family fallback chain)
  *
- * Callers do `textSetFontFamily(widget, sz, monoFont())`.
+ * Callers do `textSetFontSize(widget, sz); textSetFontFamily(widget, monoFont());`
+ * — Perry's textSetFontFamily takes (widget, family) only. Passing a size as a
+ * third arg makes the table dispatch skip the call entirely (silent no-op).
  */
 export function monoFont(): string {
   if (__platform__ === 3) return 'Consolas';

@@ -647,7 +647,7 @@ function updateSearchResultsUI(): void {
       const btn = Button(display, () => { onSearchResultClick(resultPath); });
       buttonSetBordered(btn, 0);
       textSetFontSize(btn, 12);
-      textSetFontFamily(btn, 12, monoFont());
+      textSetFontFamily(btn, monoFont());
       if (panelColors) {
         setBtnFg(btn, '#888888');
       }

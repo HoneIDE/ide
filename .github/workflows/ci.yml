@@ -35,24 +35,17 @@ jobs:
         with:
           bun-version: latest
       - run: bun install --no-save || true
-      # `perry/i18n` and `@honeide/*/perry/live` resolution warnings are
-      # expected (per CLAUDE.md / followup.md) — they're Perry FFI manifest
-      # imports the typecheck can't resolve. Filter them so the action
-      # doesn't fail on noise that's been audited.
-      - name: typecheck (filtered)
-        run: |
-          set -o pipefail
-          bun run typecheck 2>&1 | tee tc.out
-          # Count errors that aren't pre-existing noise.
-          REAL=$(grep -E "error" tc.out | grep -vE "perry/i18n|@honeide/.+/perry/live|widgetSetTooltip|clipboardWrite|editorSet[A-Z]|getContent|setLineBackground|clearLineBackgrounds|clearFindHighlights|setFindHighlights|getCharWidth|visibleRange|getCursorLine|getCursorColumn|setCursorPosition|ViewportManager|executeCommand|clipboardRead|EditorOptions|getCurrentSelection|dispose|setLanguage|getFindMatch|getFindCurrent|getScrollTop|setScrollTop|getCursorPos|Cannot find name 't[0-9]'|setLineDiagnostics|clearDiagnostics|pushDecorations|setThemeMode" | wc -l)
-          echo "Non-noise errors: $REAL"
-          # Tolerate up to N pre-existing noise patterns we haven't fully
-          # categorized. Bump down as the project quiets the rest.
-          if [ "$REAL" -gt 0 ]; then
-            echo "::error::New typecheck errors detected outside the noise filter."
-            grep -E "error" tc.out | grep -vE "perry/i18n|@honeide/.+/perry/live|widgetSetTooltip|clipboardWrite|editorSet[A-Z]|getContent|setLineBackground|clearLineBackgrounds|clearFindHighlights|setFindHighlights|getCharWidth|visibleRange|getCursorLine|getCursorColumn|setCursorPosition|ViewportManager|executeCommand|clipboardRead|EditorOptions|getCurrentSelection|dispose|setLanguage|getFindMatch|getFindCurrent|getScrollTop|setScrollTop|getCursorPos|Cannot find name 't[0-9]'|setLineDiagnostics|clearDiagnostics|pushDecorations|setThemeMode" | head -20
-            exit 1
-          fi
+      # The typecheck is clean and gates for real. The previous version of this
+      # step piped tsc through a ~30-pattern "known noise" filter, but the pipe
+      # ran under `set -o pipefail`, so a non-zero tsc exit killed the step
+      # before the filter was ever consulted — the job had failed on every run
+      # since May and gated nothing. The noise it filtered is gone: `perry/i18n`
+      # and `widgetSetTooltip` now have real declarations in src/types/, the
+      # agentic seed fixtures are excluded in tsconfig, and the ViewportManager /
+      # textSetFontFamily errors it hid were genuine bugs (now fixed). Keep this
+      # step plain — if it goes red, something is actually broken.
+      - name: typecheck
+        run: bun run typecheck
 
   perry-compile-macos:
     name: Perry compile macOS

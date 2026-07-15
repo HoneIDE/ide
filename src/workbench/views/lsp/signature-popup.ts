@@ -45,7 +45,7 @@ export function showSignaturePopup(
   // Signature label — monospace
   const sigLabel = Text(label);
   textSetFontSize(sigLabel, 12);
-  textSetFontFamily(sigLabel, 12, monoFont());
+  textSetFontFamily(sigLabel, monoFont());
   setFg(sigLabel, '#e0e0e0');
   widgetAddChild(sigWidget, sigLabel);
 

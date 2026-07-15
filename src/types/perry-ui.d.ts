@@ -38,7 +38,10 @@ declare module 'perry/ui' {
   export function textSetColor(text: unknown, r: number, g: number, b: number, a: number): void;
   export function textSetFontSize(widget: unknown, size: number): void;
   export function textSetFontWeight(widget: unknown, size: number, weight: number): void;
-  export function textSetFontFamily(widget: unknown, size: number, family: string): void;
+  /** Set the font family. Size is set separately via textSetFontSize — Perry's
+   *  signature is (widget, family), unlike textSetFontWeight which takes a size.
+   *  Passing an extra arg makes Perry's table dispatch silently skip the call. */
+  export function textSetFontFamily(widget: unknown, family: string): void;
   export function textSetString(widget: unknown, value: string): void;
   export function textSetWraps(widget: unknown, wraps: number): void;
 
@@ -61,6 +64,8 @@ declare module 'perry/ui' {
   export function widgetSetHeight(widget: unknown, height: number): void;
   export function widgetSetHugging(widget: unknown, priority: number): void;
   export function widgetSetHidden(widget: unknown, hidden: number): void;
+  /** Native tooltip on hover (NSView.setToolTip on macOS — VoiceOver picks it up). */
+  export function widgetSetTooltip(widget: unknown, text: string): void;
   export function widgetSetContextMenu(widget: unknown, menu: unknown): void;
   export function widgetMatchParentHeight(widget: unknown): void;
   export function widgetMatchParentWidth(widget: unknown): void;
