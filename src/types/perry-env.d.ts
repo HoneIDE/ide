@@ -152,6 +152,83 @@ declare module 'perry/thread' {
 }
 
 // ---------------------------------------------------------------------------
+// Buffer / node:crypto
+//
+// Perry maps node:crypto natively (perry-stdlib/src/crypto/*). Only the surface
+// hone actually uses is declared. Signatures below were verified empirically
+// against Perry-compiled probes, not copied from @types/node — notably,
+// X25519 `export()` returns an opaque Perry surrogate string rather than real
+// SPKI/PKCS8 DER (see src/workbench/sync-crypto.ts).
+// ---------------------------------------------------------------------------
+
+interface PerryBuffer {
+  toString(encoding?: string): string;
+  length: number;
+}
+
+declare var Buffer: {
+  from(data: string, encoding?: string): PerryBuffer;
+  from(data: ArrayBuffer | PerryBuffer): PerryBuffer;
+  alloc(size: number): PerryBuffer;
+};
+
+declare module 'crypto' {
+  interface Hmac {
+    update(data: string | PerryBuffer): Hmac;
+    digest(encoding: string): string;
+  }
+  interface Hash {
+    update(data: string | PerryBuffer): Hash;
+    digest(encoding: string): string;
+  }
+  interface Cipher {
+    update(data: string, inputEncoding: string, outputEncoding: string): string;
+    final(outputEncoding: string): string;
+    /** GCM only — must be read after final(). */
+    getAuthTag(): PerryBuffer;
+  }
+  interface Decipher {
+    update(data: string, inputEncoding: string, outputEncoding: string): string;
+    /** GCM only — THROWS if the auth tag does not verify. */
+    final(outputEncoding: string): string;
+    setAuthTag(tag: PerryBuffer): void;
+  }
+  /** Opaque key handle. Perry's export() yields a surrogate string, not DER. */
+  interface KeyObject {
+    export(options: { type: string; format: string }): PerryBuffer;
+  }
+
+  export function randomBytes(size: number): PerryBuffer;
+  export function createHash(algorithm: string): Hash;
+  export function createHmac(algorithm: string, key: string | PerryBuffer): Hmac;
+  export function hkdfSync(digest: string, ikm: PerryBuffer, salt: PerryBuffer, info: PerryBuffer, keylen: number): ArrayBuffer;
+  export function generateKeyPairSync(type: string): { publicKey: KeyObject; privateKey: KeyObject };
+  export function diffieHellman(options: { privateKey: KeyObject; publicKey: KeyObject }): PerryBuffer;
+  export function createCipheriv(algorithm: string, key: PerryBuffer, iv: PerryBuffer): Cipher;
+  export function createDecipheriv(algorithm: string, key: PerryBuffer, iv: PerryBuffer): Decipher;
+  export function createPublicKey(options: { key: PerryBuffer; format: string; type: string }): KeyObject;
+  export function createPrivateKey(options: { key: PerryBuffer; format: string; type: string }): KeyObject;
+
+  const _default: {
+    randomBytes: typeof randomBytes;
+    createHash: typeof createHash;
+    createHmac: typeof createHmac;
+    hkdfSync: typeof hkdfSync;
+    generateKeyPairSync: typeof generateKeyPairSync;
+    diffieHellman: typeof diffieHellman;
+    createCipheriv: typeof createCipheriv;
+    createDecipheriv: typeof createDecipheriv;
+    createPublicKey: typeof createPublicKey;
+    createPrivateKey: typeof createPrivateKey;
+  };
+  export default _default;
+}
+
+declare module 'node:crypto' {
+  export * from 'crypto';
+}
+
+// ---------------------------------------------------------------------------
 // Perry i18n (compile-time localization)
 // ---------------------------------------------------------------------------
 

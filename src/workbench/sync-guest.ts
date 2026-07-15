@@ -10,16 +10,14 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { getHomeDir, getAppDataDir } from './paths';
-// Cross-device sync used custom Perry crypto intrinsics that the current
-// toolchain no longer provides. Stubbed inline so the IDE builds; sync
-// (pairing / E2E encryption) is disabled. ccHkdfSha256 returns '' so the
-// project key stays empty and encrypt/decrypt pass through as plaintext.
-function ccRandomNonce(): string { return ''; }
-function ccHkdfSha256(ikmHex: string, saltHex: string, info: string, length: number): string { return ''; }
-function ccX25519Keypair(): string { return '{"publicKey":"","secretKey":""}'; }
-function ccX25519SharedSecret(secretKeyHex: string, publicKeyHex: string): string { return ''; }
-function ccAes256GcmEncrypt(plaintext: string, keyHex: string, nonceHex: string): string { return plaintext; }
-function ccAes256GcmDecrypt(encrypted: string, keyHex: string, nonceHex: string): string { return encrypted; }
+import {
+  ccRandomNonce,
+  ccHkdfSha256,
+  ccX25519Keypair,
+  ccX25519SharedSecret,
+  ccAes256GcmEncrypt,
+  ccAes256GcmDecrypt,
+} from './sync-crypto';
 
 // --- Module-level state ---
 
@@ -431,14 +429,20 @@ export function encryptDelta(plaintext: string): string {
   return result;
 }
 
+// Returns '' when the payload cannot be authenticated — callers MUST treat an
+// empty result as "drop this message". See the matching note in sync-host.ts.
 export function decryptDelta(ciphertext: string): string {
-  if (_projectKey.length === 0) return ciphertext;
+  if (_projectKey.length === 0) return '';
   const colonIdx = ciphertext.indexOf(':');
-  if (colonIdx < 0) return ciphertext;
+  if (colonIdx < 0) return '';
   const nonce = ciphertext.slice(0, colonIdx);
   const encrypted = ciphertext.slice(colonIdx + 1);
-  const decrypted = ccAes256GcmDecrypt(encrypted, _projectKey, nonce);
-  return decrypted;
+  try {
+    return ccAes256GcmDecrypt(encrypted, _projectKey, nonce);
+  } catch (e: any) {
+    // Bad auth tag / truncated payload — tampered or wrong key. Drop it.
+    return '';
+  }
 }
 
 // --- Sequence tracking ---

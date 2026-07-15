@@ -6429,6 +6429,10 @@ function onRelayMessageImpl(data: string): void {
   }
   if (isEncrypted > 0) {
     payload = decryptIncomingPayload(payload, 1);
+    // Empty result = the GCM auth tag didn't verify (tampered, truncated, or
+    // wrong project key), or we have no key at all. Drop the message rather
+    // than fall through and interpret attacker-controlled bytes.
+    if (payload.length === 0) return;
   }
 
   // Handle PAIR_REQ|code|deviceId|deviceName|guestPubKey (only from others)

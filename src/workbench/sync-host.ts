@@ -7,16 +7,15 @@
  * All state is module-level (Perry closures capture by value).
  */
 
-// Cross-device sync used custom Perry crypto intrinsics that the current
-// toolchain no longer provides. Stubbed inline so the IDE builds; sync
-// (pairing / E2E encryption) is disabled. ccHkdfSha256 returns '' so the
-// project key stays empty and encrypt/decrypt pass through as plaintext.
-function ccRandomNonce(): string { return ''; }
-function ccHkdfSha256(ikmHex: string, saltHex: string, info: string, length: number): string { return ''; }
-function ccX25519Keypair(): string { return '{"publicKey":"","secretKey":""}'; }
-function ccX25519SharedSecret(secretKeyHex: string, publicKeyHex: string): string { return ''; }
-function ccAes256GcmEncrypt(plaintext: string, keyHex: string, nonceHex: string): string { return plaintext; }
-function ccAes256GcmDecrypt(encrypted: string, keyHex: string, nonceHex: string): string { return encrypted; }
+import {
+  ccRandomNonce,
+  ccHkdfSha256,
+  ccX25519Keypair,
+  ccX25519SharedSecret,
+  ccAes256GcmEncrypt,
+  ccAes256GcmDecrypt,
+  ccRandomKeyHex,
+} from './sync-crypto';
 
 // --- Module-level state ---
 
@@ -62,7 +61,10 @@ export function initSyncHost(deviceId: string, deviceName: string): void {
   hostDeviceName = deviceName;
   // Random room ID — opaque, not derived from device identity
   hostRoomId = makeRoomId();
-  hostSecret = 'secret_' + deviceId + '_' + Date.now();
+  // 256 bits of CSPRNG. This was 'secret_' + deviceId + '_' + Date.now(),
+  // which is guessable: deviceId is known to any peer and Date.now() at init
+  // is bounded by when the app launched (audit H1).
+  hostSecret = ccRandomKeyHex();
   hostActive = 1;
 }
 
@@ -139,13 +141,11 @@ export function validatePairingAttempt(code: string): number {
 // --- E2E Encryption ---
 
 export function generateProjectKey(): void {
-  // Generate random 32-byte project encryption key
-  const nonce = ccRandomNonce(); // 12 bytes hex = 24 chars
-  // Use two nonces + hkdf to get 32 bytes
-  const nonce2 = ccRandomNonce();
-  let ikm = nonce;
-  ikm += nonce2;
-  _projectKey = ccHkdfSha256(ikm, '', 'hone-project-key', 32);
+  // 32 bytes straight from the CSPRNG. This used to stitch two 12-byte nonces
+  // together and run them through HKDF to reach 32 bytes — HKDF cannot add
+  // entropy it wasn't given, so that was 24 bytes of randomness dressed up as
+  // 32. randomBytes(32) is both simpler and stronger.
+  _projectKey = ccRandomKeyHex();
 }
 
 export function getProjectKeyHex(): string {
@@ -209,15 +209,24 @@ export function encryptDelta(plaintext: string): string {
   return result;
 }
 
+// Returns '' when the payload cannot be authenticated — callers MUST treat an
+// empty result as "drop this message". Fail closed: these paths used to return
+// the ciphertext unchanged when the key was missing or the format was wrong,
+// which hands unauthenticated attacker-controlled bytes to the caller as if
+// they were plaintext.
 export function decryptDelta(ciphertext: string): string {
-  if (_projectKey.length === 0) return ciphertext;
+  if (_projectKey.length === 0) return '';
   // Parse nonce:encrypted
   const colonIdx = ciphertext.indexOf(':');
-  if (colonIdx < 0) return ciphertext;
+  if (colonIdx < 0) return '';
   const nonce = ciphertext.slice(0, colonIdx);
   const encrypted = ciphertext.slice(colonIdx + 1);
-  const decrypted = ccAes256GcmDecrypt(encrypted, _projectKey, nonce);
-  return decrypted;
+  try {
+    return ccAes256GcmDecrypt(encrypted, _projectKey, nonce);
+  } catch (e: any) {
+    // Bad auth tag / truncated payload — tampered or wrong key. Drop it.
+    return '';
+  }
 }
 
 // --- Guest tracking ---
