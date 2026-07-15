@@ -9,6 +9,7 @@
 
 import WebSocket from 'ws';
 import { sendToClient, closeClient, isOpen, messageCount, receive } from 'ws';
+import { buildRelayEnvelope, isPairingHandshake } from './sync-envelope';
 
 // --- Module-level state ---
 
@@ -111,56 +112,13 @@ export function sendToRelayTarget(to: string, payload: string): void {
   // E2E: encrypt payload once the key exchange has completed.
   // Pairing handshake messages (PAIR_REQ / PAIR_OK / PAIR_NO) ship cleartext —
   // they're the channel that bootstraps the project key.
-  let txPayload = payload;
-  let encryptedFlag = 'false';
-  if (_encryptReady > 0 && !isPairingHandshake(payload)) {
-    txPayload = _encryptPayload(payload);
-    encryptedFlag = 'true';
-  }
-
-  let msg = '{"from":"';
-  msg += relayDeviceId;
-  msg += '","to":"';
-  msg += to;
-  msg += '","room":"';
-  msg += relayRoomId;
-  msg += '","seq":';
-  msg += String(seqCounter);
-  msg += ',"ts":';
-  msg += String(Date.now());
-  msg += ',"encrypted":';
-  msg += encryptedFlag;
-  msg += ',"payload":"';
-  // Check if txPayload needs escaping (contains " \ \n \r)
-  let needsEscape = 0;
-  for (let i = 0; i < txPayload.length; i++) {
-    const ch = txPayload.charCodeAt(i);
-    if (ch === 34 || ch === 92 || ch === 10 || ch === 13) {
-      needsEscape = 1;
-      break;
-    }
-  }
-  if (needsEscape < 1) {
-    // Fast path: no escaping needed, direct concat
-    msg += txPayload;
-  } else {
-    // Slow path: escape character by character
-    for (let i = 0; i < txPayload.length; i++) {
-      const ch = txPayload.charCodeAt(i);
-      if (ch === 34) {
-        msg += '\\"';
-      } else if (ch === 92) {
-        msg += '\\\\';
-      } else if (ch === 10) {
-        msg += '\\n';
-      } else if (ch === 13) {
-        msg += '\\r';
-      } else {
-        msg += txPayload.charAt(i);
-      }
-    }
-  }
-  msg += '"}';
+  // Envelope construction (incl. the encrypt-or-not decision) lives in
+  // sync-envelope.ts so it can be unit-tested — this module can't be imported
+  // under bun because of Perry's `ws` extensions.
+  const msg = buildRelayEnvelope(
+    relayDeviceId, to, relayRoomId, seqCounter, Date.now(),
+    payload, _encryptReady, _encryptPayload
+  );
   _onDebug('sendToClient msgLen=' + String(msg.length) + ' handle=' + String(wsHandle));
   sendToClient(wsHandle, msg);
   _onDebug('sendToClient DONE');
@@ -207,17 +165,9 @@ export function decryptIncomingPayload(payload: string, isEncrypted: number): st
   return _decryptPayload(payload);
 }
 
-/**
- * Pairing handshake messages (PAIR_REQ / PAIR_OK / PAIR_NO) are exempt from encryption —
- * they bootstrap the project key. Once both sides have the key, everything else is encrypted.
- */
-function isPairingHandshake(payload: string): number {
-  if (payload.length < 7) return 0;
-  if (payload.indexOf('PAIR_REQ|') === 0) return 1;
-  if (payload.indexOf('PAIR_OK|') === 0) return 1;
-  if (payload.indexOf('PAIR_NO|') === 0) return 1;
-  return 0;
-}
+// isPairingHandshake now lives in sync-envelope.ts alongside the envelope
+// builder that consumes it — two copies of the "which messages may ship
+// cleartext" rule is exactly the kind of thing that drifts apart.
 
 export function setOnTransportDebug(fn: (msg: string) => void): void {
   _onDebug = fn;
