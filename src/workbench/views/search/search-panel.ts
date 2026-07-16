@@ -17,7 +17,7 @@ import { t } from 'perry/i18n';
 import { readFileSync, readdirSync, writeFileSync } from 'fs';
 import { spawnText } from '../../../process-compat';
 import { isDirectory } from '../../../fs-compat';
-import { spawn, parallelMap } from 'perry/thread';
+import { spawn } from 'perry/thread';
 import { join } from 'path';
 import { hexToRGBA, setBg, setFg, setBtnFg, pathId, getFileName, toLowerCode, isTextFile, monoFont } from '../../ui-helpers';
 import type { ResolvedUIColors } from '../../theme/theme-loader';
@@ -127,7 +127,7 @@ function findInLine(haystack: string, needle: string): number {
 function searchFile(filePath: string): void {
   if (srCount >= 500) return;
   let content = '';
-  try { content = readFileSync(filePath); } catch (e) { return; }
+  try { content = readFileSync(filePath, 'utf8'); } catch (e) { return; }
   // Skip very large files (> 256KB) to avoid memory pressure
   if (content.length > 262144) return;
   let lineStart = 0;
@@ -195,11 +195,152 @@ function searchDir(dirPath: string, depth: number): void {
   }
 }
 
-/** Run the search asynchronously on a background thread. UI stays responsive. */
+/** Search files[startIdx..endIdx) sequentially. Runs on a worker thread via
+ *  spawn(); must not touch module state or UI. Matches are encoded as
+ *  "fileIdx\tlineNum\tlineText\n" — file attribution travels inside the blob
+ *  because each worker owns an arbitrary range, not a single file. */
+function searchFileRange(
+  files: string[],
+  startIdx: number,
+  endIdx: number,
+  query: string,
+  caseSens: number
+): string {
+  let out = '';
+  for (let fi = startIdx; fi < endIdx; fi++) {
+    const fp = files[fi];
+    let content = '';
+    try { content = readFileSync(fp, 'utf8'); } catch (e) { continue; }
+    if (content.length > 262144) continue; // skip >256KB files
+
+    let matchCount = 0;
+    let lineStart = 0;
+    let lineNum = 1;
+    for (let ci = 0; ci <= content.length; ci++) {
+      if (ci === content.length || content.charCodeAt(ci) === 10) {
+        const line = content.slice(lineStart, ci);
+        // Inline findInLine: check if query appears in line
+        const hLen = line.length;
+        const nLen = query.length;
+        if (nLen > 0 && nLen <= hLen) {
+          const limit = hLen - nLen;
+          let found = 0;
+          for (let si = 0; si <= limit; si++) {
+            let match = 1;
+            for (let sj = 0; sj < nLen; sj++) {
+              let hc = line.charCodeAt(si + sj);
+              let nc = query.charCodeAt(sj);
+              if (caseSens < 1) {
+                if (hc >= 65 && hc <= 90) hc = hc + 32;
+                if (nc >= 65 && nc <= 90) nc = nc + 32;
+              }
+              if (hc !== nc) { match = 0; break; }
+            }
+            if (match > 0) { found = 1; break; }
+          }
+          if (found > 0) {
+            out = out + String(fi) + '\t' + String(lineNum) + '\t' + line + '\n';
+            matchCount = matchCount + 1;
+            if (matchCount >= 50) break; // cap per file
+          }
+        }
+        lineStart = ci + 1;
+        lineNum = lineNum + 1;
+      }
+    }
+  }
+  return out;
+}
+
+// Fan-out bookkeeping for the current search generation. Perry (issue #6185)
+// forbids parallelMap inside spawn — nested thread primitives can deserialize
+// a result into the wrong arena — so instead of one spawn wrapping a
+// parallelMap, the main thread launches K range-workers and combines their
+// blobs here as each .then lands (all .then callbacks run on the main thread).
+let searchPartFiles: string[] = [];
+let searchPartBlobs: string[] = [];
+let searchPartsPending = 0;
+
+function collectSearchPart(blob: string, gen: number): void {
+  if (gen !== searchGeneration) return; // stale generation — a newer search superseded us
+  searchPartBlobs[searchPartBlobs.length] = blob;
+  searchPartsPending = searchPartsPending - 1;
+  if (searchPartsPending > 0) return;
+
+  // All workers landed: parse "fileIdx\tlineNum\tlineText\n" entries, cap 500.
+  const rPaths: string[] = [];
+  const rNums: number[] = [];
+  const rTexts: string[] = [];
+  let rCount = 0;
+  for (let bi = 0; bi < searchPartBlobs.length; bi++) {
+    if (rCount >= 500) break;
+    const encoded = searchPartBlobs[bi];
+    let ls = 0;
+    for (let ei = 0; ei <= encoded.length; ei++) {
+      if (ei === encoded.length || encoded.charCodeAt(ei) === 10) {
+        if (ei > ls) {
+          const entry = encoded.slice(ls, ei);
+          // First two tabs delimit fileIdx and lineNum; line text keeps its tabs.
+          let tab1 = -1;
+          let tab2 = -1;
+          for (let ti = 0; ti < entry.length; ti++) {
+            if (entry.charCodeAt(ti) === 9) {
+              if (tab1 < 0) { tab1 = ti; } else { tab2 = ti; break; }
+            }
+          }
+          if (tab1 > 0 && tab2 > tab1) {
+            const fileIdx = parseInt(entry.slice(0, tab1));
+            rPaths[rCount] = searchPartFiles[fileIdx];
+            rNums[rCount] = parseInt(entry.slice(tab1 + 1, tab2));
+            rTexts[rCount] = entry.slice(tab2 + 1);
+            rCount = rCount + 1;
+            if (rCount >= 500) break;
+          }
+        }
+        ls = ei + 1;
+      }
+    }
+  }
+  applySearchResult({ filePaths: rPaths, lineNums: rNums, lineTexts: rTexts, count: rCount }, gen);
+}
+
+/** Main-thread phase 2: fan the file list out to range-workers. */
+function startParallelSearch(files: string[], gen: number): void {
+  if (gen !== searchGeneration) return;
+  if (files.length < 1) {
+    applySearchResult({ filePaths: [], lineNums: [], lineTexts: [], count: 0 }, gen);
+    return;
+  }
+  const query = searchQuery;
+  const caseSens = searchCaseSensitive;
+  searchPartFiles = files;
+  searchPartBlobs = [];
+  let workers = 8;
+  if (files.length < 32) workers = 1;
+  const chunk = Math.ceil(files.length / workers);
+  let launched = 0;
+  for (let w = 0; w < workers; w++) {
+    const startIdx = w * chunk;
+    if (startIdx >= files.length) break;
+    let endIdx = startIdx + chunk;
+    if (endIdx > files.length) endIdx = files.length;
+    launched = launched + 1;
+  }
+  searchPartsPending = launched;
+  for (let w = 0; w < launched; w++) {
+    const startIdx = w * chunk;
+    let endIdx = startIdx + chunk;
+    if (endIdx > files.length) endIdx = files.length;
+    spawn(() => {
+      return searchFileRange(files, startIdx, endIdx, query, caseSens);
+    }).then((blob) => { collectSearchPart(blob, gen); });
+  }
+}
+
+/** Run the search asynchronously on background threads. UI stays responsive. */
 function performSearch(): void {
   const query = searchQuery;
   const wsRoot = searchWorkspaceRoot;
-  const caseSens = searchCaseSensitive;
 
   if (query.length < 1 || wsRoot.length < 1) {
     srFilePaths = [];
@@ -219,104 +360,13 @@ function performSearch(): void {
     widgetClearChildren(searchResultsContainer);
   }
 
+  // Phase 1: collect searchable file paths off the UI thread, then fan out
+  // range-workers from the main thread (see startParallelSearch).
   spawn(() => {
-    // Phase 1: Collect all searchable file paths (sequential dir walk)
     const allFiles: string[] = [];
-    let fileCount = 0;
     collectSearchFiles(allFiles, wsRoot, 0);
-    fileCount = allFiles.length;
-
-    if (fileCount < 1) {
-      return { filePaths: [] as string[], lineNums: [] as number[], lineTexts: [] as string[], count: 0 };
-    }
-
-    // Phase 2: Search files in parallel across all CPU cores
-    const perFileResults = parallelMap(allFiles, (fp) => {
-      // Read + search a single file on a worker thread
-      let content = '';
-      try { content = readFileSync(fp); } catch (e) { return ''; }
-      if (content.length > 262144) return ''; // skip >256KB files
-
-      // Search line by line, encode matches as "lineNum\tlineText\n"
-      let encoded = '';
-      let matchCount = 0;
-      let lineStart = 0;
-      let lineNum = 1;
-      for (let ci = 0; ci <= content.length; ci++) {
-        if (ci === content.length || content.charCodeAt(ci) === 10) {
-          const line = content.slice(lineStart, ci);
-          // Inline findInLine: check if query appears in line
-          const hLen = line.length;
-          const nLen = query.length;
-          if (nLen > 0 && nLen <= hLen) {
-            const limit = hLen - nLen;
-            let found = 0;
-            for (let si = 0; si <= limit; si++) {
-              let match = 1;
-              for (let sj = 0; sj < nLen; sj++) {
-                let hc = line.charCodeAt(si + sj);
-                let nc = query.charCodeAt(sj);
-                if (caseSens < 1) {
-                  if (hc >= 65 && hc <= 90) hc = hc + 32;
-                  if (nc >= 65 && nc <= 90) nc = nc + 32;
-                }
-                if (hc !== nc) { match = 0; break; }
-              }
-              if (match > 0) { found = 1; break; }
-            }
-            if (found > 0) {
-              encoded = encoded + String(lineNum) + '\t' + line + '\n';
-              matchCount = matchCount + 1;
-              if (matchCount >= 50) break; // cap per file
-            }
-          }
-          lineStart = ci + 1;
-          lineNum = lineNum + 1;
-        }
-      }
-      return encoded;
-    });
-
-    // Phase 3: Flatten per-file results into parallel arrays
-    const rPaths: string[] = [];
-    const rNums: number[] = [];
-    const rTexts: string[] = [];
-    let rCount = 0;
-
-    for (let fi = 0; fi < perFileResults.length; fi++) {
-      if (rCount >= 500) break;
-      const encoded = perFileResults[fi];
-      if (encoded.length < 1) continue;
-      const fp = allFiles[fi];
-
-      // Parse "lineNum\tlineText\n" entries
-      let ls = 0;
-      for (let ei = 0; ei <= encoded.length; ei++) {
-        if (ei === encoded.length || encoded.charCodeAt(ei) === 10) {
-          if (ei > ls) {
-            const entry = encoded.slice(ls, ei);
-            // Find tab separator
-            let tabPos = -1;
-            for (let ti = 0; ti < entry.length; ti++) {
-              if (entry.charCodeAt(ti) === 9) { tabPos = ti; break; }
-            }
-            if (tabPos > 0) {
-              const numStr = entry.slice(0, tabPos);
-              const lineText = entry.slice(tabPos + 1);
-              rPaths[rCount] = fp;
-              rNums[rCount] = parseInt(numStr);
-              rTexts[rCount] = lineText;
-              rCount = rCount + 1;
-              if (rCount >= 500) break;
-            }
-          }
-          ls = ei + 1;
-        }
-      }
-    }
-
-    return { filePaths: rPaths, lineNums: rNums, lineTexts: rTexts, count: rCount };
-  }).then((result) => { applySearchResult(result, gen); });
+    return allFiles;
+  }).then((files) => { startParallelSearch(files, gen); });
 }
 
 /** Recursively collect searchable file paths (inlined in spawn — no module state access). */
@@ -712,7 +762,7 @@ function toggleReplaceField(): void {
 
 function replaceInFile(filePath: string): void {
   let content = '';
-  try { content = readFileSync(filePath); } catch (e) { return; }
+  try { content = readFileSync(filePath, 'utf8'); } catch (e) { return; }
   const idx = findInLine(content, searchQuery);
   if (idx < 0) return;
   let result = '';
@@ -732,7 +782,7 @@ function replaceInFile(filePath: string): void {
 
 function replaceAllInFile(filePath: string): void {
   let content = '';
-  try { content = readFileSync(filePath); } catch (e) { return; }
+  try { content = readFileSync(filePath, 'utf8'); } catch (e) { return; }
   if (searchQuery.length < 1) return;
   // Previous impl looped on `pos <= content.length - searchQuery.length`
   // and only appended the trailing remainder inside the `idx < 0` branch.
@@ -765,7 +815,7 @@ function replaceAllInFile(filePath: string): void {
     const fpId = pathId(filePath);
     const curId = pathId(curPath);
     if (fpId === curId) {
-      const reloaded = readFileSync(filePath);
+      const reloaded = readFileSync(filePath, 'utf8');
       _editorReloader(filePath, reloaded);
     }
   }
