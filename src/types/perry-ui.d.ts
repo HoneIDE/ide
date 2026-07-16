@@ -122,7 +122,13 @@ declare module 'perry/ui' {
 
   // Menu
   export function menuCreate(title?: string): unknown;
-  export function menuAddItem(menu: unknown, title: string, callback: () => void, shortcut?: string): void;
+  // Arity verified against perry-dispatch ui_table (part_a: [Widget, Str,
+  // Closure]). The old optional 4th `shortcut` param here was a lie — Perry
+  // has no 4-arg menuAddItem, and (pre-#6444-era compilers) a 4-arg call was
+  // silently compiled away, so every shortcut-bearing menu item vanished.
+  export function menuAddItem(menu: unknown, title: string, callback: () => void): void;
+  // part_b: [Widget, Str, Str, Closure] — shortcut comes BEFORE the callback.
+  export function menuAddItemWithShortcut(menu: unknown, title: string, shortcut: string, callback: () => void): void;
   export function menuAddStandardAction(menu: unknown, title: string, selector: string, shortcut: string): void;
   export function menuClear(menu: unknown): void;
   export function menuAddSeparator(menu: unknown): void;

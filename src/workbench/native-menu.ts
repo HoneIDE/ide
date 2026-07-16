@@ -6,7 +6,7 @@ import { buildDesktopMenuBar } from '../menu';
 import type { MenuItem } from '../menu';
 import { getPlatformContext } from '../platform';
 import {
-  menuCreate, menuAddItem, menuAddSeparator, menuAddSubmenu,
+  menuCreate, menuAddItem, menuAddItemWithShortcut, menuAddSeparator, menuAddSubmenu,
   menuAddStandardAction,
   menuBarCreate, menuBarAddMenu, menuBarAttach,
 } from 'perry/ui';
@@ -162,7 +162,7 @@ function buildNativeMenu(items: MenuItem[]): unknown {
       if (selector.length > 0 && shortcut.length > 0) {
         menuAddStandardAction(menu, mi.label, selector, shortcut);
       } else if (shortcut.length > 0) {
-        menuAddItem(menu, mi.label, () => { dispatchCommand(cmd); }, shortcut);
+        menuAddItemWithShortcut(menu, mi.label, shortcut, () => { dispatchCommand(cmd); });
       } else {
         menuAddItem(menu, mi.label, () => { dispatchCommand(cmd); });
       }
