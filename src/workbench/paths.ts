@@ -305,7 +305,7 @@ export function getOrCreateDeviceId(): string {
 
   try {
     if (existsSync(path)) {
-      const stored = readFileSync(path);
+      const stored = readFileSync(path, 'utf8');
       if (stored.length >= 16) {
         _deviceId = stored.slice(0, 16);
         return _deviceId;

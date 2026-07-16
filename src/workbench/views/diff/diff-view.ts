@@ -78,7 +78,7 @@ const ADD_A = 0.60;
 function safeReadFile(filePath: string): string {
   let content = '';
   try {
-    content = readFileSync(filePath);
+    content = readFileSync(filePath, 'utf8');
   } catch (e) {
     return '';
   }
@@ -150,7 +150,7 @@ export function openDiffForFile(filePath: string, relPath: string, wsRoot: strin
     } catch (e) { oldContent = ''; }
 
     let newContent = '';
-    try { newContent = readFileSync(fp); } catch (e) { newContent = ''; }
+    try { newContent = readFileSync(fp, 'utf8'); } catch (e) { newContent = ''; }
 
     let diffText = '';
     if (stg > 0) {

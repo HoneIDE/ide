@@ -25,7 +25,11 @@ declare module 'fs' {
     mode: number;
   }
 
-  export function readFileSync(path: string, encoding?: string): string;
+  /** Perry matches Node here: without an encoding this returns a Buffer, and
+   *  string methods on a Buffer silently misbehave once compiled (charCodeAt
+   *  → undefined). The encoding parameter is deliberately REQUIRED so tsc
+   *  rejects any call site that would get a Buffer while expecting text. */
+  export function readFileSync(path: string, encoding: string): string;
   export function writeFileSync(path: string, data: string, encoding?: string): void;
   export function readdirSync(path: string): string[];
   export function existsSync(path: string): boolean;

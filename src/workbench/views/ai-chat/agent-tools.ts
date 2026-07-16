@@ -77,7 +77,7 @@ function executeToolFileRead(filePath: string): string {
     return 'Error: Path is outside the workspace';
   }
   try {
-    const content = readFileSync(filePath);
+    const content = readFileSync(filePath, 'utf8');
     // Binary guard: the editor refuses binary files (NUL-byte heuristic);
     // the agent's file_read had no such guard, so the model reading a PNG /
     // exe / pdf got raw byte-garbage dumped into its context — token waste,
@@ -107,7 +107,7 @@ function executeToolFileEdit(filePath: string, oldText: string, newText: string)
     return 'Error: old_text must not be empty (use file_create for new files)';
   }
   try {
-    const content = readFileSync(filePath);
+    const content = readFileSync(filePath, 'utf8');
     // Find oldText, and count occurrences. An autonomous agent editing the
     // FIRST match when old_text is not unique silently patches the wrong
     // location (e.g. an earlier identical line) — the model believes the
@@ -197,7 +197,7 @@ function searchDirRecursive(dirPath: string, depth: number): void {
           searchDirRecursive(full, depth + 1);
         } else {
           try {
-            const content = readFileSync(full);
+            const content = readFileSync(full, 'utf8');
             if (content.length > 500000) continue;
             let lineNum = 1;
             let lineStart = 0;

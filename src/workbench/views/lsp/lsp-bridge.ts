@@ -703,7 +703,7 @@ function tryStartServer(): void {
   // Check for TypeScript project
   let hasTsConfig: number = 0;
   try {
-    readFileSync(lspWorkspaceRoot + '/tsconfig.json');
+    readFileSync(lspWorkspaceRoot + '/tsconfig.json', 'utf8');
     hasTsConfig = 1;
   } catch (e: any) { /* no tsconfig */ }
 
@@ -1287,7 +1287,7 @@ function startFallbackDiagnostics(): void {
   // Check if tsconfig.json exists
   let hasTsConfig: number = 0;
   try {
-    readFileSync(lspWorkspaceRoot + '/tsconfig.json');
+    readFileSync(lspWorkspaceRoot + '/tsconfig.json', 'utf8');
     hasTsConfig = 1;
   } catch (e: any) { /* no tsconfig */ }
   if (hasTsConfig < 1) return;
@@ -1322,7 +1322,7 @@ function pollFallbackDiagDone(): void {
 
 function readFallbackDiagOutput(): void {
   let output = '';
-  try { output = readFileSync(DIAG_LOG_FILE); } catch (e: any) { return; }
+  try { output = readFileSync(DIAG_LOG_FILE, 'utf8'); } catch (e: any) { return; }
   if (output.length < 1) return;
 
   let h = 0;

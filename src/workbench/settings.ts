@@ -262,7 +262,7 @@ export function initSettings(): void {
   let text = '';
   try {
     if (existsSync(path)) {
-      text = readFileSync(path);
+      text = readFileSync(path, 'utf8');
     }
   } catch (e: any) {
     text = '';
@@ -275,7 +275,7 @@ export function initSettings(): void {
     try {
       const bp = getSettingsBackupPath();
       if (existsSync(bp)) {
-        const btext = readFileSync(bp);
+        const btext = readFileSync(bp, 'utf8');
         if (btext.length >= 3) text = btext;
       }
     } catch (_re: any) { /* no usable backup — fall through to defaults */ }
@@ -664,7 +664,7 @@ function _flushSettingsToDisk(): void {
     // previous good state) intact for load-time recovery.
     try {
       if (existsSync(sp)) {
-        const prev = readFileSync(sp);
+        const prev = readFileSync(sp, 'utf8');
         if (prev.length >= 3) writeFileSync(getSettingsBackupPath(), prev);
       }
     } catch (_be: any) { /* backup best-effort; never block the real write */ }
@@ -751,7 +751,7 @@ export function applyWorkspaceOverlay(root: string): number {
   }
   let text = '';
   try {
-    text = readFileSync(path);
+    text = readFileSync(path, 'utf8');
   } catch (_e: any) {
     return 0;
   }

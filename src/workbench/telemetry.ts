@@ -100,7 +100,7 @@ function checkAndReportCrash(): void {
   try {
     if (!existsSync(crashPath)) return;
 
-    const raw = readFileSync(crashPath);
+    const raw = readFileSync(crashPath, 'utf8');
     if (raw.length < 3) {
       // Empty or malformed — just clean up
       try { unlinkSync(crashPath); } catch (e2: any) { /* ignore */ }

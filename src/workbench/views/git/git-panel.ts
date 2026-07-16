@@ -265,7 +265,7 @@ function detectLfsTracked(): number {
   if (gitWorkspaceRoot.length === 0) return 0;
   let content = '';
   try {
-    content = readFileSync(gitWorkspaceRoot + '/.gitattributes');
+    content = readFileSync(gitWorkspaceRoot + '/.gitattributes', 'utf8');
   } catch (_e: any) { return 0; }
   if (content.indexOf('filter=lfs') >= 0) return 1;
   return 0;

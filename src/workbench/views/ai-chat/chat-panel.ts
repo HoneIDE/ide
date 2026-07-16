@@ -657,7 +657,7 @@ function getCurrentMsgFilePath(): string {
 function appendMessage(isUser: number, content: string): void {
   const fp = getCurrentMsgFilePath();
   let existing = '';
-  try { existing = readFileSync(fp); } catch (e) {}
+  try { existing = readFileSync(fp, 'utf8'); } catch (e) {}
   if (existing.length > 0) existing += '\n';
   if (isUser > 0) { existing += 'U\n'; }
   else { existing += 'A\n'; }
@@ -680,7 +680,7 @@ function appendMessage(isUser: number, content: string): void {
 function appendAssistantWithTool(text: string, toolId: string, toolName: string, toolArgs: string): void {
   const fp = getCurrentMsgFilePath();
   let existing = '';
-  try { existing = readFileSync(fp); } catch (e) {}
+  try { existing = readFileSync(fp, 'utf8'); } catch (e) {}
   if (existing.length > 0) existing += '\n';
   existing += 'W\n'; // 'W' = assistant message with tool_use
   // Fields separated by SOH (\x01): text | toolId | toolName | toolArgsJson
@@ -1279,7 +1279,7 @@ function requestTitleGeneration(): void {
   // Get the first user message for context
   const fp = getCurrentMsgFilePath();
   let fileContent = '';
-  try { fileContent = readFileSync(fp); } catch (e) {}
+  try { fileContent = readFileSync(fp, 'utf8'); } catch (e) {}
   if (fileContent.length < 2) { titleStreamActive = 0; return; }
 
   // Extract first user message (line 1 = 'U', line 2 = content)
@@ -1704,7 +1704,7 @@ function continueAgentLoop(): void {
   // Build and send next request
   const cPath = getCurrentMsgFilePath();
   let fileContent = '';
-  try { fileContent = readFileSync(cPath); } catch (e) {}
+  try { fileContent = readFileSync(cPath, 'utf8'); } catch (e) {}
 
   let systemPrompt = '';
   let toolsJson = '';
@@ -1728,7 +1728,7 @@ function continueAgentLoop(): void {
 function appendToolResultMessage(content: string): void {
   const fp = getCurrentMsgFilePath();
   let existing = '';
-  try { existing = readFileSync(fp); } catch (e) {}
+  try { existing = readFileSync(fp, 'utf8'); } catch (e) {}
   if (existing.length > 0) existing += '\n';
   existing += 'T\n'; // Tool result role marker
   existing += encodeContent(content);
@@ -1801,7 +1801,7 @@ function switchToSession(id: string): void {
   // Count messages in loaded file
   msgCount = 0;
   let fileContent = '';
-  try { fileContent = readFileSync(msgFilePath); } catch (e) {}
+  try { fileContent = readFileSync(msgFilePath, 'utf8'); } catch (e) {}
   if (fileContent.length > 1) {
     let lineStart = 0;
     let lineIdx = 0;
@@ -2055,7 +2055,7 @@ function buildSessionMarkdown(): string {
 
   const fp = getSessionFilePath(id);
   let content = '';
-  try { content = readFileSync(fp); } catch (_e) { content = ''; }
+  try { content = readFileSync(fp, 'utf8'); } catch (_e) { content = ''; }
 
   let out = '# ';
   out += title;
@@ -3259,7 +3259,7 @@ function claudePollTick(): void {
   // Read the log file directly from this module
   let content = '';
   try {
-    content = readFileSync(claudeLogFilePath);
+    content = readFileSync(claudeLogFilePath, 'utf8');
   } catch (e) {
     return;
   }
@@ -3412,7 +3412,7 @@ function onSend(): void {
   // Build request — use fresh path (Perry: module vars stale in callbacks)
   const currentPath = getCurrentMsgFilePath();
   let fileContent = '';
-  try { fileContent = readFileSync(currentPath); } catch (e) {}
+  try { fileContent = readFileSync(currentPath, 'utf8'); } catch (e) {}
 
   let systemPrompt = 'You are Hone, an AI coding assistant built into the Hone IDE. Be concise and helpful.';
   let toolsJson = '';
@@ -3562,7 +3562,7 @@ function onModeClaude(): void {
     const fp = getCurrentMsgFilePath();
     let hasMessages: number = 0;
     try {
-      const fc = readFileSync(fp);
+      const fc = readFileSync(fp, 'utf8');
       if (fc.length > 1) hasMessages = 1;
     } catch (e) {}
     if (hasMessages > 0) {
@@ -3725,7 +3725,7 @@ function onAttachFile(): void {
   const filePath = getCurrentFilePath();
   if (filePath.length < 1) return;
   try {
-    const content = readFileSync(filePath);
+    const content = readFileSync(filePath, 'utf8');
     addFileContext(filePath, content);
     renderChipsArea();
   } catch (e) {}
@@ -3760,7 +3760,7 @@ function updateMessages(): void {
 
   const fp = getCurrentMsgFilePath();
   let fileContent = '';
-  try { fileContent = readFileSync(fp); } catch (e) {}
+  try { fileContent = readFileSync(fp, 'utf8'); } catch (e) {}
 
   if (fileContent.length < 2) {
     let hintText = t('Ask a question about your code');
@@ -3952,7 +3952,7 @@ export function renderChatPanel(container: unknown, colors: ResolvedUIColors): u
   // Check if first user message already sent
   firstUserMsgSent = 0;
   try {
-    const existingContent = readFileSync(msgFilePath);
+    const existingContent = readFileSync(msgFilePath, 'utf8');
     if (existingContent.length > 0 && existingContent.charCodeAt(0) === 85) {
       firstUserMsgSent = 1;
     }

@@ -124,7 +124,7 @@ function loadStoredConnection(): number {
   try {
     const path = getSyncPath();
     if (!existsSync(path)) return 0;
-    const text = readFileSync(path);
+    const text = readFileSync(path, 'utf8');
     if (text.length < 10) return 0;
 
     const lines = text.split('\n');

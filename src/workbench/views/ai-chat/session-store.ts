@@ -87,7 +87,7 @@ function indexBackupPath(): string {
 function readIndex(): string {
   let txt = '';
   try {
-    txt = readFileSync(indexPath);
+    txt = readFileSync(indexPath, 'utf8');
   } catch (e) {
     txt = '';
   }
@@ -104,7 +104,7 @@ function readIndex(): string {
     try {
       const bp = indexBackupPath();
       if (existsSync(bp)) {
-        const b = readFileSync(bp);
+        const b = readFileSync(bp, 'utf8');
         if (b.length > 0) txt = b;
       }
     } catch (_re) { /* no usable backup — genuinely empty */ }
@@ -118,7 +118,7 @@ function writeIndex(content: string): void {
   // crash during step B leaves the prior-good list recoverable on load.
   try {
     if (existsSync(indexPath)) {
-      const prev = readFileSync(indexPath);
+      const prev = readFileSync(indexPath, 'utf8');
       if (prev.length > 0) writeFileSync(indexBackupPath(), prev);
     }
   } catch (_be) { /* backup best-effort */ }
@@ -167,7 +167,7 @@ export function createNewSession(mode: number): string {
 export function loadSessionMessages(id: string): string {
   const filePath = getSessionFilePath(id);
   try {
-    return readFileSync(filePath);
+    return readFileSync(filePath, 'utf8');
   } catch (e) {
     return '';
   }
@@ -623,7 +623,7 @@ export function loadClaudeSessionUUID(sessionId: string): string {
   p += sessionId;
   p += '.claude';
   try {
-    const content = readFileSync(p);
+    const content = readFileSync(p, 'utf8');
     // Trim trailing newlines
     let end = content.length;
     while (end > 0) {

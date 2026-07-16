@@ -72,7 +72,7 @@ export function initRecentItems(): void {
   let content = '';
   try {
     if (existsSync(filePath)) {
-      content = readFileSync(filePath);
+      content = readFileSync(filePath, 'utf8');
     }
   } catch (e: any) { return; }
   if (content.length < 3) return;

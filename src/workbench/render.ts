@@ -2236,7 +2236,7 @@ function applyWorkspaceEdit(json: string): WorkspaceEditResult {
     if (isActiveBuffer > 0 && editorReady > 0) {
       content = editorInstance.getContent();
     } else {
-      try { content = readFileSync(path); } catch (_e: any) { content = ''; }
+      try { content = readFileSync(path, 'utf8'); } catch (_e: any) { content = ''; }
     }
     if (content.length < 1) {
       skippedFiles = skippedFiles + 1;
@@ -2841,7 +2841,7 @@ function safeReadFile(filePath: string): string {
   let content = '';
   try {
     if (isDirectory(filePath)) return '';
-    content = readFileSync(filePath);
+    content = readFileSync(filePath, 'utf8');
   } catch (e) {
     return '';
   }
@@ -5359,7 +5359,7 @@ function tryRestoreSyncSession(): void {
   path += '/sync-session';
   try {
     if (!existsSync(path)) { return; }
-    const data = readFileSync(path);
+    const data = readFileSync(path, 'utf8');
     if (data.length < 3) return;
     // Parse: roomId\npartnerName\nrole\nlastSeq
     // Find newlines (Perry nested-if-in-for bug: use separate loops)
@@ -5556,7 +5556,7 @@ function initSyncSystem(layoutMode: LayoutMode): void {
       let isGuest = 0;
       try {
         if (existsSync(getTempDir() + '/hone-auto-pair-guest')) {
-          const guestContent = readFileSync(getTempDir() + '/hone-auto-pair-guest');
+          const guestContent = readFileSync(getTempDir() + '/hone-auto-pair-guest', 'utf8');
           if (guestContent.length < 2) {
             // Empty file = old-style flag: check if our device ID matches the guest's device-id file
             // Use heuristic: guest has HOME env pointing to a temp dir
@@ -5895,7 +5895,7 @@ function claudeRelayPollTick(): void {
 
   let content = '';
   try {
-    content = readFileSync(claudeRelayLogPath);
+    content = readFileSync(claudeRelayLogPath, 'utf8');
   } catch (e) {
     return;
   }
@@ -7103,7 +7103,7 @@ function runAutoTest(taggedPaths: string[], entryCount: number): void {
 
 function runAutoTestExpand(dirPath: string, testFile2: string): void {
   let log = '';
-  try { log = readFileSync(getTempDir() + '/hone-auto-test-result.log'); } catch (e: any) {}
+  try { log = readFileSync(getTempDir() + '/hone-auto-test-result.log', 'utf8'); } catch (e: any) {}
 
   // Verify file click from test 2 completed
   log += 'TEST2-result: currentEditorFilePath=' + currentEditorFilePath + '\n';
@@ -7127,7 +7127,7 @@ function runAutoTestExpand(dirPath: string, testFile2: string): void {
 
 function runAutoTestExpandCheck(dirPath: string, beforeCount: number): void {
   let log = '';
-  try { log = readFileSync(getTempDir() + '/hone-auto-test-result.log'); } catch (e: any) {}
+  try { log = readFileSync(getTempDir() + '/hone-auto-test-result.log', 'utf8'); } catch (e: any) {}
 
   const afterCount = getVisibleFileCount();
   const expDirs = getExpandedDirCount();
@@ -7149,7 +7149,7 @@ function runAutoTestExpandCheck(dirPath: string, beforeCount: number): void {
 
 function runAutoTestCollapse(dirPath: string, expandedCount: number): void {
   let log = '';
-  try { log = readFileSync(getTempDir() + '/hone-auto-test-result.log'); } catch (e: any) {}
+  try { log = readFileSync(getTempDir() + '/hone-auto-test-result.log', 'utf8'); } catch (e: any) {}
 
   const afterCollapse = getVisibleFileCount();
   const expDirs = getExpandedDirCount();
@@ -7172,7 +7172,7 @@ function runAutoTestCollapse(dirPath: string, expandedCount: number): void {
 
 function runAutoTestFinal(): void {
   let log = '';
-  try { log = readFileSync(getTempDir() + '/hone-auto-test-result.log'); } catch (e: any) {}
+  try { log = readFileSync(getTempDir() + '/hone-auto-test-result.log', 'utf8'); } catch (e: any) {}
 
   log += 'TEST7-result: currentEditorFilePath=' + currentEditorFilePath + '\n';
 
