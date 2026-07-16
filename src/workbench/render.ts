@@ -835,7 +835,7 @@ function findBarGetCharWidth(): number {
 
 function findBarGetViewportStart(): number {
   if (editorReady < 1) return 0;
-  return editorInstance.viewModel.viewport.visibleRange.startLine;
+  return editorInstance.viewModel.viewport.getVisibleRange().startLine;
 }
 
 function findBarSetLineBg(line: number, r: number, g: number, b: number, a: number): void {
@@ -4691,7 +4691,7 @@ function renderEditorArea(): unknown {
   // indent). Hidden when no scope is detected so the editor reclaims the row.
   stickyScrollLabel = Text('');
   textSetFontSize(stickyScrollLabel, 11);
-  textSetFontFamily(stickyScrollLabel, 11, monoFont());
+  textSetFontFamily(stickyScrollLabel, monoFont());
   setFg(stickyScrollLabel, getSecondaryTextColor());
   stickyScrollRow = HStackWithInsets(4, 2, 12, 2, 12);
   setBg(stickyScrollRow, getEditorBackground());
@@ -6429,6 +6429,10 @@ function onRelayMessageImpl(data: string): void {
   }
   if (isEncrypted > 0) {
     payload = decryptIncomingPayload(payload, 1);
+    // Empty result = the GCM auth tag didn't verify (tampered, truncated, or
+    // wrong project key), or we have no key at all. Drop the message rather
+    // than fall through and interpret attacker-controlled bytes.
+    if (payload.length === 0) return;
   }
 
   // Handle PAIR_REQ|code|deviceId|deviceName|guestPubKey (only from others)

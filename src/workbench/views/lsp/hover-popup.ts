@@ -127,7 +127,7 @@ export function showHoverPopup(content: string): void {
     const typeStripped = stripMarkdown(typeLine);
     const typeLabel = Text(typeStripped);
     textSetFontSize(typeLabel, 12);
-    textSetFontFamily(typeLabel, 12, monoFont());
+    textSetFontFamily(typeLabel, monoFont());
     textSetFontWeight(typeLabel, 12, 0.5);
     setFg(typeLabel, '#e0e0e0');
     widgetAddChild(hoverWidget, typeLabel);

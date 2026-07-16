@@ -253,7 +253,7 @@ function updateLogUI(): void {
     // Hash label (monospace, muted)
     const hashLabel = Text(hash);
     textSetFontSize(hashLabel, 10);
-    textSetFontFamily(hashLabel, 10, monoFont());
+    textSetFontFamily(hashLabel, monoFont());
     setFg(hashLabel, getSecondaryTextColor());
 
     // Message (primary text)

@@ -198,7 +198,7 @@ function refreshDiagnosticsUI(): void {
 
     const severityLabel = Text(severityChar);
     textSetFontSize(severityLabel, 11);
-    textSetFontFamily(severityLabel, 11, monoFont());
+    textSetFontFamily(severityLabel, monoFont());
     setFg(severityLabel, severityColor);
 
     const fname = getFileName(file);

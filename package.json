@@ -1,6 +1,7 @@
 {
   "name": "@honeide/ide",
   "version": "0.1.0",
+  "private": true,
   "bundleId": "com.hone.ide",
   "description": "Hone IDE — AI-native code editor for all platforms",
   "main": "src/app.ts",
@@ -15,10 +16,21 @@
   "dependencies": {
     "@honeide/core": "file:../hone-core",
     "@honeide/editor": "file:../hone-editor",
+    "@honeide/lsp-bridge": "file:./native/lsp",
     "@honeide/terminal": "file:../hone-terminal"
   },
   "devDependencies": {
     "@types/bun": "latest",
     "typescript": "^5.7.0"
+  },
+  "perry": {
+    "//": "Perry >=0.5.1235 refuses to link a dependency's perry.nativeLibrary unless the host allow-lists it (PerryTS/perry#497). Both of these are our own first-party crates — the editor's Core Text/tree-sitter renderer and the terminal's PTY. Without this, `perry compile` fails and the only way through is PERRY_ALLOW_PERRY_FEATURES=1, which disables the check globally rather than approving these two. Entries must match the IMPORT SPECIFIER, not the package name — hence /perry/live for the terminal.",
+    "allow": {
+      "nativeLibrary": [
+        "@honeide/editor/perry",
+        "@honeide/terminal/perry/live",
+        "@honeide/lsp-bridge/perry/live"
+      ]
+    }
   }
 }

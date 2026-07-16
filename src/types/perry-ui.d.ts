@@ -38,7 +38,10 @@ declare module 'perry/ui' {
   export function textSetColor(text: unknown, r: number, g: number, b: number, a: number): void;
   export function textSetFontSize(widget: unknown, size: number): void;
   export function textSetFontWeight(widget: unknown, size: number, weight: number): void;
-  export function textSetFontFamily(widget: unknown, size: number, family: string): void;
+  /** Set the font family. Size is set separately via textSetFontSize — Perry's
+   *  signature is (widget, family), unlike textSetFontWeight which takes a size.
+   *  Passing an extra arg makes Perry's table dispatch silently skip the call. */
+  export function textSetFontFamily(widget: unknown, family: string): void;
   export function textSetString(widget: unknown, value: string): void;
   export function textSetWraps(widget: unknown, wraps: number): void;
 
@@ -61,6 +64,8 @@ declare module 'perry/ui' {
   export function widgetSetHeight(widget: unknown, height: number): void;
   export function widgetSetHugging(widget: unknown, priority: number): void;
   export function widgetSetHidden(widget: unknown, hidden: number): void;
+  /** Native tooltip on hover (NSView.setToolTip on macOS — VoiceOver picks it up). */
+  export function widgetSetTooltip(widget: unknown, text: string): void;
   export function widgetSetContextMenu(widget: unknown, menu: unknown): void;
   export function widgetMatchParentHeight(widget: unknown): void;
   export function widgetMatchParentWidth(widget: unknown): void;
@@ -72,7 +77,15 @@ declare module 'perry/ui' {
   // ScrollView mutations
   export function scrollViewSetChild(scrollView: unknown, child: unknown): void;
   /** Scroll to coordinates. */
-  export function scrollViewScrollTo(scrollView: unknown, x: number, y: number): void;
+  /** Scroll so `child` is visible. Perry's 8 platform runtimes all implement
+   *  perry_ui_scrollview_scroll_to(scroll_handle, child_handle) — this 2-arg
+   *  form is the real signature.
+   *
+   *  ⚠️ It does not currently work: Perry's dispatch table wrongly declares
+   *  [Widget, F64, F64], and an arity mismatch lowers to a silent no-op. There
+   *  is no (scrollView, x, y) variant to use instead — the runtime takes two
+   *  handles, so a numeric x would be read as a widget. Blocked upstream; see
+   *  scrollToBottom() in views/ai-chat/chat-panel.ts. */
   /** Scroll to make a widget visible. */
   export function scrollViewScrollTo(scrollView: unknown, widget: unknown): void;
 
@@ -100,7 +113,11 @@ declare module 'perry/ui' {
   // Dialogs
   export function openFolderDialog(callback: (path: string) => void): void;
   export function openFileDialog(callback: (path: string) => void): void;
-  export function saveFileDialog(callback: (path: string) => void, defaultName?: string, directory?: string): void;
+  /** All three args are REQUIRED — Perry's table declares [Closure, Str, Str].
+   *  They were marked optional here, but omitting one is an arity mismatch, and
+   *  Perry lowers those to a silent no-op rather than an error: the dialog would
+   *  simply never open. Pass '' rather than dropping an argument. */
+  export function saveFileDialog(callback: (path: string) => void, defaultName: string, directory: string): void;
   export function pollOpenFile(): string;
 
   // Menu

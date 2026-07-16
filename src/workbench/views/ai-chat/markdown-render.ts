@@ -166,7 +166,7 @@ function renderInlineText(text: string, container: unknown, fontSize: number, co
         const seg = text.slice(segStart, i);
         if (inCode > 0) {
           const t = Text(seg);
-          textSetFontFamily(t, fontSize, monoFont());
+          textSetFontFamily(t, monoFont());
           textSetFontSize(t, fontSize - 1);
           setFg(t, getSideBarForeground());
           widgetAddChild(container, t);
@@ -248,7 +248,7 @@ export function renderMarkdownBlock(content: string, container: unknown, colors:
         let codeLine = line;
         if (codeLine.length < 1) codeLine = ' ';
         const t = Text(codeLine);
-        textSetFontFamily(t, 11, monoFont());
+        textSetFontFamily(t, monoFont());
         textSetFontSize(t, 11);
         setFg(t, getSideBarForeground());
         widgetAddChild(codeLines, t);
@@ -447,7 +447,7 @@ function renderTable(rows: string[][], container: unknown, _colors: ResolvedUICo
       row += cells[c];
     }
     const t = Text(row);
-    textSetFontFamily(t, 11, monoFont());
+    textSetFontFamily(t, monoFont());
     textSetFontSize(t, 11);
     setFg(t, getSideBarForeground());
     textSetWraps(t, wrapWidth);

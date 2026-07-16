@@ -45,7 +45,7 @@ export function showAutocomplete(items: string[]): void {
     const btn = Button(text, () => { onItemClick(text); });
     buttonSetBordered(btn, 0);
     textSetFontSize(btn, 12);
-    textSetFontFamily(btn, 12, monoFont());
+    textSetFontFamily(btn, monoFont());
     if (popupColors) setBtnFg(btn, getEditorForeground());
     widgetAddChild(popupWidget, btn);
   }

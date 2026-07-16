@@ -134,7 +134,7 @@ function rebuildRows(): void {
 
     const meta = Text(hash + '  ' + age + '  ' + author);
     textSetFontSize(meta, 10);
-    textSetFontFamily(meta, 10, monoFont());
+    textSetFontFamily(meta, monoFont());
     setFg(meta, getSecondaryTextColor());
 
     const subjBtn = Button(subject, () => { onRowClick(hash); });

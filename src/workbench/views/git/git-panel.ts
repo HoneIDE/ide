@@ -1070,7 +1070,7 @@ function onHistoryButtonClick(_container: unknown, _colors: ResolvedUIColors): v
       // monospace font is essential to preserve alignment.
       const row = Text(lines[i]);
       textSetFontSize(row, 11);
-      textSetFontFamily(row, 11, monoFont());
+      textSetFontFamily(row, monoFont());
       setFg(row, getSideBarForeground());
       widgetAddChild(gitHistoryContainer, row);
     }
@@ -1189,7 +1189,7 @@ function updateGitResultsUI(): void {
       if (status.charCodeAt(0) === 100) indicator = 'D';
       const statusLabel = Text(indicator);
       textSetFontSize(statusLabel, 11);
-      textSetFontFamily(statusLabel, 11, monoFont());
+      textSetFontFamily(statusLabel, monoFont());
       if (panelColors) {
         if (indicator === 'A') {
           setFg(statusLabel, getStatusAddedColor());
@@ -1232,7 +1232,7 @@ function updateGitResultsUI(): void {
       if (status.charCodeAt(0) === 100) indicator = 'D';
       const statusLabel = Text(indicator);
       textSetFontSize(statusLabel, 11);
-      textSetFontFamily(statusLabel, 11, monoFont());
+      textSetFontFamily(statusLabel, monoFont());
       if (panelColors) {
         if (indicator === 'D') {
           setFg(statusLabel, getStatusDeletedColor());
@@ -1275,7 +1275,7 @@ function updateGitResultsUI(): void {
       const row = HStack(4, []);
       const statusLabel = Text('U');
       textSetFontSize(statusLabel, 11);
-      textSetFontFamily(statusLabel, 11, monoFont());
+      textSetFontFamily(statusLabel, monoFont());
       if (panelColors) setFg(statusLabel, getStatusAddedColor());
       const fileBtn = Button(fname, () => { onGitFileClick(fpath); });
       buttonSetBordered(fileBtn, 0);

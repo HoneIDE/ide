@@ -18,5 +18,8 @@
     "types": []
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  // seed-files is a self-contained fixture workspace (own package.json +
+  // tsconfig) copied into a temp dir by the agentic tests — it is not
+  // hone-ide source and must not be typechecked against this config.
+  "exclude": ["node_modules", "dist", "tests/agentic/setup/seed-files"]
 }
