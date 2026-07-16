@@ -9,7 +9,8 @@
   "scripts": {
     "test": "bun test",
     "test:watch": "bun test --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "postinstall": "rm -rf node_modules/@honeide/lsp-bridge && ln -s ../../native/lsp node_modules/@honeide/lsp-bridge"
   },
   "keywords": ["ide", "editor", "ai", "perry", "native", "cross-platform"],
   "license": "MIT",

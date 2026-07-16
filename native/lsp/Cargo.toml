@@ -9,4 +9,9 @@ crate-type = ["staticlib"]
 
 [dependencies]
 libc = "0.2"
+# This relative path only resolves from the crate's real location
+# (hone-ide/native/lsp). bun's `file:` install COPIES the package into
+# node_modules, where four-levels-up lands inside the hone checkout and the
+# build breaks — which is why package.json's postinstall replaces the copy
+# with a symlink (cargo canonicalizes through it back to this directory).
 perry-ffi = { path = "../../../../perry/perry/crates/perry-ffi" }
